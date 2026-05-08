@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mesh-cli"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "mesh-models",
+    "mesh-db",
+]
+
+[tool.uv.sources]
+mesh-models = { workspace = true }
+mesh-db = { workspace = true }
+
+[project.scripts]
+"mesh.cli" = "mesh_cli.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mesh_cli"]

@@ -15,7 +15,7 @@ def test_migrations_apply_cleanly(tmp_path: Path) -> None:
     apply_migrations(conn)
     tables = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
     expected = {"entities", "sources", "claims", "beliefs", "belief_revisions",
-                "relationships", "investigations", "migrations"}
+                "relationships", "investigations", "migrations", "pipeline_runs"}
     assert expected.issubset(tables)
     conn.close()
 
@@ -27,8 +27,8 @@ def test_migrations_idempotent(tmp_path: Path) -> None:
     row = conn.execute("SELECT COUNT(*) FROM migrations").fetchone()
     assert row is not None
     count = row[0]
-    # 8 migration files
-    assert count == 8
+    # 9 migration files
+    assert count == 9
     conn.close()
 
 
@@ -36,7 +36,7 @@ def test_applied_at_recorded(tmp_path: Path) -> None:
     conn = _fresh_conn(tmp_path)
     apply_migrations(conn)
     rows = conn.execute("SELECT filename, applied_at FROM migrations ORDER BY filename").fetchall()
-    assert len(rows) == 8
+    assert len(rows) == 9
     for filename, applied_at in rows:
         assert filename.endswith(".sql")
         assert applied_at is not None
@@ -49,5 +49,5 @@ def test_migration_order(tmp_path: Path) -> None:
     rows = conn.execute("SELECT filename FROM migrations ORDER BY filename").fetchall()
     filenames = [r[0] for r in rows]
     assert filenames[0] == "001_create_entities.sql"
-    assert filenames[-1] == "008_install_vss.sql"
+    assert filenames[-1] == "009_create_pipeline_runs.sql"
     conn.close()

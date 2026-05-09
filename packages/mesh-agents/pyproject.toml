@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mesh-agents"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "arxiv>=2.1",
+    "mesh-models",
+    "mesh-llm",
+    "mesh-db",
+]
+
+[tool.uv.sources]
+mesh-models = { workspace = true }
+mesh-llm = { workspace = true }
+mesh-db = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mesh_agents"]

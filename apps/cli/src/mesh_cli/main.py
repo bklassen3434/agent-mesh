@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import click
@@ -12,6 +12,7 @@ from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
 from mesh_db.investigations import get_investigation_by_id
 from mesh_db.migrations import apply_migrations
+from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.relationships import get_relationship_by_id
 from mesh_db.revisions import create_revision, get_revision_by_id, list_revisions
 from mesh_db.sources import create_source, get_source_by_id, list_sources
@@ -85,7 +86,7 @@ def add_entity(
 @click.option("--published-at", default=None, help="ISO-8601 datetime")
 def add_source(source_type: str, url: str, author: str | None, published_at: str | None) -> None:
     """Create a new source."""
-    pub_dt = datetime.fromisoformat(published_at) if published_at else datetime.utcnow()
+    pub_dt = datetime.fromisoformat(published_at) if published_at else datetime.now(UTC)
     source = Source(
         type=SourceType(source_type),
         url=url,
@@ -506,6 +507,114 @@ def _print_investigation_detail(inv: Investigation) -> None:
         f"[bold]Resolved:[/bold] {inv.resolved_at.isoformat() if inv.resolved_at else '—'}",
     ]
     console.print(Panel("\n".join(lines), title="Investigation"))
+
+
+@cli.command("pipeline-stats")
+@click.option("--last", default=10, type=int, show_default=True, help="Show last N runs")
+def pipeline_stats(last: int) -> None:
+    """Show recent pipeline run statistics."""
+    conn = _get_conn()
+    try:
+        runs = list_pipeline_runs(conn, limit=last)
+    except Exception:
+        console.print("[yellow]No pipeline_runs table yet — run mesh.cli init-db first.[/yellow]")
+        conn.close()
+        return
+    conn.close()
+
+    if not runs:
+        console.print("[dim]No pipeline runs recorded yet.[/dim]")
+        return
+
+    table = Table(title="Pipeline Runs")
+    table.add_column("ID", style="dim", max_width=8)
+    table.add_column("Started", style="cyan")
+    table.add_column("Sources")
+    table.add_column("Claims")
+    table.add_column("Entities")
+    table.add_column("Beliefs +/~")
+    table.add_column("Avg LLM ms")
+    table.add_column("Errors")
+    for r in runs:
+        table.add_row(
+            r.id[:8],
+            r.started_at.strftime("%Y-%m-%d %H:%M"),
+            str(r.sources_inserted),
+            str(r.claims_inserted),
+            str(r.entities_created),
+            f"+{r.beliefs_created}/~{r.beliefs_revised}",
+            str(r.avg_extraction_latency_ms),
+            str(len(r.errors)),
+        )
+    console.print(table)
+
+
+@cli.command("show-recent-claims")
+@click.option("--limit", default=20, type=int, show_default=True)
+def show_recent_claims(limit: int) -> None:
+    """List recent claims with entity name and source URL inline."""
+    conn = _get_conn()
+    claims = list_claims(conn, limit=limit)
+
+    table = Table(title="Recent Claims")
+    table.add_column("Predicate", style="cyan")
+    table.add_column("Subject")
+    table.add_column("Confidence", justify="right")
+    table.add_column("Source URL")
+    for c in claims:
+        entity = get_entity_by_id(conn, c.subject_entity_id)
+        source = get_source_by_id(conn, c.source_id)
+        table.add_row(
+            c.predicate,
+            entity.canonical_name if entity else c.subject_entity_id[:8],
+            f"{c.confidence:.2f}",
+            (source.url[:60] if source else ""),
+        )
+    conn.close()
+    console.print(table)
+
+
+@cli.command("show-sota-beliefs")
+def show_sota_beliefs() -> None:
+    """List all current SOTA beliefs (topic prefix sota:)."""
+    conn = _get_conn()
+    beliefs = list_beliefs(conn, topic="sota:", currently_held=True, limit=200)
+    conn.close()
+
+    if not beliefs:
+        console.print("[dim]No SOTA beliefs recorded yet. Run mesh-pipeline first.[/dim]")
+        return
+
+    table = Table(title="SOTA Beliefs")
+    table.add_column("Benchmark", style="cyan")
+    table.add_column("Statement")
+    table.add_column("Confidence", justify="right")
+    table.add_column("Revisions", justify="right")
+    for b in beliefs:
+        benchmark = b.topic.removeprefix("sota:")
+        table.add_row(benchmark, b.statement[:70], f"{b.confidence:.2f}", str(b.revision_count))
+    console.print(table)
+
+
+@cli.command("ollama-check")
+def ollama_check() -> None:
+    """Ping Ollama and verify the configured model is available."""
+    from mesh_llm.client import OllamaClient, OllamaNotReadyError
+
+    client = OllamaClient()
+    console.print(f"Host:  [cyan]{client.host}[/cyan]")
+    console.print(f"Model: [cyan]{client.model}[/cyan]")
+
+    try:
+        models_response = client._client.list()
+        available = [m.model for m in models_response.models]
+        console.print(f"[green]Ollama is running.[/green]  Available models: {available}")
+        client.health_check()
+        console.print(f"[green]Model '{client.model}' is available.[/green]")
+    except OllamaNotReadyError as exc:
+        console.print(f"[red]{exc}[/red]")
+    except Exception as exc:
+        console.print(f"[red]Ollama not reachable: {exc}[/red]")
 
 
 def _print_relationship_detail(r: Any) -> None:

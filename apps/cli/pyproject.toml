@@ -11,11 +11,13 @@ dependencies = [
     "rich>=13.0",
     "mesh-models",
     "mesh-db",
+    "mesh-llm",
 ]
 
 [tool.uv.sources]
 mesh-models = { workspace = true }
 mesh-db = { workspace = true }
+mesh-llm = { workspace = true }
 
 [project.scripts]
 "mesh.cli" = "mesh_cli.main:cli"

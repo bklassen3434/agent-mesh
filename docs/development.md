@@ -4,6 +4,7 @@
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- [Ollama](https://ollama.com) with a pulled model (for pipeline runs — not needed for tests)
 
 ## Setup (under 5 minutes)
 
@@ -66,6 +67,37 @@ uv run mesh.cli add-revision \
 uv run mesh.cli show-revisions --belief <belief-id>
 ```
 
+## Running the pipeline
+
+The pipeline requires Ollama running locally. See [llm-setup.md](llm-setup.md) for installation.
+
+```bash
+# Run with defaults (cs.AI, cs.RO, cs.LG; last 24h; max 20 papers)
+uv run mesh-pipeline
+
+# Fetch up to 50 papers from cs.LG in the last 7 days
+uv run mesh-pipeline --categories cs.LG --max-papers 50 --since 7d
+
+# Use a specific DB file
+uv run mesh-pipeline --db-path /tmp/research.db
+
+# Check results
+uv run mesh.cli pipeline-stats
+uv run mesh.cli show-sota-beliefs
+uv run mesh.cli show-recent-claims
+uv run mesh.cli ollama-check
+```
+
+Key environment variables (in `.env`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+| `MESH_LLM_MODEL` | `qwen3:14b` | Model for claim extraction |
+| `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |
+| `MESH_PIPELINE_MAX_PAPERS` | `20` | Papers per run |
+| `MESH_PIPELINE_CONCURRENCY` | `3` | Parallel LLM extraction slots |
+
 ## Run tests
 
 ```bash
@@ -86,11 +118,15 @@ uv run mypy .
 
 ```
 agent-mesh/
-├── apps/cli/              — mesh.cli entry point
+├── apps/
+│   ├── cli/               — mesh.cli entry point
+│   └── pipeline/          — mesh-pipeline orchestrator
 ├── packages/
 │   ├── mesh-models/       — Pydantic v2 domain models
 │   ├── mesh-db/           — DuckDB access layer + migrations
-│   └── mesh-tracing/      — Langfuse tracing wrapper
+│   ├── mesh-tracing/      — Langfuse tracing wrapper
+│   ├── mesh-llm/          — Ollama client + prompts
+│   └── mesh-agents/       — Agent classes (scout, extractor, tracker, synthesizer)
 ├── tests/                 — pytest test suite
 └── docs/                  — this directory
 ```
@@ -102,6 +138,11 @@ Copy `.env.example` to `.env` and fill in as needed:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MESH_DB_PATH` | `./data/mesh.db` | Path to DuckDB file |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+| `MESH_LLM_MODEL` | `qwen3:14b` | Model for claim extraction |
+| `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |
+| `MESH_PIPELINE_MAX_PAPERS` | `20` | Papers per pipeline run |
+| `MESH_PIPELINE_CONCURRENCY` | `3` | Parallel LLM slots |
 | `LANGFUSE_PUBLIC_KEY` | (empty) | Enables Langfuse tracing if set |
 | `LANGFUSE_SECRET_KEY` | (empty) | Required alongside public key |
 | `LANGFUSE_HOST` | `http://localhost:3000` | Langfuse server URL |

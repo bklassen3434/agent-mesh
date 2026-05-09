@@ -14,7 +14,7 @@ The full system (Phases 1+) will consist of:
 - **A2A protocol layer** — agents communicate via a structured agent-to-agent protocol
 - **Wiki/API layer** — exposes the living knowledge base to external consumers
 
-## Phase 0 — Foundation (current)
+## Phase 0 — Foundation (complete)
 
 Phase 0 establishes the substrate. It includes:
 
@@ -27,14 +27,32 @@ Phase 0 establishes the substrate. It includes:
 - **Test suite** — model validation, migration, DB round-trip, and CLI tests
 - **CI** — GitHub Actions running ruff, mypy, pytest
 
-Phase 0 explicitly excludes:
+## Phase 1 — Local pipeline (current)
 
-- Any agents (scouts, extractors, synthesizers, skeptics, curators)
-- Any LLM API calls
-- Any A2A protocol code
-- Any web UI or API server
-- Any external data fetching or scheduling
-- Vector embedding generation (VSS extension installed, column added, but no population)
+Phase 1 wires the first end-to-end loop: arxiv → claims → entities → SOTA beliefs. Everything runs locally; no A2A protocol, no cloud APIs.
+
+New components:
+
+- **`packages/mesh-llm`** — thin Ollama wrapper (`OllamaClient`) with structured output, retry on transient errors, and latency tracking
+- **`packages/mesh-agents`** — four agent classes: `ArxivScoutAgent`, `ClaimExtractorAgent`, `EntityTrackerAgent`, `SotaTrackerAgent`
+- **`apps/pipeline`** — async orchestrator (`run_pipeline`) with bounded concurrency (Semaphore(3)); CLI entry point `mesh-pipeline`
+
+End-to-end flow (see [agents.md](agents.md) for detail):
+
+1. Scout fetches recent arxiv papers in configured categories
+2. Dedup against DB by `raw_content_hash`; insert new Sources
+3. Claim extractor runs in parallel (up to 3 concurrent) via local Ollama
+4. Entity tracker resolves/creates entities for all extracted names
+5. SOTA tracker synthesizes `achieves_score` claims into Beliefs
+6. PipelineRun record written with counts and errors
+
+Phase 1 explicitly excludes:
+
+- A2A protocol layer (Phase 2)
+- Embedding-based entity resolution (Phase 2)
+- Skeptic agent (Phase 4)
+- Web UI or API server
+- Scheduling / cron
 
 ## Package layout
 
@@ -42,10 +60,13 @@ Phase 0 explicitly excludes:
 packages/mesh-models   — Pydantic models; no I/O dependencies
 packages/mesh-db       — DuckDB access; depends on mesh-models
 packages/mesh-tracing  — Langfuse wrapper; no required dependencies
-apps/cli               — Click CLI; depends on mesh-db and mesh-models
+packages/mesh-llm      — Ollama client; depends on mesh-tracing
+packages/mesh-agents   — Agent classes; depends on mesh-llm, mesh-db, mesh-models
+apps/cli               — Click CLI; depends on mesh-db, mesh-models, mesh-llm
+apps/pipeline          — Async orchestrator; depends on mesh-agents
 ```
 
-Dependencies flow strictly downward. `mesh-models` has no internal dependencies; `mesh-db` depends only on `mesh-models`.
+Dependencies flow strictly downward. `mesh-models` has no internal dependencies.
 
 ## Database design decisions
 

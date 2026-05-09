@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import duckdb
 import pytest
@@ -17,7 +17,7 @@ def _setup(conn: duckdb.DuckDBPyConnection) -> tuple[str, str]:
     s = Source(
         type=SourceType.arxiv,
         url="https://arxiv.org/abs/test",
-        published_at=datetime.utcnow(),
+        published_at=datetime.now(UTC),
         raw_content_hash="hash1",
     )
     create_entity(conn, e)
@@ -94,7 +94,7 @@ def test_fk_constraint_missing_entity(tmp_db: duckdb.DuckDBPyConnection) -> None
     s = Source(
         type=SourceType.arxiv,
         url="u",
-        published_at=datetime.utcnow(),
+        published_at=datetime.now(UTC),
         raw_content_hash="h",
     )
     create_source(tmp_db, s)

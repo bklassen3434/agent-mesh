@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -21,7 +21,7 @@ class Claim(BaseModel):
     subject_entity_id: str
     object: dict[str, Any]
     source_id: str
-    extracted_at: datetime = Field(default_factory=datetime.utcnow)
+    extracted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     extracted_by_agent: str
     raw_excerpt: str
     status: ClaimStatus = ClaimStatus.active

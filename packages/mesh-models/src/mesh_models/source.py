@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
@@ -23,7 +23,7 @@ class Source(BaseModel):
     url: str
     author: str | None = None
     published_at: datetime
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw_content_hash: str
     reliability_prior: float = Field(default=0.5, ge=0.0, le=1.0)
 

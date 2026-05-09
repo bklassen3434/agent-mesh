@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -15,5 +15,5 @@ class BeliefRevision(BaseModel):
     new_confidence: float = Field(ge=0.0, le=1.0)
     trigger_claim_ids: list[str] = Field(default_factory=list)
     revised_by_agent: str
-    revised_at: datetime = Field(default_factory=datetime.utcnow)
+    revised_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     rationale: str

@@ -34,35 +34,35 @@ class TestEntityModel:
 
 class TestSourceModel:
     def test_reliability_default(self) -> None:
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         s = Source(
             type=SourceType.arxiv,
             url="https://arxiv.org/abs/1234.5678",
-            published_at=datetime.utcnow(),
+            published_at=datetime.now(UTC),
             raw_content_hash="abc",
         )
         assert s.reliability_prior == 0.5
 
     def test_reliability_out_of_range(self) -> None:
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         with pytest.raises(ValidationError):
             Source(
                 type=SourceType.arxiv,
                 url="u",
-                published_at=datetime.utcnow(),
+                published_at=datetime.now(UTC),
                 raw_content_hash="x",
                 reliability_prior=1.5,
             )
 
     def test_author_optional(self) -> None:
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         s = Source(
             type=SourceType.blog,
             url="https://example.com",
-            published_at=datetime.utcnow(),
+            published_at=datetime.now(UTC),
             raw_content_hash="y",
         )
         assert s.author is None

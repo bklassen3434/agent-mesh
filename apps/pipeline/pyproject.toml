@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mesh-pipeline"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "structlog>=24.0",
+    "mesh-models",
+    "mesh-db",
+    "mesh-llm",
+    "mesh-agents",
+]
+
+[tool.uv.sources]
+mesh-models = { workspace = true }
+mesh-db = { workspace = true }
+mesh-llm = { workspace = true }
+mesh-agents = { workspace = true }
+
+[project.scripts]
+"mesh-pipeline" = "mesh_pipeline.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mesh_pipeline"]

@@ -5,7 +5,7 @@ import time
 from typing import Any, TypeVar, overload
 
 import ollama
-from mesh_tracing.tracing import traced
+from mesh_tracing.tracing import trace_generation
 from pydantic import BaseModel
 from tenacity import (
     RetryError,
@@ -117,17 +117,27 @@ class OllamaClient:
         schema = response_model.model_json_schema() if response_model is not None else None
 
         start = time.monotonic()
-        with traced(name):
-            try:
-                raw = _chat_with_retry(
-                    self._client, self.model, schema, merged_options, name, system, user
-                )
-            except RetryError as exc:
-                raise OllamaNotReadyError(
-                    f"Ollama at {self.host} did not respond after 3 attempts. "
-                    "Is Ollama running? Run: ollama serve"
-                ) from exc
+        try:
+            raw = _chat_with_retry(
+                self._client, self.model, schema, merged_options, name, system, user
+            )
+        except RetryError as exc:
+            raise OllamaNotReadyError(
+                f"Ollama at {self.host} did not respond after 3 attempts. "
+                "Is Ollama running? Run: ollama serve"
+            ) from exc
         latency_ms = int((time.monotonic() - start) * 1000)
+
+        trace_generation(
+            name=name,
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            output=raw,
+            latency_ms=latency_ms,
+        )
 
         if response_model is None:
             return raw, latency_ms

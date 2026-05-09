@@ -1,3 +1,3 @@
-from mesh_tracing.tracing import LangfuseConfig, traced
+from mesh_tracing.tracing import LangfuseConfig, trace_generation, traced
 
-__all__ = ["LangfuseConfig", "traced"]
+__all__ = ["LangfuseConfig", "trace_generation", "traced"]

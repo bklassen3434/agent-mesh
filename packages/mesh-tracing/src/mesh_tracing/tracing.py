@@ -45,3 +45,46 @@ def traced(operation_name: str) -> Generator[None, None, None]:
             client.flush()
     except ImportError:
         yield
+
+
+def trace_generation(
+    name: str,
+    model: str,
+    messages: list[dict[str, str]],
+    output: str,
+    latency_ms: int,
+) -> None:
+    """Record a completed LLM generation to Langfuse with full prompt/output/timing.
+
+    No-ops silently when Langfuse env vars are absent or the package is not installed.
+    Never raises — tracing must not break the pipeline.
+    """
+    config = LangfuseConfig.from_env()
+    if config is None:
+        return
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        import langfuse
+
+        lf = langfuse.Langfuse(
+            public_key=config.public_key,
+            secret_key=config.secret_key,
+            host=config.host,
+        )
+        end_time = datetime.now(UTC)
+        start_time = end_time - timedelta(milliseconds=latency_ms)
+        trace = lf.trace(name=name)
+        trace.generation(
+            name=name,
+            model=model,
+            input=messages,
+            output=output,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        lf.flush()
+    except ImportError:
+        pass
+    except Exception:
+        pass

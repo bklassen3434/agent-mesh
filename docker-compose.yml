@@ -29,7 +29,7 @@ services:
       AGENT_HOST: "0.0.0.0"
       AGENT_PORT: "8002"
       AGENT_PUBLIC_URL: "http://claim-extractor:8002"
-      # Ollama is on the host network — use host.docker.internal or OLLAMA_HOST from .env
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
     env_file:
       - .env
     ports:

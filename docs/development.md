@@ -158,13 +158,39 @@ Phase 2 runs each agent as a separate HTTP server coordinated by the coordinator
 - [Docker](https://docs.docker.com/get-docker/) + Docker Compose v2
 - Ollama accessible from containers (either `host.docker.internal` or a dedicated Ollama compose service)
 
+### Ollama and Docker
+
+Ollama runs **on the host machine**, not inside the compose stack. The
+`claim-extractor` container must reach it over the Docker virtual network.
+
+**Mac / Windows (Docker Desktop)** — works out of the box. The compose file
+defaults `OLLAMA_HOST` to `http://host.docker.internal:11434`, which Docker
+Desktop resolves to the host automatically. No extra configuration needed.
+
+**Linux** — `host.docker.internal` is not available by default. Set
+`OLLAMA_HOST` in your `.env` to the Docker bridge gateway address:
+
+```bash
+echo 'OLLAMA_HOST=http://172.17.0.1:11434' >> .env
+```
+
+To verify Ollama is reachable from inside the container after `make up`:
+
+```bash
+docker compose exec claim-extractor curl -s http://host.docker.internal:11434/api/tags
+```
+
+A JSON response listing models confirms connectivity. If it times out, check
+that Ollama is running (`ollama serve`) and that `OLLAMA_HOST` points to the
+correct address for your platform.
+
 ### Quick start
 
 ```bash
-# Copy env and set OLLAMA_HOST if needed
+# Copy env — no OLLAMA_HOST override needed on Mac/Windows
 cp .env.example .env
-# On Mac/Linux with Ollama on the host:
-# echo 'OLLAMA_HOST=http://host.docker.internal:11434' >> .env
+# Linux only: point containers at the Docker bridge gateway
+# echo 'OLLAMA_HOST=http://172.17.0.1:11434' >> .env
 
 # Build and start agent services
 make up

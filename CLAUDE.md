@@ -101,3 +101,9 @@ apps/cli  (depends on mesh-db, mesh-models, mesh-llm)
   uv run python -c "import mesh_models, mesh_db, mesh_llm, mesh_agents, mesh_tracing"
   uv run mesh-pipeline --help
   ```
+## Commit policy
+- Create a commit after each logical unit of work (feature, bugfix, refactor step).
+- Use Conventional Commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`.
+- Stage with `git add -A` only after reviewing what changed.
+- Do not push to remote unless explicitly asked.
+- Skip commits if the working tree is clean.

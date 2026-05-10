@@ -80,3 +80,24 @@ apps/cli  (depends on mesh-db, mesh-models, mesh-llm)
 | `LANGFUSE_PUBLIC_KEY` | (empty) | Enables tracing if set |
 | `LANGFUSE_SECRET_KEY` | (empty) | Required alongside public key |
 | `LANGFUSE_HOST` | `http://localhost:3000` | Langfuse server |
+
+## Debugging discipline
+
+- **Check environment before diving into internals.** Weird import errors, `site.py`
+  noise, or import machinery failures almost always have an environmental cause:
+  project path with spaces, broken editable install, or stale `.venv`/lockfile.
+  Look there first.
+- **Nuclear reset for inconsistent editable installs.** If some workspace `.pth`
+  files load and others don't, skip deeper investigation:
+  ```bash
+  rm -rf .venv uv.lock && uv sync
+  ```
+- **Spaces in the project path are a known `uv` editable-install footgun.**
+  This repo lives under a path with spaces (`Desktop - Bens MacBook Pro`). If a
+  clean rebuild doesn't resolve import issues, the fix is moving the project, not
+  more debugging.
+- **Verify recovery with both import check and console script, not just one:**
+  ```bash
+  uv run python -c "import mesh_models, mesh_db, mesh_llm, mesh_agents, mesh_tracing"
+  uv run mesh-pipeline --help
+  ```

@@ -617,6 +617,103 @@ def ollama_check() -> None:
         console.print(f"[red]Ollama not reachable: {exc}[/red]")
 
 
+@cli.command("a2a-discover")
+@click.option(
+    "--agent-urls",
+    default=None,
+    envvar="MESH_AGENT_URLS",
+    help="Comma-separated agent base URLs (default: localhost ports 8001-8004)",
+)
+def a2a_discover(agent_urls: str | None) -> None:
+    """Fetch A2A agent cards and print a discovery table."""
+    import asyncio
+
+    import httpx
+    from a2a.client.card_resolver import A2ACardResolver
+
+    _DEFAULT_URLS = [
+        "http://localhost:8001",
+        "http://localhost:8002",
+        "http://localhost:8003",
+        "http://localhost:8004",
+    ]
+    urls = [u.strip() for u in agent_urls.split(",")] if agent_urls else _DEFAULT_URLS
+
+    table = Table(title="Discovered A2A Agents")
+    table.add_column("URL")
+    table.add_column("Name")
+    table.add_column("Version")
+    table.add_column("Skills")
+    table.add_column("Streaming")
+
+    async def _discover() -> None:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            for url in urls:
+                try:
+                    resolver = A2ACardResolver(http, url)
+                    card = await resolver.get_agent_card()
+                    skill_ids = ", ".join(s.id for s in card.skills)
+                    table.add_row(
+                        url,
+                        card.name,
+                        card.version,
+                        skill_ids,
+                        str(card.capabilities.streaming),
+                    )
+                except Exception as exc:
+                    table.add_row(url, "[red]ERROR[/red]", "—", "—", str(exc))
+
+    asyncio.run(_discover())
+    console.print(table)
+
+
+@cli.command("a2a-call")
+@click.argument("skill_id")
+@click.argument("json_payload")
+@click.option(
+    "--agent-urls",
+    default=None,
+    envvar="MESH_AGENT_URLS",
+    help="Comma-separated agent base URLs",
+)
+def a2a_call(skill_id: str, json_payload: str, agent_urls: str | None) -> None:
+    """Dispatch a single skill call and print the result.
+
+    SKILL_ID is the skill to invoke (e.g. 'resolve_entities').
+    JSON_PAYLOAD is the JSON input for that skill.
+    """
+    import asyncio
+    import json as _json
+
+    from mesh_a2a.client import MeshA2AClient
+
+    _DEFAULT_URLS = [
+        "http://localhost:8001",
+        "http://localhost:8002",
+        "http://localhost:8003",
+        "http://localhost:8004",
+    ]
+    urls = [u.strip() for u in agent_urls.split(",")] if agent_urls else _DEFAULT_URLS
+
+    try:
+        payload = _json.loads(json_payload)
+    except _json.JSONDecodeError as exc:
+        console.print(f"[red]Invalid JSON: {exc}[/red]")
+        raise SystemExit(1) from exc
+
+    async def _call() -> Any:
+        async with MeshA2AClient() as c:
+            await c.discover(urls)
+            return await c.call_skill(skill_id, payload)
+
+    try:
+        result = asyncio.run(_call())
+        console.print_json(_json.dumps(result, indent=2))
+    except Exception as exc:
+        console.print(f"[red]Skill call failed: {exc}[/red]")
+        raise SystemExit(1) from exc
+
+
 def _print_relationship_detail(r: Any) -> None:
     from rich.panel import Panel
 

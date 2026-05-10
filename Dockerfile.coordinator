@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Copy workspace config first for caching
+COPY pyproject.toml uv.lock ./
+
+# Copy all packages and apps
+COPY packages/ packages/
+COPY apps/ apps/
+
+# Install the pipeline package (coordinator) and its dependencies
+RUN uv sync --package mesh-pipeline --no-dev
+
+# Data directory (DuckDB volume mount point)
+RUN mkdir -p /app/data
+
+ENTRYPOINT ["uv", "run", "mesh-pipeline", "--a2a"]

@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Copy workspace config first for caching
+COPY pyproject.toml uv.lock ./
+
+# Copy all packages (needed for workspace resolution)
+COPY packages/ packages/
+COPY apps/ apps/
+
+# Install the agent-servers package and its dependencies
+RUN uv sync --package mesh-agent-servers --no-dev
+
+# Default entrypoint is overridden per-service in docker-compose.yml
+CMD ["python", "-m", "mesh_agent_servers.arxiv_scout"]

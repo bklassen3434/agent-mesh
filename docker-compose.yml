@@ -1,0 +1,113 @@
+services:
+  arxiv-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.arxiv_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8001"
+      AGENT_PUBLIC_URL: "http://arxiv-scout:8001"
+    env_file:
+      - .env
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  claim-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.claim_extractor"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8002"
+      AGENT_PUBLIC_URL: "http://claim-extractor:8002"
+      # Ollama is on the host network — use host.docker.internal or OLLAMA_HOST from .env
+    env_file:
+      - .env
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  entity-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.entity_tracker"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8003"
+      AGENT_PUBLIC_URL: "http://entity-tracker:8003"
+    env_file:
+      - .env
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  sota-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.sota_tracker"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8004"
+      AGENT_PUBLIC_URL: "http://sota-tracker:8004"
+    env_file:
+      - .env
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    environment:
+      MESH_USE_A2A: "true"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004"
+      MESH_DB_PATH: "/app/data/mesh.db"
+    env_file:
+      - .env
+    volumes:
+      - mesh-data:/app/data
+    depends_on:
+      arxiv-scout:
+        condition: service_healthy
+      claim-extractor:
+        condition: service_healthy
+      entity-tracker:
+        condition: service_healthy
+      sota-tracker:
+        condition: service_healthy
+    profiles:
+      - pipeline
+
+volumes:
+  mesh-data:
+    driver: local

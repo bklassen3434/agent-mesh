@@ -6,8 +6,6 @@ import os
 import click
 import structlog
 
-from mesh_pipeline.orchestrator import parse_since, run_pipeline
-
 structlog.configure(
     processors=[
         structlog.stdlib.add_log_level,
@@ -37,11 +35,25 @@ structlog.configure(
     help="Fetch papers since this date/duration (e.g. 24h, 7d, 2024-01-01)",
 )
 @click.option("--db-path", default=None, envvar="MESH_DB_PATH", help="DuckDB file path")
-def main(categories: str, max_papers: int, since: str | None, db_path: str | None) -> None:
+@click.option(
+    "--a2a",
+    "use_a2a",
+    is_flag=True,
+    default=os.environ.get("MESH_USE_A2A", "").lower() in ("1", "true", "yes"),
+    help="Use A2A coordinator (Phase 2) instead of in-process orchestrator",
+)
+def main(
+    categories: str, max_papers: int, since: str | None, db_path: str | None, use_a2a: bool
+) -> None:
     """Run the Agent Mesh ingestion pipeline."""
     cats = [c.strip() for c in categories.split(",") if c.strip()]
-    since_dt = parse_since(since)
 
+    if use_a2a:
+        from mesh_pipeline.coordinator import parse_since, run_pipeline
+    else:
+        from mesh_pipeline.orchestrator import parse_since, run_pipeline  # type: ignore[assignment]
+
+    since_dt = parse_since(since)
     result = asyncio.run(
         run_pipeline(
             categories=cats,

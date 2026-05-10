@@ -54,6 +54,48 @@ Phase 1 explicitly excludes:
 - Web UI or API server
 - Scheduling / cron
 
+## Phase 2 — A2A Protocol (current)
+
+Phase 2 promotes each agent from a Python class to an A2A-compliant HTTP server. The in-process orchestrator is replaced by a coordinator that discovers agents via capability cards and dispatches by skill ID.
+
+### Distributed mesh diagram
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Coordinator  (apps/pipeline/coordinator.py)                  │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ 1. discover() → fetch agent cards from base URLs         │ │
+│  │ 2. call_skill("scout_arxiv", {...})                       │ │
+│  │ 3. call_skill("extract_claims", {paper})  [×N, bounded]  │ │
+│  │ 4. call_skill("resolve_entities", {names, existing})     │ │
+│  │ 5. call_skill("update_sota", {claims, existing_beliefs}) │ │
+│  │ 6. All DB reads/writes via mesh-db                        │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                    ▼  JSON-RPC 2.0 (A2A)                      │
+└──────┬────────────┬─────────────┬──────────────┬──────────────┘
+       │            │             │              │
+       ▼            ▼             ▼              ▼
+ ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌──────────────┐
+ │ arxiv-   │ │ claim-  │ │ entity-  │ │ sota-        │
+ │ scout    │ │ extractor│ │ tracker  │ │ tracker      │
+ │ :8001    │ │ :8002   │ │ :8003    │ │ :8004        │
+ │          │ │ (Ollama)│ │          │ │              │
+ └──────────┘ └─────────┘ └──────────┘ └──────────────┘
+```
+
+Each agent:
+- Exposes `GET /.well-known/agent-card.json` for discovery
+- Handles `message/send` JSON-RPC calls at `/`
+- Has `/healthz` for liveness checks
+- Is a **pure function** (no DB access, no side effects)
+
+The coordinator:
+- Owns the DuckDB file (mounted as a volume)
+- Pre-fetches DB context (existing entities, beliefs) and passes it to agents
+- Persists all results after each skill call
+
+See [docs/a2a.md](a2a.md) for full protocol documentation.
+
 ## Package layout
 
 ```

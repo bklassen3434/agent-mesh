@@ -149,6 +149,82 @@ Copy `.env.example` to `.env` and fill in as needed:
 
 Tracing is a no-op if the Langfuse keys are absent — you do not need a Langfuse instance to develop.
 
+## Running the distributed stack (Phase 2)
+
+Phase 2 runs each agent as a separate HTTP server coordinated by the coordinator.
+
+### Prerequisites (additional)
+
+- [Docker](https://docs.docker.com/get-docker/) + Docker Compose v2
+- Ollama accessible from containers (either `host.docker.internal` or a dedicated Ollama compose service)
+
+### Quick start
+
+```bash
+# Copy env and set OLLAMA_HOST if needed
+cp .env.example .env
+# On Mac/Linux with Ollama on the host:
+# echo 'OLLAMA_HOST=http://host.docker.internal:11434' >> .env
+
+# Build and start agent services
+make up
+
+# Run one full pipeline cycle
+make pipeline
+
+# Show pipeline stats
+uv run mesh.cli pipeline-stats --last 1
+
+# Discover running agents
+uv run mesh.cli a2a-discover
+
+# Call a skill manually (for debugging)
+uv run mesh.cli a2a-call resolve_entities '{"candidate_names": ["GPT-4"], "existing_entities": []}'
+
+# Tear down
+make down
+```
+
+### Manual smoke test
+
+```bash
+make smoke
+```
+
+This brings up the full stack, runs one pipeline cycle, checks DB row counts, and verifies A2A discovery.
+
+### Running a single agent in isolation
+
+```bash
+# Entity tracker on port 8003
+AGENT_PORT=8003 AGENT_PUBLIC_URL=http://localhost:8003 \
+  uv run python -m mesh_agent_servers.entity_tracker
+
+# In another terminal — call the skill:
+uv run mesh.cli a2a-call resolve_entities \
+  '{"candidate_names": ["GPT-4"], "existing_entities": []}' \
+  --agent-urls http://localhost:8003
+```
+
+### Agent ports
+
+| Agent | Port | Skill |
+|-------|------|-------|
+| arxiv-scout | 8001 | `scout_arxiv` |
+| claim-extractor | 8002 | `extract_claims` |
+| entity-tracker | 8003 | `resolve_entities` |
+| sota-tracker | 8004 | `update_sota` |
+
+### New environment variables (Phase 2)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MESH_USE_A2A` | `false` | Set to `true` to use A2A coordinator instead of Phase 1 orchestrator |
+| `MESH_AGENT_URLS` | localhost ports 8001-8004 | Comma-separated agent base URLs for discovery |
+| `AGENT_HOST` | `0.0.0.0` | Bind address for agent servers |
+| `AGENT_PORT` | varies | Port for agent server |
+| `AGENT_PUBLIC_URL` | `http://<name>:<port>` | URL advertised in the Agent Card |
+
 ## Adding a new migration
 
 1. Create `packages/mesh-db/migrations/NNN_description.sql`

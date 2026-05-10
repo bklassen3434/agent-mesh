@@ -17,7 +17,7 @@ from tenacity import (
 
 T = TypeVar("T", bound=BaseModel)
 
-_DEFAULT_MODEL = "qwen3:14b"
+_DEFAULT_MODEL = "qwen3:8b"
 _DEFAULT_HOST = "http://localhost:11434"
 _DEFAULT_OPTIONS: dict[str, Any] = {"temperature": 0.1}
 

@@ -73,7 +73,7 @@ apps/cli  (depends on mesh-db, mesh-models, mesh-llm)
 |---|---|---|
 | `MESH_DB_PATH` | `./data/mesh.db` | DuckDB file path |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `MESH_LLM_MODEL` | `qwen3:14b` | Model for claim extraction |
+| `MESH_LLM_MODEL` | `qwen3:8b` | Model for claim extraction |
 | `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |
 | `MESH_PIPELINE_MAX_PAPERS` | `20` | Papers per pipeline run |
 | `MESH_PIPELINE_CONCURRENCY` | `3` | Parallel LLM slots |

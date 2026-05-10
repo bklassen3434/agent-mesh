@@ -22,18 +22,18 @@ Ollama listens on `http://localhost:11434` by default.
 
 ## Pull a model
 
-The default model is `qwen3:14b`. Pull it before running the pipeline:
+The default model is `qwen3:8b`. Pull it before running the pipeline:
 
 ```bash
-ollama pull qwen3:14b
+ollama pull qwen3:8b
 ```
 
 ## Model recommendations
 
 | Model | VRAM | Speed | Quality | When to use |
 |-------|------|-------|---------|-------------|
-| `qwen3:14b` | ~10 GB | medium | ★★★★☆ | **Default** — best balance for most setups |
-| `qwen3:8b` | ~6 GB | fast | ★★★☆☆ | Lower-memory machines (16 GB RAM); slightly more extraction errors |
+| `qwen3:8b` | ~6 GB | fast | ★★★☆☆ | **Default** — fast and memory-efficient |
+| `qwen3:14b` | ~10 GB | medium | ★★★★☆ | Better extraction quality; needs ~10 GB VRAM |
 | `qwen3.6:27b` | ~20 GB | slow | ★★★★★ | High-end workstations / A100 class GPUs |
 | `gemma3:27b` | ~20 GB | slow | ★★★★★ | Alternative to qwen3.6:27b; strong on structured output |
 
@@ -45,7 +45,7 @@ Set the `MESH_LLM_MODEL` environment variable in your `.env`:
 MESH_LLM_MODEL=qwen3:8b
 ```
 
-The pipeline picks it up automatically via `OllamaClient(model=os.getenv("MESH_LLM_MODEL", "qwen3:14b"))`.
+The pipeline picks it up automatically via `OllamaClient(model=os.getenv("MESH_LLM_MODEL", "qwen3:8b"))`.
 
 ## Troubleshooting
 
@@ -54,7 +54,7 @@ The pipeline picks it up automatically via `OllamaClient(model=os.getenv("MESH_L
 The model must be pulled before use. Pull it explicitly:
 
 ```bash
-ollama pull qwen3:14b
+ollama pull qwen3:8b
 ```
 
 Check what's available locally:

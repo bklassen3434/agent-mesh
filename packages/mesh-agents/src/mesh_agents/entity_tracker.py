@@ -6,7 +6,7 @@ from typing import Any
 import duckdb
 from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events.event_queue_v2 import EventQueue
+from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore

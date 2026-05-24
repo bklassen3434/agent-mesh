@@ -26,6 +26,28 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  hn-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.hn_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8005"
+      AGENT_PUBLIC_URL: "http://hn-scout:8005"
+      MESH_HN_KEYWORDS: ${MESH_HN_KEYWORDS:-AI,LLM,GPT,Claude,robotics,RAG,agent}
+    env_file:
+      - .env
+    ports:
+      - "8005:8005"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .
@@ -145,7 +167,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005"
       MESH_DB_PATH: "/app/data/mesh.db"
     env_file:
       - .env

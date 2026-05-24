@@ -21,6 +21,7 @@ mesh-agent-arxiv-scout = "mesh_agent_servers.arxiv_scout:main"
 mesh-agent-claim-extractor = "mesh_agent_servers.claim_extractor:main"
 mesh-agent-entity-tracker = "mesh_agent_servers.entity_tracker:main"
 mesh-agent-sota-tracker = "mesh_agent_servers.sota_tracker:main"
+mesh-agent-hn-scout = "mesh_agent_servers.hn_scout:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mesh_agent_servers"]

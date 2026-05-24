@@ -90,10 +90,15 @@ async def run_pipeline(
         discovered = await client.discover(_agent_urls())
         log.info("agents_discovered", skills=list(discovered.keys()))
 
-        if "scout_arxiv" not in discovered:
-            raise SystemExit("ArXiv Scout agent not discovered — aborting pipeline")
+        # ── 1. Scout all sources via skill_id discovery ────────────────────
+        # Any agent that advertises a "scout_*" skill is dispatched. New
+        # source types (HN, GitHub, …) drop in by publishing their card; the
+        # coordinator never grows a per-scout branch.
+        scout_ids = sorted(sid for sid in discovered if sid.startswith("scout_"))
+        if not scout_ids:
+            raise SystemExit("No scout agents discovered — aborting pipeline")
+        log.info("scouts_discovered", scout_skills=scout_ids)
 
-        # ── 1. Scout arXiv ─────────────────────────────────────────────────
         scout_payload: dict[str, Any] = {
             "categories": categories,
             "max_results": max_papers,
@@ -101,12 +106,14 @@ async def run_pipeline(
         if since is not None:
             scout_payload["since"] = since.isoformat()
 
-        scout_result = await client.call_skill(
-            "scout_arxiv", scout_payload, traceparent=traceparent
-        )
-        papers_raw: list[dict[str, Any]] = scout_result.get("papers", [])
-        papers = [ScoutedPaper.model_validate(p) for p in papers_raw]
-        log.info("papers_scouted", count=len(papers))
+        papers: list[ScoutedPaper] = []
+        for scout_id in scout_ids:
+            scout_result = await client.call_skill(
+                scout_id, scout_payload, traceparent=traceparent
+            )
+            for p in scout_result.get("papers", []):
+                papers.append(ScoutedPaper.model_validate(p))
+            log.info("scout_returned", scout=scout_id, total_papers_so_far=len(papers))
         run.papers_scouted = len(papers)
 
         # ── 2. Deduplicate ─────────────────────────────────────────────────

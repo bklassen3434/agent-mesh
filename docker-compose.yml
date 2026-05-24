@@ -1,3 +1,9 @@
+# Pin the project name so `docker compose` stays attached to the same stack
+# even if this file moves to a directory with a different basename. Without
+# this, moving the repo from `agent-mesh/` to `agent_mesh/` would orphan the
+# running containers.
+name: agent-mesh
+
 services:
   arxiv-scout:
     build:

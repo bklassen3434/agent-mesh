@@ -47,7 +47,7 @@ async def run_pipeline(
     since: datetime | None,
     db_path: str | None = None,
 ) -> PipelineResult:
-    llm = make_llm_client()
+    llm = make_llm_client(agent_name="extraction")
 
     log.info("pipeline_starting", model=llm.model, categories=categories, max_papers=max_papers)
 

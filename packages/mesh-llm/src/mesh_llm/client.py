@@ -54,8 +54,17 @@ def _should_retry(exc: BaseException) -> bool:
 
 
 class OllamaClient:
-    def __init__(self, model: str | None = None, host: str | None = None) -> None:
-        self.model = model or os.environ.get("MESH_LLM_MODEL", _DEFAULT_MODEL)
+    def __init__(
+        self,
+        model: str | None = None,
+        host: str | None = None,
+        agent_name: str | None = None,
+    ) -> None:
+        if model is not None:
+            self.model = model
+        else:
+            from mesh_llm.factory import resolve_model
+            self.model = resolve_model(agent_name, _DEFAULT_MODEL)
         self.host = host or os.environ.get("OLLAMA_HOST", _DEFAULT_HOST)
         self._client = ollama.Client(host=self.host)
 

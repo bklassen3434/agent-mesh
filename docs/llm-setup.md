@@ -147,3 +147,25 @@ The factory in `packages/mesh-llm/src/mesh_llm/factory.py` reads `MESH_LLM_PROVI
 3. `make pipeline` — the orchestrator's `make_llm_client()` will instantiate the new backend.
 
 No code changes needed; both clients conform to the same `LLMClient` Protocol.
+
+---
+
+## Per-agent model routing
+
+Different agents can use different models. `make_llm_client(agent_name=...)` resolves the model via this precedence chain (highest wins):
+
+1. **`MESH_LLM_MODEL_<AGENT>`** — per-agent override. E.g. `MESH_LLM_MODEL_SKEPTIC=claude-opus-4-7`, `MESH_LLM_MODEL_EXTRACTION=claude-haiku-4-5`. Agent names today: `extraction`, `skeptic`. (More as new LLM-backed agents land.)
+2. **`MESH_LLM_MODEL_DEFAULT`** — workspace-wide override applied to any agent without a per-agent var.
+3. **`MESH_LLM_MODEL`** — legacy single-model env from Phase 3. Still honored for back-compat.
+4. **Provider hard-coded fallback** — `claude-haiku-4-5` for Anthropic, `qwen3:8b` for Ollama.
+
+Example: run the skeptic on Opus while keeping extraction cheap on Haiku:
+
+```bash
+export MESH_LLM_MODEL_DEFAULT=claude-haiku-4-5
+export MESH_LLM_MODEL_SKEPTIC=claude-opus-4-7
+make pipeline   # extraction uses Haiku
+make skeptic    # skeptic uses Opus, all other agents use Haiku
+```
+
+Verify by grepping the model string in container logs after a run.

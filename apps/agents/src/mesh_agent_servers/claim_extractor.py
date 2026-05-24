@@ -20,7 +20,7 @@ def main() -> None:
     port = int(os.environ.get("AGENT_PORT", "8002"))
     public_url = os.environ.get("AGENT_PUBLIC_URL", f"http://claim-extractor:{port}")
 
-    llm = make_llm_client()
+    llm = make_llm_client(agent_name="extraction")
     try:
         llm.health_check()
     except LLMProviderNotReadyError as exc:

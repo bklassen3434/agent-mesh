@@ -57,8 +57,13 @@ class AnthropicClient:
         model: str | None = None,
         api_key: str | None = None,
         max_tokens: int = _DEFAULT_MAX_TOKENS,
+        agent_name: str | None = None,
     ) -> None:
-        self.model = model or os.environ.get("MESH_LLM_MODEL", _DEFAULT_MODEL)
+        if model is not None:
+            self.model = model
+        else:
+            from mesh_llm.factory import resolve_model
+            self.model = resolve_model(agent_name, _DEFAULT_MODEL)
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise AnthropicNotReadyError(

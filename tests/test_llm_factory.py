@@ -39,3 +39,58 @@ def test_anthropic_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MESH_LLM_PROVIDER", "anthropic")
     with pytest.raises(AnthropicNotReadyError, match="ANTHROPIC_API_KEY"):
         make_llm_client()
+
+
+# Per-agent model routing precedence ----------------------------------------
+
+
+def _clear_model_env(mp: pytest.MonkeyPatch) -> None:
+    for var in (
+        "MESH_LLM_MODEL_SKEPTIC",
+        "MESH_LLM_MODEL_EXTRACTION",
+        "MESH_LLM_MODEL_DEFAULT",
+        "MESH_LLM_MODEL",
+    ):
+        mp.delenv(var, raising=False)
+
+
+def test_per_agent_env_wins_over_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_model_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MESH_LLM_MODEL_DEFAULT", "claude-sonnet-4-6")
+    monkeypatch.setenv("MESH_LLM_MODEL_SKEPTIC", "claude-opus-4-7")
+
+    skeptic = make_llm_client(agent_name="skeptic")
+    extractor = make_llm_client(agent_name="extraction")
+
+    assert skeptic.model == "claude-opus-4-7"
+    assert extractor.model == "claude-sonnet-4-6"  # no per-agent override → DEFAULT
+
+
+def test_default_env_wins_over_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_model_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MESH_LLM_MODEL", "claude-haiku-4-5")
+    monkeypatch.setenv("MESH_LLM_MODEL_DEFAULT", "claude-sonnet-4-6")
+
+    client = make_llm_client(agent_name="skeptic")
+    assert client.model == "claude-sonnet-4-6"
+
+
+def test_legacy_env_still_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 3 callers set only MESH_LLM_MODEL. Must remain functional."""
+    _clear_model_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MESH_LLM_MODEL", "claude-haiku-4-5")
+
+    client = make_llm_client(agent_name="extraction")
+    assert client.model == "claude-haiku-4-5"
+
+
+def test_provider_default_when_nothing_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_model_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    client = make_llm_client(agent_name="skeptic")
+    # AnthropicClient's _DEFAULT_MODEL
+    assert client.model == "claude-haiku-4-5"

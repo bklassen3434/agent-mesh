@@ -35,6 +35,10 @@ services:
       AGENT_HOST: "0.0.0.0"
       AGENT_PORT: "8002"
       AGENT_PUBLIC_URL: "http://claim-extractor:8002"
+      # LLM provider — default Anthropic (Haiku 4.5); set to "ollama" to use
+      # the local Ollama path. ANTHROPIC_API_KEY comes from .env.
+      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
+      MESH_LLM_MODEL: ${MESH_LLM_MODEL:-claude-haiku-4-5}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
     env_file:
       - .env

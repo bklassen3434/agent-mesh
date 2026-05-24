@@ -16,7 +16,7 @@ uv sync
 cp .env.example .env
 uv run mesh.cli init-db        # creates ./data/mesh.db, applies migrations
 
-# Run the pipeline (requires Ollama running locally)
+# Run the pipeline (defaults to Anthropic Claude Haiku 4.5; needs ANTHROPIC_API_KEY in .env. Switch to local Ollama with MESH_LLM_PROVIDER=ollama)
 uv run mesh-pipeline
 uv run mesh-pipeline --categories cs.LG --max-papers 50 --since 7d
 
@@ -26,7 +26,7 @@ uv run mesh.cli show-sota-beliefs
 uv run mesh.cli show-recent-claims
 uv run mesh.cli ollama-check
 
-# Tests (no Ollama needed — uses MockOllamaClient)
+# Tests (no LLM needed — uses mocked clients)
 uv run pytest
 uv run pytest tests/test_orchestrator.py   # single file
 
@@ -61,10 +61,10 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 - **`packages/mesh-models`** — Pydantic v2 domain models; no I/O. Seven entities: `Entity`, `Source`, `Claim`, `Belief`, `BeliefRevision`, `Relationship`, `Investigation`.
 - **`packages/mesh-db`** — DuckDB access layer. One typed module per entity (`entities.py`, `claims.py`, etc.). Migrations in `packages/mesh-db/migrations/NNN_description.sql`, applied via `apply_migrations()` which is idempotent.
 - **`packages/mesh-tracing`** — Langfuse wrapper; no-ops when env vars are absent.
-- **`packages/mesh-llm`** — `OllamaClient` with structured output (`format=model.model_json_schema()`), retry via tenacity, and `complete_with_latency()`. `LLMResponseError` signals parse failure (pipeline continues); `OllamaNotReadyError` signals connection failure (pipeline aborts).
-- **`packages/mesh-agents`** — Four agent classes, each with `async run(input) -> output`. `ClaimExtractorAgent` calls Ollama; `EntityTrackerAgent` does find-or-create against DB; `SotaTrackerAgent` is rule-based (no LLM).
+- **`packages/mesh-llm`** — Two interchangeable LLM clients implementing the `LLMClient` Protocol: `AnthropicClient` (default; `messages.parse()` for Pydantic-typed structured output with `cache_control` on the system prompt) and `OllamaClient` (local; structured output via `format=schema`). `make_llm_client()` picks one based on `MESH_LLM_PROVIDER`. `LLMResponseError` signals parse failure (pipeline continues); `AnthropicNotReadyError` / `OllamaNotReadyError` signal provider failure (pipeline aborts).
+- **`packages/mesh-agents`** — Four agent classes, each with `async run(input) -> output`. `ClaimExtractorAgent` calls the configured LLM via `LLMClient`; `EntityTrackerAgent` does find-or-create against DB; `SotaTrackerAgent` is rule-based (no LLM).
 - **`apps/cli`** — Click CLI (`mesh.cli`) wrapping all DB operations with `rich` table output.
-- **`apps/pipeline`** — Async orchestrator (`run_pipeline`). Bounded concurrency via `asyncio.Semaphore(MESH_PIPELINE_CONCURRENCY)`. One bad paper records an error and continues; Ollama connection failure aborts.
+- **`apps/pipeline`** — Async orchestrator (`run_pipeline`). Bounded concurrency via `asyncio.Semaphore(MESH_PIPELINE_CONCURRENCY)`. One bad paper records an error and continues; LLM-provider failure aborts.
 - **`apps/api`** (Phase 3) — FastAPI read-only HTTP service on :8000. One read-only DuckDB connection per request via a FastAPI dependency. Endpoints under `/api/v1/`; OpenAPI at `/openapi.json`, Swagger UI at `/docs`. Applies migrations once at startup against a brief read-write open; all request handling is read-only.
 - **`apps/wiki`** (Phase 3) — Next.js 15 App Router wiki on :3000. Server components only (no client state libs); Tailwind + hand-written shadcn-style primitives. TypeScript types live in `apps/wiki/src/lib/api-types.ts`, generated from the API's OpenAPI spec by `openapi-typescript`. CI regenerates and diffs to detect drift.
 
@@ -86,8 +86,10 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | Variable | Default | Purpose |
 |---|---|---|
 | `MESH_DB_PATH` | `./data/mesh.db` | DuckDB file path |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `MESH_LLM_MODEL` | `qwen3:8b` | Model for claim extraction |
+| `MESH_LLM_PROVIDER` | `anthropic` | `anthropic` (cloud, Haiku 4.5) or `ollama` (local) |
+| `MESH_LLM_MODEL` | `claude-haiku-4-5` | Model ID; matches the provider |
+| `ANTHROPIC_API_KEY` | (empty) | Required when provider=anthropic |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (provider=ollama only) |
 | `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |
 | `MESH_PIPELINE_MAX_PAPERS` | `20` | Papers per pipeline run |
 | `MESH_PIPELINE_CONCURRENCY` | `3` | Parallel LLM slots |

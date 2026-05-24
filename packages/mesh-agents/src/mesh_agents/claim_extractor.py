@@ -13,7 +13,12 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
 from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
-from mesh_llm.client import LLMResponseError, OllamaClient, OllamaNotReadyError
+from mesh_llm import (
+    AnthropicNotReadyError,
+    LLMClient,
+    LLMResponseError,
+    OllamaNotReadyError,
+)
 from mesh_llm.prompts import CLAIM_EXTRACTION_SYSTEM, format_extraction_user
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
@@ -84,7 +89,7 @@ def _extract_sync(llm: Any, paper: ScoutedPaper) -> tuple[list[ExtractedClaim], 
 
 
 class _ClaimExtractorExecutor(AgentExecutor):
-    def __init__(self, llm: OllamaClient) -> None:
+    def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -110,7 +115,7 @@ class _ClaimExtractorExecutor(AgentExecutor):
 
         try:
             claims, latency_ms = await asyncio.to_thread(_extract_sync, self._llm, paper)
-        except OllamaNotReadyError:
+        except (OllamaNotReadyError, AnthropicNotReadyError):
             raise
         except LLMResponseError as exc:
             logger.warning(
@@ -153,7 +158,7 @@ class _ClaimExtractorExecutor(AgentExecutor):
 class ClaimExtractorAgent(BaseAgent):
     name = "claim_extractor"
 
-    def __init__(self, llm: OllamaClient | None = None, db_conn: Any | None = None) -> None:
+    def __init__(self, llm: LLMClient | None = None, db_conn: Any | None = None) -> None:
         super().__init__(llm=llm, db_conn=db_conn)
 
     async def run(self, input: BaseModel) -> ClaimExtractorOutput:
@@ -162,7 +167,7 @@ class ClaimExtractorAgent(BaseAgent):
 
         try:
             claims, latency_ms = await asyncio.to_thread(_extract_sync, self.llm, input.paper)
-        except OllamaNotReadyError:
+        except (OllamaNotReadyError, AnthropicNotReadyError):
             raise
         except LLMResponseError as exc:
             logger.warning(
@@ -179,7 +184,7 @@ class ClaimExtractorAgent(BaseAgent):
         )
 
     def to_a2a_server(self, url: str) -> Starlette:
-        assert isinstance(self.llm, OllamaClient), "ClaimExtractorAgent requires an OllamaClient"
+        assert self.llm is not None, "ClaimExtractorAgent requires an llm client"
         card = build_agent_card(
             name="Claim Extractor",
             description="Extracts structured claims from arXiv paper abstracts using an LLM.",

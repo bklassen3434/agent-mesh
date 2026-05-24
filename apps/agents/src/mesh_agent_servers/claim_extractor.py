@@ -5,7 +5,7 @@ import os
 
 import uvicorn
 from mesh_agents.claim_extractor import ClaimExtractorAgent
-from mesh_llm.client import OllamaClient, OllamaNotReadyError
+from mesh_llm import AnthropicNotReadyError, OllamaNotReadyError, make_llm_client
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -20,11 +20,11 @@ def main() -> None:
     port = int(os.environ.get("AGENT_PORT", "8002"))
     public_url = os.environ.get("AGENT_PUBLIC_URL", f"http://claim-extractor:{port}")
 
-    llm = OllamaClient()
+    llm = make_llm_client()
     try:
         llm.health_check()
-    except OllamaNotReadyError as exc:
-        raise SystemExit(f"Ollama not ready: {exc}") from exc
+    except (OllamaNotReadyError, AnthropicNotReadyError) as exc:
+        raise SystemExit(f"LLM provider not ready: {exc}") from exc
 
     agent = ClaimExtractorAgent(llm=llm)
     app = agent.to_a2a_server(url=public_url)

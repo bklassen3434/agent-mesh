@@ -60,7 +60,7 @@ def _run_pipeline(tmp_path: Path, arxiv_ids: list[str] | None = None) -> Pipelin
 
     with (
         patch("mesh_agents.arxiv_scout.arxiv.Client") as mock_cls,
-        patch("mesh_pipeline.orchestrator.OllamaClient", return_value=MockOllamaClient()),
+        patch("mesh_pipeline.orchestrator.make_llm_client", return_value=MockOllamaClient()),
     ):
         mock_client = MagicMock()
         mock_client.results.return_value = iter(fake_results)
@@ -146,7 +146,7 @@ class TestOrchestrator:
                 raise OllamaNotReadyError("offline")
 
         with (
-            patch("mesh_pipeline.orchestrator.OllamaClient", return_value=FailingLLM()),
+            patch("mesh_pipeline.orchestrator.make_llm_client", return_value=FailingLLM()),
             pytest.raises(SystemExit),
         ):
             asyncio.run(
@@ -185,7 +185,7 @@ class TestOrchestrator:
 
         with (
             patch("mesh_agents.arxiv_scout.arxiv.Client") as mock_cls,
-            patch("mesh_pipeline.orchestrator.OllamaClient", return_value=PartiallyFailingLLM()),
+            patch("mesh_pipeline.orchestrator.make_llm_client", return_value=PartiallyFailingLLM()),
         ):
             mock_client = MagicMock()
             mock_client.results.return_value = iter([

@@ -1,4 +1,4 @@
-.PHONY: up down logs pipeline smoke
+.PHONY: up down logs pipeline smoke wiki api types
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
 
@@ -33,3 +33,16 @@ smoke: up
 	uv run mesh.cli a2a-discover \
 		--agent-urls "http://localhost:8001,http://localhost:8002,http://localhost:8003,http://localhost:8004"
 	@echo "Smoke test complete."
+
+# ── Wiki / API convenience ──────────────────────────────────────────────────
+
+wiki:
+	@open http://localhost:3000
+
+api:
+	@open http://localhost:8000/docs
+
+# Regenerate apps/wiki/src/lib/api-types.ts from a running API at :8000.
+# Errors out if the API isn't reachable — boot it via `make up` first.
+types:
+	@cd apps/wiki && npm run generate-types

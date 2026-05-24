@@ -120,7 +120,9 @@ services:
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      # Force IPv4 — Next.js standalone binds IPv4 only and BusyBox wget
+      # would otherwise hit ::1 first via "localhost".
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 10s
       timeout: 5s
       retries: 5

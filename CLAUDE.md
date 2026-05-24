@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Agent Mesh is a persistent multi-agent system for tracking AI/robotics research. The system maintains a living knowledge base built from structured **Claims** (immutable, extracted from sources) synthesized into mutable **Beliefs**. Currently in **Phase 1** — end-to-end pipeline: arxiv → Ollama claim extraction → entity tracking → SOTA beliefs. No A2A protocol yet.
+Agent Mesh is a persistent multi-agent system for tracking AI/robotics research. The system maintains a living knowledge base built from structured **Claims** (immutable, extracted from sources) synthesized into mutable **Beliefs**.
+
+**Phase status:** Phases 0–2 complete (substrate, end-to-end pipeline, A2A protocol promotion). **Phase 3 in progress** — a read-only FastAPI service (`apps/api`, :8000) in front of DuckDB and a Next.js wiki (`apps/wiki`, :3000) that renders entities, claims, beliefs with full provenance, and the revision timeline. Both new services come up with `make up` alongside the four A2A agents.
 
 ## Commands
 
@@ -32,6 +34,14 @@ uv run pytest tests/test_orchestrator.py   # single file
 uv run ruff check .
 uv run ruff check . --fix
 uv run mypy .
+
+# Phase 3: read API + wiki
+uv run mesh-api                            # FastAPI on :8000; /docs for Swagger
+make wiki                                  # opens http://localhost:3000
+make api                                   # opens http://localhost:8000/docs
+make types                                 # regenerate apps/wiki/src/lib/api-types.ts
+cd apps/wiki && npm run dev                # wiki dev mode against a running API
+cd apps/wiki && npm run build              # production build (used by Dockerfile.wiki)
 ```
 
 CI runs `ruff check`, `mypy`, and `pytest -v` on every push.
@@ -43,7 +53,9 @@ This is a `uv` workspace monorepo. Dependency flow is strictly one-way:
 ```
 mesh-models  ←  mesh-db  ←  mesh-agents  ←  apps/pipeline
 mesh-tracing  ←  mesh-llm  ←  mesh-agents
-apps/cli  (depends on mesh-db, mesh-models, mesh-llm)
+apps/cli    (depends on mesh-db, mesh-models, mesh-llm)
+apps/api    (depends on mesh-db, mesh-models)         # Phase 3
+apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 ```
 
 - **`packages/mesh-models`** — Pydantic v2 domain models; no I/O. Seven entities: `Entity`, `Source`, `Claim`, `Belief`, `BeliefRevision`, `Relationship`, `Investigation`.
@@ -53,6 +65,8 @@ apps/cli  (depends on mesh-db, mesh-models, mesh-llm)
 - **`packages/mesh-agents`** — Four agent classes, each with `async run(input) -> output`. `ClaimExtractorAgent` calls Ollama; `EntityTrackerAgent` does find-or-create against DB; `SotaTrackerAgent` is rule-based (no LLM).
 - **`apps/cli`** — Click CLI (`mesh.cli`) wrapping all DB operations with `rich` table output.
 - **`apps/pipeline`** — Async orchestrator (`run_pipeline`). Bounded concurrency via `asyncio.Semaphore(MESH_PIPELINE_CONCURRENCY)`. One bad paper records an error and continues; Ollama connection failure aborts.
+- **`apps/api`** (Phase 3) — FastAPI read-only HTTP service on :8000. One read-only DuckDB connection per request via a FastAPI dependency. Endpoints under `/api/v1/`; OpenAPI at `/openapi.json`, Swagger UI at `/docs`. Applies migrations once at startup against a brief read-write open; all request handling is read-only.
+- **`apps/wiki`** (Phase 3) — Next.js 15 App Router wiki on :3000. Server components only (no client state libs); Tailwind + hand-written shadcn-style primitives. TypeScript types live in `apps/wiki/src/lib/api-types.ts`, generated from the API's OpenAPI spec by `openapi-typescript`. CI regenerates and diffs to detect drift.
 
 ## Key invariants
 
@@ -80,6 +94,11 @@ apps/cli  (depends on mesh-db, mesh-models, mesh-llm)
 | `LANGFUSE_PUBLIC_KEY` | (empty) | Enables tracing if set |
 | `LANGFUSE_SECRET_KEY` | (empty) | Required alongside public key |
 | `LANGFUSE_HOST` | `http://localhost:3000` | Langfuse server |
+| `API_HOST` | `0.0.0.0` | FastAPI bind host |
+| `API_PORT` | `8000` | FastAPI bind port |
+| `API_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist |
+| `INTERNAL_API_URL` | `http://api:8000` | Wiki server-component target inside docker |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Wiki browser target (baked in at build) |
 
 ## Debugging discipline
 

@@ -256,3 +256,41 @@ uv run mesh.cli a2a-call resolve_entities \
 1. Create `packages/mesh-db/migrations/NNN_description.sql`
 2. Run `uv run mesh.cli init-db` — it will apply only the new migration
 3. The migration runner is idempotent; running it on an already-migrated DB is safe
+
+## Wiki dev workflow (Phase 3)
+
+Two terminals:
+
+```bash
+# Terminal 1 — read API
+uv run mesh-api                  # :8000; /docs for Swagger
+
+# Terminal 2 — wiki
+cd apps/wiki
+npm install                      # once
+npm run dev                      # :3000 with hot reload
+```
+
+Open <http://localhost:3000> for the wiki and <http://localhost:8000/docs>
+for the Swagger UI.
+
+### Regenerating TypeScript types
+
+`apps/wiki/src/lib/api-types.ts` is generated from the API's `/openapi.json`.
+After any API contract change:
+
+```bash
+make types         # equivalent to (cd apps/wiki && npm run generate-types)
+```
+
+CI regenerates and diffs to catch drift. See [docs/wiki.md](wiki.md) for the
+full architectural rationale.
+
+### Running the full stack in docker
+
+```bash
+make up            # four agents + api (:8000) + wiki (:3000)
+make pipeline      # one-shot coordinator run; populates the DB
+make wiki          # opens the home dashboard
+make down
+```

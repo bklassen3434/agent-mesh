@@ -54,7 +54,7 @@ Phase 1 explicitly excludes:
 - Web UI or API server
 - Scheduling / cron
 
-## Phase 2 — A2A Protocol (current)
+## Phase 2 — A2A Protocol (complete)
 
 Phase 2 promotes each agent from a Python class to an A2A-compliant HTTP server. The in-process orchestrator is replaced by a coordinator that discovers agents via capability cards and dispatches by skill ID.
 
@@ -96,6 +96,49 @@ The coordinator:
 
 See [docs/a2a.md](a2a.md) for full protocol documentation.
 
+## Phase 3 — Read-Only Wiki (current)
+
+Phase 3 makes the mesh legible. The accumulated knowledge — entities, claims,
+beliefs, the revision timeline that proves "claims immutable, beliefs
+mutable" — becomes a browsable web wiki, served by a thin Python read API in
+front of DuckDB.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  apps/wiki  (Next.js 15, App Router)             :3000        │
+│  Server components fetch via INTERNAL_API_URL (docker)        │
+│  Browser fetches via NEXT_PUBLIC_API_URL (localhost)          │
+└────────────────────────────┬─────────────────────────────────┘
+                             │
+┌────────────────────────────▼─────────────────────────────────┐
+│  apps/api  (FastAPI, READ_ONLY DuckDB)           :8000        │
+│  /healthz · /openapi.json · /docs                              │
+│  /api/v1/{stats, pipeline-runs}                                │
+│  /api/v1/{entities, claims, beliefs, sources}                  │
+└────────────────────────────┬─────────────────────────────────┘
+                             │  duckdb file (volume: mesh-data)
+                             ▼
+        ┌────────────────────────────────────────────┐
+        │ DuckDB (single writer, many readers)        │
+        └────────────────────────────────────────────┘
+                             ▲
+                             │  short batch writes only
+                             │
+       ┌──────────────────────────────────────────┐
+       │  apps/pipeline coordinator (on demand)   │
+       └──────────────────────────────────────────┘
+                             ▲
+                             │  A2A JSON-RPC
+       ┌──────────────────────────────────────────┐
+       │  arxiv-scout · claim-extractor · entity- │
+       │  tracker · sota-tracker  (Phase 2)        │
+       └──────────────────────────────────────────┘
+```
+
+Both `api` and `wiki` are long-running services brought up by `make up`.
+The coordinator remains in the `pipeline` profile — invoked on demand by
+`make pipeline`. See [docs/wiki.md](wiki.md) for the full Phase 3 narrative.
+
 ## Package layout
 
 ```
@@ -104,8 +147,12 @@ packages/mesh-db       — DuckDB access; depends on mesh-models
 packages/mesh-tracing  — Langfuse wrapper; no required dependencies
 packages/mesh-llm      — Ollama client; depends on mesh-tracing
 packages/mesh-agents   — Agent classes; depends on mesh-llm, mesh-db, mesh-models
+packages/mesh-a2a      — A2A client + card builder; depends on mesh-tracing
 apps/cli               — Click CLI; depends on mesh-db, mesh-models, mesh-llm
-apps/pipeline          — Async orchestrator; depends on mesh-agents
+apps/pipeline          — Async orchestrator + coordinator; depends on mesh-agents, mesh-a2a
+apps/agents            — A2A agent server entry points
+apps/api               — FastAPI read service; depends on mesh-db, mesh-models   (Phase 3)
+apps/wiki              — Next.js 15 wiki; consumes apps/api via OpenAPI         (Phase 3)
 ```
 
 Dependencies flow strictly downward. `mesh-models` has no internal dependencies.

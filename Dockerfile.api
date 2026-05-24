@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir uv
+
+# Copy workspace config first for caching
+COPY pyproject.toml uv.lock ./
+
+# Copy all packages (needed for workspace resolution)
+COPY packages/ packages/
+COPY apps/ apps/
+
+# Install the API package and its dependencies
+RUN uv sync --package mesh-api --no-dev
+
+CMD ["uv", "run", "mesh-api"]

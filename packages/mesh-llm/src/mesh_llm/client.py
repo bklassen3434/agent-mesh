@@ -26,7 +26,15 @@ class LLMResponseError(Exception):
     """Raised when the LLM returns output that cannot be parsed into the expected schema."""
 
 
-class OllamaNotReadyError(Exception):
+class LLMProviderNotReadyError(Exception):
+    """Base for any "the configured LLM backend can't take a request right now".
+
+    Both OllamaNotReadyError and AnthropicNotReadyError inherit. Callers that
+    just want "abort the pipeline on provider failure" should catch this.
+    """
+
+
+class OllamaNotReadyError(LLMProviderNotReadyError):
     """Raised when Ollama is unreachable or the required model is not pulled."""
 
 

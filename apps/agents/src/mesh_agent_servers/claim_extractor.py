@@ -5,7 +5,7 @@ import os
 
 import uvicorn
 from mesh_agents.claim_extractor import ClaimExtractorAgent
-from mesh_llm import AnthropicNotReadyError, OllamaNotReadyError, make_llm_client
+from mesh_llm import LLMProviderNotReadyError, make_llm_client
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -23,7 +23,7 @@ def main() -> None:
     llm = make_llm_client()
     try:
         llm.health_check()
-    except (OllamaNotReadyError, AnthropicNotReadyError) as exc:
+    except LLMProviderNotReadyError as exc:
         raise SystemExit(f"LLM provider not ready: {exc}") from exc
 
     agent = ClaimExtractorAgent(llm=llm)

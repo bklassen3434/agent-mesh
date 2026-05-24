@@ -14,10 +14,9 @@ from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatus
 from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
 from mesh_llm import (
-    AnthropicNotReadyError,
     LLMClient,
+    LLMProviderNotReadyError,
     LLMResponseError,
-    OllamaNotReadyError,
 )
 from mesh_llm.prompts import CLAIM_EXTRACTION_SYSTEM, format_extraction_user
 from pydantic import BaseModel, Field
@@ -115,7 +114,7 @@ class _ClaimExtractorExecutor(AgentExecutor):
 
         try:
             claims, latency_ms = await asyncio.to_thread(_extract_sync, self._llm, paper)
-        except (OllamaNotReadyError, AnthropicNotReadyError):
+        except LLMProviderNotReadyError:
             raise
         except LLMResponseError as exc:
             logger.warning(
@@ -167,7 +166,7 @@ class ClaimExtractorAgent(BaseAgent):
 
         try:
             claims, latency_ms = await asyncio.to_thread(_extract_sync, self.llm, input.paper)
-        except (OllamaNotReadyError, AnthropicNotReadyError):
+        except LLMProviderNotReadyError:
             raise
         except LLMResponseError as exc:
             logger.warning(

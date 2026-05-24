@@ -16,7 +16,7 @@ from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import PipelineError, PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
-from mesh_llm import AnthropicNotReadyError, OllamaNotReadyError, make_llm_client
+from mesh_llm import LLMProviderNotReadyError, make_llm_client
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.revision import BeliefRevision
@@ -54,7 +54,7 @@ async def run_pipeline(
     # 0. Fail fast if the configured LLM provider isn't ready
     try:
         llm.health_check()
-    except (OllamaNotReadyError, AnthropicNotReadyError) as exc:
+    except LLMProviderNotReadyError as exc:
         raise SystemExit(f"LLM provider not ready: {exc}") from exc
 
     conn = get_connection(db_path)
@@ -110,7 +110,7 @@ async def run_pipeline(
                 )
                 if output.latency_ms > 0:
                     latencies.append(output.latency_ms)
-            except OllamaNotReadyError:
+            except LLMProviderNotReadyError:
                 raise
             except Exception as exc:
                 errors.append(

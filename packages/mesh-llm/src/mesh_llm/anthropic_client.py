@@ -17,7 +17,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from mesh_llm.client import LLMResponseError
+from mesh_llm.client import LLMProviderNotReadyError, LLMResponseError
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -27,7 +27,7 @@ _DEFAULT_MAX_TOKENS = 16000
 logger = logging.getLogger(__name__)
 
 
-class AnthropicNotReadyError(Exception):
+class AnthropicNotReadyError(LLMProviderNotReadyError):
     """Raised when the Anthropic API is unreachable or credentials are invalid."""
 
 

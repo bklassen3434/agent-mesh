@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from typing import Annotated
 
 import duckdb
+from fastapi import Depends
 from mesh_db.connection import get_connection
 
 
@@ -20,6 +22,9 @@ def get_conn() -> Iterator[duckdb.DuckDBPyConnection]:
         yield conn
     finally:
         conn.close()
+
+
+ConnDep = Annotated[duckdb.DuckDBPyConnection, Depends(get_conn)]
 
 
 def db_exists() -> bool:

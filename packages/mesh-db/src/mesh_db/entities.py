@@ -56,22 +56,69 @@ def get_entity_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Entity | None:
     return _row_to_entity(row) if row else None
 
 
+MAX_LIMIT = 200
+
+
 def list_entities(
     conn: duckdb.DuckDBPyConnection,
     type: EntityType | None = None,
+    q: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[Entity]:
+    limit = min(max(limit, 0), MAX_LIMIT)
+    offset = max(offset, 0)
     query = (
         "SELECT id, canonical_name, aliases, type, attributes, created_at, last_seen_at "
         "FROM entities"
     )
+    conditions: list[str] = []
     params: list[Any] = []
     if type is not None:
-        query += " WHERE type = ?"
+        conditions.append("type = ?")
         params.append(type.value)
-    query += " ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
+    if q:
+        conditions.append("canonical_name ILIKE ?")
+        params.append(f"%{q}%")
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
     rows = conn.execute(query, params).fetchall()
+    return [_row_to_entity(r) for r in rows]
+
+
+def count_entities(
+    conn: duckdb.DuckDBPyConnection,
+    type: EntityType | None = None,
+    q: str | None = None,
+) -> int:
+    query = "SELECT COUNT(*) FROM entities"
+    conditions: list[str] = []
+    params: list[Any] = []
+    if type is not None:
+        conditions.append("type = ?")
+        params.append(type.value)
+    if q:
+        conditions.append("canonical_name ILIKE ?")
+        params.append(f"%{q}%")
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    row = conn.execute(query, params).fetchone()
+    return int(row[0]) if row else 0
+
+
+def get_entities_by_ids(
+    conn: duckdb.DuckDBPyConnection, ids: list[str]
+) -> list[Entity]:
+    if not ids:
+        return []
+    placeholders = ",".join(["?"] * len(ids))
+    rows = conn.execute(
+        "SELECT id, canonical_name, aliases, type, attributes, created_at, last_seen_at "
+        f"FROM entities WHERE id IN ({placeholders})",
+        ids,
+    ).fetchall()
     return [_row_to_entity(r) for r in rows]
 
 

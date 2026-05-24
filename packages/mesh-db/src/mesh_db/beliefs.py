@@ -61,12 +61,12 @@ def get_belief_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Belief | None:
     return _row_to_belief(row) if row else None
 
 
-def list_beliefs(
-    conn: duckdb.DuckDBPyConnection,
-    topic: str | None = None,
-    currently_held: bool | None = None,
-    limit: int = 100,
-) -> list[Belief]:
+MAX_LIMIT = 200
+
+
+def _belief_filters(
+    topic: str | None, currently_held: bool | None
+) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
     if topic is not None:
@@ -76,11 +76,34 @@ def list_beliefs(
         conditions.append("is_currently_held = ?")
         params.append(currently_held)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    params.append(limit)
+    return where, params
+
+
+def list_beliefs(
+    conn: duckdb.DuckDBPyConnection,
+    topic: str | None = None,
+    currently_held: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Belief]:
+    limit = min(max(limit, 0), MAX_LIMIT)
+    offset = max(offset, 0)
+    where, params = _belief_filters(topic, currently_held)
+    params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY last_revised_at DESC LIMIT ?", params
+        f"{_SELECT}{where} ORDER BY last_revised_at DESC LIMIT ? OFFSET ?", params
     ).fetchall()
     return [_row_to_belief(r) for r in rows]
+
+
+def count_beliefs(
+    conn: duckdb.DuckDBPyConnection,
+    topic: str | None = None,
+    currently_held: bool | None = None,
+) -> int:
+    where, params = _belief_filters(topic, currently_held)
+    row = conn.execute(f"SELECT COUNT(*) FROM beliefs{where}", params).fetchone()
+    return int(row[0]) if row else 0
 
 
 def update_belief(

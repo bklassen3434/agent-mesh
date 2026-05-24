@@ -59,22 +59,55 @@ def get_source_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Source | None:
     return _row_to_source(row) if row else None
 
 
+MAX_LIMIT = 200
+
+_SELECT = (
+    "SELECT id, type, url, author, published_at, fetched_at, "
+    "raw_content_hash, reliability_prior FROM sources"
+)
+
+
 def list_sources(
     conn: duckdb.DuckDBPyConnection,
     type: SourceType | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[Source]:
-    query = (
-        "SELECT id, type, url, author, published_at, fetched_at, "
-        "raw_content_hash, reliability_prior FROM sources"
-    )
+    limit = min(max(limit, 0), MAX_LIMIT)
+    offset = max(offset, 0)
+    query = _SELECT
     params: list[Any] = []
     if type is not None:
         query += " WHERE type = ?"
         params.append(type.value)
-    query += " ORDER BY fetched_at DESC LIMIT ?"
-    params.append(limit)
+    query += " ORDER BY fetched_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
     rows = conn.execute(query, params).fetchall()
+    return [_row_to_source(r) for r in rows]
+
+
+def count_sources(
+    conn: duckdb.DuckDBPyConnection,
+    type: SourceType | None = None,
+) -> int:
+    query = "SELECT COUNT(*) FROM sources"
+    params: list[Any] = []
+    if type is not None:
+        query += " WHERE type = ?"
+        params.append(type.value)
+    row = conn.execute(query, params).fetchone()
+    return int(row[0]) if row else 0
+
+
+def get_sources_by_ids(
+    conn: duckdb.DuckDBPyConnection, ids: list[str]
+) -> list[Source]:
+    if not ids:
+        return []
+    placeholders = ",".join(["?"] * len(ids))
+    rows = conn.execute(
+        f"{_SELECT} WHERE id IN ({placeholders})", ids
+    ).fetchall()
     return [_row_to_source(r) for r in rows]
 
 

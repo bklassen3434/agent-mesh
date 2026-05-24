@@ -67,18 +67,24 @@ def get_revision_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> BeliefRevisi
     return _row_to_revision(row) if row else None
 
 
+MAX_LIMIT = 200
+
+
 def list_revisions(
     conn: duckdb.DuckDBPyConnection,
     belief_id: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[BeliefRevision]:
+    limit = min(max(limit, 0), MAX_LIMIT)
+    offset = max(offset, 0)
     params: list[Any] = []
     where = ""
     if belief_id is not None:
         where = " WHERE belief_id = ?"
         params.append(belief_id)
-    params.append(limit)
+    params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY revised_at DESC LIMIT ?", params
+        f"{_SELECT}{where} ORDER BY revised_at DESC LIMIT ? OFFSET ?", params
     ).fetchall()
     return [_row_to_revision(r) for r in rows]

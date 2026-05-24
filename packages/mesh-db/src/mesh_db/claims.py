@@ -70,13 +70,15 @@ def get_claim_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Claim | None:
     return _row_to_claim(row) if row else None
 
 
-def list_claims(
-    conn: duckdb.DuckDBPyConnection,
-    entity_id: str | None = None,
-    source_id: str | None = None,
-    status: ClaimStatus | None = None,
-    limit: int = 100,
-) -> list[Claim]:
+MAX_LIMIT = 200
+
+
+def _claim_filters(
+    entity_id: str | None,
+    source_id: str | None,
+    status: ClaimStatus | None,
+    predicate: str | None,
+) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
     if entity_id is not None:
@@ -88,10 +90,52 @@ def list_claims(
     if status is not None:
         conditions.append("status = ?")
         params.append(status.value)
+    if predicate is not None:
+        conditions.append("predicate = ?")
+        params.append(predicate)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    params.append(limit)
+    return where, params
+
+
+def list_claims(
+    conn: duckdb.DuckDBPyConnection,
+    entity_id: str | None = None,
+    source_id: str | None = None,
+    status: ClaimStatus | None = None,
+    predicate: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Claim]:
+    limit = min(max(limit, 0), MAX_LIMIT)
+    offset = max(offset, 0)
+    where, params = _claim_filters(entity_id, source_id, status, predicate)
+    params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT ?", params
+        f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT ? OFFSET ?", params
+    ).fetchall()
+    return [_row_to_claim(r) for r in rows]
+
+
+def count_claims(
+    conn: duckdb.DuckDBPyConnection,
+    entity_id: str | None = None,
+    source_id: str | None = None,
+    status: ClaimStatus | None = None,
+    predicate: str | None = None,
+) -> int:
+    where, params = _claim_filters(entity_id, source_id, status, predicate)
+    row = conn.execute(f"SELECT COUNT(*) FROM claims{where}", params).fetchone()
+    return int(row[0]) if row else 0
+
+
+def get_claims_by_ids(
+    conn: duckdb.DuckDBPyConnection, ids: list[str]
+) -> list[Claim]:
+    if not ids:
+        return []
+    placeholders = ",".join(["?"] * len(ids))
+    rows = conn.execute(
+        f"{_SELECT} WHERE id IN ({placeholders})", ids
     ).fetchall()
     return [_row_to_claim(r) for r in rows]
 

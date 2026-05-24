@@ -8,7 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from mesh_db.connection import get_connection
 from mesh_db.migrations import apply_migrations
 
-from mesh_api.routers import claims, entities, health, pipeline_runs, sources, stats
+from mesh_api.routers import (
+    beliefs,
+    claims,
+    entities,
+    health,
+    pipeline_runs,
+    sources,
+    stats,
+)
 
 
 def _ensure_schema() -> None:
@@ -53,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(entities.router)
     app.include_router(claims.router)
     app.include_router(sources.router)
+    app.include_router(beliefs.router)
     return app
 
 

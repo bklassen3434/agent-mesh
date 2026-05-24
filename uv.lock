@@ -973,6 +973,7 @@ version = "0.1.0"
 source = { editable = "packages/mesh-agents" }
 dependencies = [
     { name = "arxiv" },
+    { name = "httpx" },
     { name = "mesh-a2a" },
     { name = "mesh-db" },
     { name = "mesh-llm" },
@@ -985,6 +986,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "arxiv", specifier = ">=2.1" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mesh-a2a", editable = "packages/mesh-a2a" },
     { name = "mesh-db", editable = "packages/mesh-db" },
     { name = "mesh-llm", editable = "packages/mesh-llm" },

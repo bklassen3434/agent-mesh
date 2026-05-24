@@ -21,6 +21,7 @@ dev-dependencies = [
     "mesh-pipeline",
     "mesh-a2a",
     "mesh-agent-servers",
+    "mesh-api",
 ]
 
 [tool.uv.workspace]
@@ -28,6 +29,7 @@ members = [
     "apps/cli",
     "apps/pipeline",
     "apps/agents",
+    "apps/api",
     "packages/mesh-models",
     "packages/mesh-db",
     "packages/mesh-tracing",
@@ -46,6 +48,7 @@ mesh-agents = { workspace = true }
 mesh-pipeline = { workspace = true }
 mesh-a2a = { workspace = true }
 mesh-agent-servers = { workspace = true }
+mesh-api = { workspace = true }
 
 [tool.pytest.ini_options]
 pythonpath = [
@@ -58,6 +61,7 @@ pythonpath = [
     "apps/cli/src",
     "apps/pipeline/src",
     "apps/agents/src",
+    "apps/api/src",
 ]
 
 [tool.mypy]

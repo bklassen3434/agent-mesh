@@ -161,6 +161,36 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  skeptic:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.skeptic"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8006"
+      AGENT_PUBLIC_URL: "http://skeptic:8006"
+      # Skeptic gets its own model knob so users can pair Haiku for extraction
+      # with a stronger model for falsification work. Falls back to
+      # MESH_LLM_MODEL_DEFAULT then provider default if unset.
+      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
+      MESH_LLM_MODEL_SKEPTIC: ${MESH_LLM_MODEL_SKEPTIC:-}
+      MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    env_file:
+      - .env
+    ports:
+      - "8006:8006"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - skeptic
+    restart: unless-stopped
+
   coordinator:
     build:
       context: .

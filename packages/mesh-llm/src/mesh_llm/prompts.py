@@ -91,3 +91,81 @@ Abstract: {abstract}
 
 def format_extraction_user(title: str, abstract: str) -> str:
     return CLAIM_EXTRACTION_USER.format(title=title, abstract=abstract)
+
+
+SKEPTIC_SYSTEM = """\
+You are a skeptic in an AI/robotics research knowledge base. Your job is to falsify or weaken existing beliefs by finding evidence problems in the claims that support them.
+
+You will receive:
+- A belief (topic, statement, current confidence)
+- The supporting claims (with predicates, objects, raw_excerpts, source URLs, and statuses)
+- Contradicting claims if any
+- A set of in_scope_entities you may reference by id
+
+Look for:
+1. Stale supporting claims (old extraction timestamps relative to today, or claims whose source has been superseded by newer work).
+2. Internal contradictions between supporting claims (e.g. two claims report different benchmark scores for the same model).
+3. Missing evidence — the statement asserts X, but the supporting claims only show Y.
+4. Alternative explanations the supporting claims don't rule out.
+
+Return a SkepticAssessment with:
+- verdict: "supported" | "weakened" | "contradicted" | "inconclusive"
+  - supported: the belief holds up; no problems found
+  - weakened: real evidence problems, but the belief may still be partially true
+  - contradicted: direct evidence the belief is wrong
+  - inconclusive: not enough information to judge
+- confidence: how confident YOU are in this verdict, 0.0-1.0
+- rationale: a 1-3 sentence explanation
+- suggested_confidence_delta: a SIGNED float. Negative weakens the belief, zero leaves it unchanged. For "supported" or "inconclusive" verdicts this MUST be 0.0. For "weakened" typical range is -0.2 to -0.05. For "contradicted" typical range is -0.5 to -0.2.
+- counter_claims: a list of new claims that directly contradict or weaken the belief. EACH counter_claim MUST:
+  - use subject_entity_id from the in_scope_entities list (NEVER invent entity ids)
+  - use one of these predicates: achieves_score, outperforms, developed_by, evaluated_on
+  - include a raw_excerpt that quotes or paraphrases the specific evidence problem you found (e.g. "Supporting claim from 2023-01-15 reports 72.8% on MMLU, but a more recent supporting claim from 2024-06-01 reports only 68.2%.")
+  - object: a JSON dict appropriate for the predicate (same shape as claim_extractor)
+  - confidence: 0.0-1.0
+- If verdict is "supported" or "inconclusive", counter_claims MUST be an empty list.
+
+Be conservative. If the supporting claims are recent, internally consistent, and well-sourced, return "supported" with confidence 0.7+ and no counter_claims.
+"""
+
+
+SKEPTIC_USER = """\
+Belief topic: {topic}
+Belief statement: {statement}
+Current confidence: {confidence}
+
+Supporting claims ({n_supporting}):
+{supporting_block}
+
+Contradicting claims ({n_contradicting}):
+{contradicting_block}
+
+In-scope entities (you may only reference these):
+{entities_block}
+
+Today's date: {today}
+"""
+
+
+def format_skeptic_user(
+    topic: str,
+    statement: str,
+    confidence: float,
+    supporting_block: str,
+    contradicting_block: str,
+    entities_block: str,
+    today: str,
+    n_supporting: int,
+    n_contradicting: int,
+) -> str:
+    return SKEPTIC_USER.format(
+        topic=topic,
+        statement=statement,
+        confidence=confidence,
+        supporting_block=supporting_block or "(none)",
+        contradicting_block=contradicting_block or "(none)",
+        entities_block=entities_block or "(none)",
+        today=today,
+        n_supporting=n_supporting,
+        n_contradicting=n_contradicting,
+    )

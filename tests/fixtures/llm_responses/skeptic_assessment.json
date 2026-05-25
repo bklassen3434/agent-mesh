@@ -1,0 +1,15 @@
+{
+  "verdict": "weakened",
+  "confidence": 0.78,
+  "rationale": "The supporting claim from 2023-06-15 reports 87.5% on MMLU, but a more recent extraction from 2024-09-01 reports only 81.2% for the same model — internal inconsistency that the belief statement does not reflect.",
+  "suggested_confidence_delta": -0.15,
+  "counter_claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_entity_id": "ent-testmodel-7b",
+      "object": {"score": 81.2, "benchmark": "MMLU", "metric": "accuracy"},
+      "raw_excerpt": "A later supporting claim (2024-09-01) reports 81.2% on MMLU, contradicting the older 87.5% figure used in the belief.",
+      "confidence": 0.8
+    }
+  ]
+}

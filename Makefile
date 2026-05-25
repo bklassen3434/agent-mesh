@@ -1,4 +1,4 @@
-.PHONY: up down logs pipeline smoke wiki api types
+.PHONY: up down logs pipeline skeptic smoke wiki api types
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
 
@@ -20,6 +20,14 @@ pipeline:
 		-e MESH_PIPELINE_CATEGORIES=$${MESH_PIPELINE_CATEGORIES:-cs.AI,cs.RO,cs.LG} \
 		-e MESH_PIPELINE_MAX_PAPERS=$${MESH_PIPELINE_MAX_PAPERS:-10} \
 		coordinator
+
+# Run one falsification sweep — Curator picks beliefs worth challenging,
+# Skeptic assesses each, the orchestrator writes counter-claims + revisions.
+# Activates the skeptic profile (curator + skeptic + skeptic-sweep) which is
+# excluded from the default `make up`.
+skeptic:
+	docker compose --profile skeptic up -d --build curator skeptic
+	docker compose --profile skeptic run --rm skeptic-sweep
 
 # Smoke test: bring up the stack, run one pipeline cycle, check row counts.
 smoke: up

@@ -161,6 +161,29 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  curator:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.curator"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8007"
+      AGENT_PUBLIC_URL: "http://curator:8007"
+    env_file:
+      - .env
+    ports:
+      - "8007:8007"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    profiles:
+      - skeptic
+    restart: unless-stopped
+
   skeptic:
     build:
       context: .
@@ -214,6 +237,32 @@ services:
         condition: service_healthy
     profiles:
       - pipeline
+
+  skeptic-sweep:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    # Reuse the coordinator image (same workspace install) but swap the
+    # entry point. One-shot job that exits when the sweep completes.
+    entrypoint: ["uv", "run", "mesh-skeptic-sweep"]
+    environment:
+      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
+      MESH_DB_PATH: "/app/data/mesh.db"
+      MESH_SKEPTIC_APPLY_THRESHOLD: ${MESH_SKEPTIC_APPLY_THRESHOLD:-0.7}
+      MESH_CURATOR_PICK_COUNT: ${MESH_CURATOR_PICK_COUNT:-5}
+      MESH_CURATOR_COOLDOWN_DAYS: ${MESH_CURATOR_COOLDOWN_DAYS:-7}
+      MESH_SKEPTIC_SOURCE_RELIABILITY: ${MESH_SKEPTIC_SOURCE_RELIABILITY:-0.4}
+    env_file:
+      - .env
+    volumes:
+      - mesh-data:/app/data
+    depends_on:
+      curator:
+        condition: service_healthy
+      skeptic:
+        condition: service_healthy
+    profiles:
+      - skeptic
 
 volumes:
   mesh-data:

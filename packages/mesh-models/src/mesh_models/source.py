@@ -15,6 +15,9 @@ class SourceType(StrEnum):
     twitter = "twitter"
     blog = "blog"
     leaderboard = "leaderboard"
+    # Synthesized by an agent (e.g. Skeptic's rationale-as-source for the
+    # counter-claims it emits). url scheme is "agent://<agent_name>/<...>".
+    agent_reasoning = "agent_reasoning"
 
 
 class Source(BaseModel):

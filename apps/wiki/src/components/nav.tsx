@@ -6,6 +6,7 @@ const links = [
   { href: '/beliefs', label: 'Beliefs' },
   { href: '/claims', label: 'Claims' },
   { href: '/sources', label: 'Sources' },
+  { href: '/skeptic', label: 'Skeptic' },
 ];
 
 export function Nav() {

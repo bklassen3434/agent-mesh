@@ -18,6 +18,7 @@ export type SourceWithCount = Schemas['SourceWithCount'];
 export type BeliefDetail = Schemas['BeliefDetail'];
 export type ClaimWithContext = Schemas['ClaimWithContext'];
 export type RevisionWithTriggers = Schemas['RevisionWithTriggers'];
+export type SkepticActivityItem = Schemas['SkepticActivityItem'];
 
 export type PageEntity = Schemas['Page_Entity_'];
 export type PageClaim = Schemas['Page_Claim_'];
@@ -100,4 +101,12 @@ export const api = {
   listSources: (q: { type?: string; limit?: number; offset?: number } = {}) =>
     apiGet<PageSource>('/api/v1/sources', { query: q }),
   source: (id: string) => apiGet<SourceDetail>(`/api/v1/sources/${encodeURIComponent(id)}`),
+
+  beliefRevisions: (id: string, limit = 100) =>
+    apiGet<RevisionWithTriggers[]>(
+      `/api/v1/beliefs/${encodeURIComponent(id)}/revisions`,
+      { query: { limit } },
+    ),
+  skepticRecent: (limit = 20) =>
+    apiGet<SkepticActivityItem[]>('/api/v1/skeptic/recent', { query: { limit } }),
 };

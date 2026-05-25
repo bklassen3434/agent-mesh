@@ -27,9 +27,14 @@ export function RevisionTimeline({ revisions }: { revisions: RevisionWithTrigger
             <Card>
               <CardContent className="space-y-3 pt-6">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-muted-foreground">
-                    {formatDateTime(r.revision.revised_at)} · by{' '}
-                    <span className="font-mono">{r.revision.revised_by_agent}</span>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>
+                      {formatDateTime(r.revision.revised_at)} · by{' '}
+                      <span className="font-mono">{r.revision.revised_by_agent}</span>
+                    </span>
+                    {r.revision.revised_by_agent === 'skeptic' ? (
+                      <Badge variant="destructive">Skeptic challenge</Badge>
+                    ) : null}
                   </div>
                   <Badge variant={delta >= 0 ? 'secondary' : 'destructive'}>
                     confidence {formatConfidence(r.revision.previous_confidence)} →{' '}

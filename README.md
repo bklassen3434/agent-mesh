@@ -2,10 +2,14 @@
 
 A persistent multi-agent system that tracks AI/robotics research through a network of A2A-protocol agents, with a read-only web wiki for browsing what the mesh has learned.
 
-**Status: Phase 3 in progress** — Phases 0–2 complete (substrate, end-to-end
-pipeline, A2A protocol promotion). Phase 3 adds a FastAPI read service in
-front of DuckDB and a Next.js wiki that renders entities, claims, beliefs,
-and the full provenance trail with a revision timeline.
+**Status: Phase 4 complete** — Phases 0–3 cover substrate, end-to-end
+pipeline, A2A protocol promotion, and the read API + Next.js wiki with the
+revision timeline. Phase 4 adds the **falsification loop**: a Skeptic agent
+that challenges existing beliefs and emits counter-claims, a Curator that
+picks which beliefs are worth challenging, an out-of-band `make skeptic`
+sweep that wires them together via A2A, and a `/skeptic` wiki feed that
+surfaces the activity. The HN scout also lands in Phase 4 alongside the
+arxiv scout.
 
 ## Quick start
 
@@ -20,9 +24,13 @@ make up
 make wiki              # opens http://localhost:3000
 make api               # opens http://localhost:8000/docs
 
-# Run one pipeline cycle against arxiv to populate the mesh.
+# Run one pipeline cycle against arxiv + HN to populate the mesh.
 ollama pull qwen3:8b
 make pipeline
+
+# (Phase 4) Run one out-of-band falsification sweep — Curator picks beliefs,
+# Skeptic challenges them, counter-claims + revisions land in the DB.
+make skeptic
 
 # Inspect via CLI (still supported).
 uv run mesh.cli show-sota-beliefs

@@ -139,6 +139,59 @@ Both `api` and `wiki` are long-running services brought up by `make up`.
 The coordinator remains in the `pipeline` profile — invoked on demand by
 `make pipeline`. See [docs/wiki.md](wiki.md) for the full Phase 3 narrative.
 
+## Phase 4 — Falsification loop (complete)
+
+Phase 4 turns the mesh into a self-revising system. Two new A2A agents join
+the mesh and a new out-of-band orchestrator wires them together against
+existing beliefs.
+
+### Falsification loop diagram
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  skeptic_sweep  (apps/pipeline/skeptic_sweep.py, on demand)      │
+│                                                                  │
+│  1. Read held beliefs + derive last_challenged_at per belief     │
+│  2. call_skill("select_beliefs_to_challenge", {beliefs, …})      │
+│  3. Per pick: hydrate claims + entities,                         │
+│     call_skill("challenge_belief", {belief, claims, …})          │
+│  4. If verdict ∈ {weakened, contradicted}                        │
+│     AND confidence ≥ MESH_SKEPTIC_APPLY_THRESHOLD:               │
+│       - insert one Source (type=agent_reasoning)                 │
+│       - insert counter-claims (extracted_by_agent=skeptic)       │
+│       - update belief (confidence delta;                         │
+│         contradicting_claim_ids if "contradicted")               │
+│       - append BeliefRevision (revised_by_agent=skeptic)         │
+│  5. Write PipelineRun row with run_type='skeptic_sweep'          │
+│                                                                  │
+└──────────┬────────────────────────────────┬──────────────────────┘
+           │                                │  JSON-RPC 2.0 (A2A)
+           ▼                                ▼
+   ┌──────────────┐                  ┌──────────────┐
+   │  curator     │                  │  skeptic     │
+   │  :8007       │                  │  :8006       │
+   │  pure / rule │                  │  LLM-backed  │
+   └──────────────┘                  └──────────────┘
+```
+
+The main coordinator (`apps/pipeline/coordinator.py`) is **untouched** by
+Phase 4. The scout / extract / synthesis flow runs as before; falsification
+is a separate orchestrator with a separate Makefile target (`make skeptic`)
+and a separate docker profile (`skeptic`). New scouts also drop in via the
+existing `scout_*` skill-id prefix dispatch — Phase 4 added HN scout
+(port 8005) without coordinator edits.
+
+Key invariants preserved:
+
+- **Claims immutable.** Skeptic produces *new* counter-claims with
+  provenance; it never edits or deletes existing claims.
+- **Provenance mandatory.** Every counter-claim points to a Source row;
+  Skeptic synthesises one per assessment of `type=agent_reasoning` with
+  `url=agent://skeptic/belief/<id>/<ts>`.
+- **API stays read-only.** Phase 4 adds two new GET endpoints
+  (`/api/v1/skeptic/recent`, `/api/v1/beliefs/{id}/revisions`) and a `/skeptic`
+  wiki route. No write paths.
+
 ## Package layout
 
 ```

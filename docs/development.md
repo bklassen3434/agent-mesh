@@ -234,12 +234,15 @@ uv run mesh.cli a2a-call resolve_entities \
 
 ### Agent ports
 
-| Agent | Port | Skill |
-|-------|------|-------|
-| arxiv-scout | 8001 | `scout_arxiv` |
-| claim-extractor | 8002 | `extract_claims` |
-| entity-tracker | 8003 | `resolve_entities` |
-| sota-tracker | 8004 | `update_sota` |
+| Agent | Port | Skill | Profile |
+|-------|------|-------|---------|
+| arxiv-scout | 8001 | `scout_arxiv` | default |
+| claim-extractor | 8002 | `extract_claims` | default |
+| entity-tracker | 8003 | `resolve_entities` | default |
+| sota-tracker | 8004 | `update_sota` | default |
+| hn-scout | 8005 | `scout_hn` | default |
+| skeptic | 8006 | `challenge_belief` | `skeptic` |
+| curator | 8007 | `select_beliefs_to_challenge` | `skeptic` |
 
 ### New environment variables (Phase 2)
 
@@ -289,8 +292,35 @@ full architectural rationale.
 ### Running the full stack in docker
 
 ```bash
-make up            # four agents + api (:8000) + wiki (:3000)
+make up            # five agents (arxiv, hn, extractor, entity, sota) + api + wiki
 make pipeline      # one-shot coordinator run; populates the DB
 make wiki          # opens the home dashboard
 make down
 ```
+
+## Falsification sweep (Phase 4)
+
+`make skeptic` runs the out-of-band falsification job. Curator picks beliefs
+worth challenging, Skeptic assesses each, and applicable assessments land as
+counter-claims plus BeliefRevisions in the existing DB.
+
+```bash
+make pipeline      # populate beliefs
+make skeptic       # one-shot falsification sweep
+```
+
+`make skeptic` builds + boots the `curator` and `skeptic` services under the
+`skeptic` profile, then runs the `skeptic-sweep` one-shot job to completion.
+The services stay running afterwards so subsequent sweeps reuse them; tear
+them down with `docker compose --profile skeptic down`.
+
+### Phase 4 environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MESH_SKEPTIC_APPLY_THRESHOLD` | `0.7` | Apply an assessment only if the Skeptic's self-reported confidence clears this. |
+| `MESH_CURATOR_PICK_COUNT` | `5` | How many beliefs Curator returns per sweep. |
+| `MESH_CURATOR_COOLDOWN_DAYS` | `7` | Beliefs the skeptic looked at within this window get a Curator score penalty so they don't dominate back-to-back runs. |
+| `MESH_SKEPTIC_SOURCE_RELIABILITY` | `0.4` | `reliability_prior` on the synthetic `agent_reasoning` source rows the skeptic emits. |
+| `MESH_LLM_MODEL_SKEPTIC` | (unset) | Per-agent model override for the skeptic (see [llm-setup.md](llm-setup.md) for the routing precedence). |
+| `MESH_SKEPTIC_AGENT_URLS` | `http://curator:8007,http://skeptic:8006` | Comma-separated A2A base URLs the `skeptic_sweep` orchestrator discovers. |

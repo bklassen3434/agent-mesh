@@ -221,6 +221,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/beliefs/{belief_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Revisions for a belief
+         * @description Append-only revision history for a single belief, joined with the claims that triggered each revision. Ordered most-recent-first.
+         */
+        get: operations["belief_revisions_api_v1_beliefs__belief_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skeptic/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent skeptic-triggered belief revisions
+         * @description Most recent BeliefRevisions where revised_by_agent='skeptic', joined with each revision's belief and trigger claims (the counter-claims the skeptic emitted). Drives the wiki's skeptic-activity feed.
+         */
+        get: operations["recent_skeptic_activity_api_v1_skeptic_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -461,6 +501,11 @@ export interface components {
             /** Finished At */
             finished_at?: string | null;
             /**
+             * Run Type
+             * @default pipeline
+             */
+            run_type: string;
+            /**
              * Papers Scouted
              * @default 0
              */
@@ -525,6 +570,20 @@ export interface components {
             /** Trigger Claims */
             trigger_claims: components["schemas"]["Claim"][];
         };
+        /**
+         * SkepticActivityItem
+         * @description One skeptic-triggered revision joined with its belief and trigger claims.
+         *
+         *     Powers the wiki's "what the skeptic challenged this week" feed. Belief
+         *     lets the feed link back to the entity; trigger_claims are the counter-
+         *     claims the skeptic emitted that drove the revision.
+         */
+        SkepticActivityItem: {
+            revision: components["schemas"]["BeliefRevision"];
+            belief: components["schemas"]["Belief"];
+            /** Trigger Claims */
+            trigger_claims: components["schemas"]["Claim"][];
+        };
         /** Source */
         Source: {
             /** Id */
@@ -562,7 +621,7 @@ export interface components {
          * SourceType
          * @enum {string}
          */
-        SourceType: "arxiv" | "hn_post" | "hn_comment" | "github" | "twitter" | "blog" | "leaderboard";
+        SourceType: "arxiv" | "hn_post" | "hn_comment" | "github" | "twitter" | "blog" | "leaderboard" | "agent_reasoning";
         /** SourceWithCount */
         SourceWithCount: {
             source: components["schemas"]["Source"];
@@ -930,6 +989,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BeliefDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    belief_revisions_api_v1_beliefs__belief_id__revisions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                belief_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionWithTriggers"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recent_skeptic_activity_api_v1_skeptic_recent_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkepticActivityItem"][];
                 };
             };
             /** @description Validation Error */

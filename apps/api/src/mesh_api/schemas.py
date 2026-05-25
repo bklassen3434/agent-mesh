@@ -82,6 +82,19 @@ class BeliefDetail(BaseModel):
     revisions: list[RevisionWithTriggers]
 
 
+class SkepticActivityItem(BaseModel):
+    """One skeptic-triggered revision joined with its belief and trigger claims.
+
+    Powers the wiki's "what the skeptic challenged this week" feed. Belief
+    lets the feed link back to the entity; trigger_claims are the counter-
+    claims the skeptic emitted that drove the revision.
+    """
+
+    revision: BeliefRevision
+    belief: Belief
+    trigger_claims: list[Claim]
+
+
 __all__ = [
     "BeliefDetail",
     "ClaimDetail",
@@ -91,6 +104,7 @@ __all__ = [
     "Page",
     "PipelineRun",
     "RevisionWithTriggers",
+    "SkepticActivityItem",
     "SourceDetail",
     "SourceWithCount",
     "StatsResponse",

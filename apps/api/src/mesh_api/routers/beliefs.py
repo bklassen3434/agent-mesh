@@ -8,6 +8,7 @@ from mesh_db.entities import get_entities_by_ids
 from mesh_db.revisions import list_revisions
 from mesh_db.sources import get_sources_by_ids
 from mesh_models.belief import Belief
+from mesh_models.revision import BeliefRevision
 
 from mesh_api.deps import ConnDep
 from mesh_api.schemas import (
@@ -69,6 +70,25 @@ def _hydrate_claims(
     ]
 
 
+def hydrate_revisions(
+    conn: duckdb.DuckDBPyConnection, revisions: list[BeliefRevision]
+) -> list[RevisionWithTriggers]:
+    """Join a list of revisions with their trigger claims, preserving order."""
+    trigger_ids = {cid for r in revisions for cid in r.trigger_claim_ids}
+    trigger_claims = {c.id: c for c in get_claims_by_ids(conn, list(trigger_ids))}
+    return [
+        RevisionWithTriggers(
+            revision=r,
+            trigger_claims=[
+                trigger_claims[cid]
+                for cid in r.trigger_claim_ids
+                if cid in trigger_claims
+            ],
+        )
+        for r in revisions
+    ]
+
+
 @router.get(
     "/{belief_id}",
     response_model=BeliefDetail,
@@ -90,19 +110,7 @@ def belief_detail(belief_id: str, conn: ConnDep) -> BeliefDetail:
     contradicting = _hydrate_claims(conn, belief.contradicting_claim_ids)
 
     revisions = list_revisions(conn, belief_id=belief_id, limit=200)
-    trigger_ids = {cid for r in revisions for cid in r.trigger_claim_ids}
-    trigger_claims = {c.id: c for c in get_claims_by_ids(conn, list(trigger_ids))}
-    revisions_out = [
-        RevisionWithTriggers(
-            revision=r,
-            trigger_claims=[
-                trigger_claims[cid]
-                for cid in r.trigger_claim_ids
-                if cid in trigger_claims
-            ],
-        )
-        for r in revisions
-    ]
+    revisions_out = hydrate_revisions(conn, revisions)
 
     return BeliefDetail(
         belief=belief,
@@ -110,3 +118,24 @@ def belief_detail(belief_id: str, conn: ConnDep) -> BeliefDetail:
         contradicting_claims=contradicting,
         revisions=revisions_out,
     )
+
+
+@router.get(
+    "/{belief_id}/revisions",
+    response_model=list[RevisionWithTriggers],
+    summary="Revisions for a belief",
+    description=(
+        "Append-only revision history for a single belief, joined with the "
+        "claims that triggered each revision. Ordered most-recent-first."
+    ),
+)
+def belief_revisions(
+    belief_id: str,
+    conn: ConnDep,
+    limit: int = Query(100, ge=1, le=200),
+) -> list[RevisionWithTriggers]:
+    belief = get_belief_by_id(conn, belief_id)
+    if belief is None:
+        raise HTTPException(status_code=404, detail="Belief not found")
+    revisions = list_revisions(conn, belief_id=belief_id, limit=limit)
+    return hydrate_revisions(conn, revisions)

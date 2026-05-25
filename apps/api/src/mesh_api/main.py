@@ -14,6 +14,7 @@ from mesh_api.routers import (
     entities,
     health,
     pipeline_runs,
+    skeptic,
     sources,
     stats,
 )
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(claims.router)
     app.include_router(sources.router)
     app.include_router(beliefs.router)
+    app.include_router(skeptic.router)
     return app
 
 

@@ -84,7 +84,12 @@ class MeshA2AClient:
 
     def __init__(self) -> None:
         self._http = httpx.AsyncClient(timeout=120.0)
-        self._factory = ClientFactory(ClientConfig(streaming=False))
+        # ClientFactory will spin up its own httpx client (with the default
+        # 5s timeout) if we don't hand ours over. Scout calls can take 30+s
+        # against arxiv, so we pass ours through explicitly.
+        self._factory = ClientFactory(
+            ClientConfig(streaming=False, httpx_client=self._http)
+        )
         # skill_id -> (base_url, a2a Client)
         self._registry: dict[str, tuple[str, Client]] = {}
 

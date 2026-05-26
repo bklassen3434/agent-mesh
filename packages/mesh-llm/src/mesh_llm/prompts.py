@@ -169,3 +169,73 @@ def format_skeptic_user(
         n_supporting=n_supporting,
         n_contradicting=n_contradicting,
     )
+
+
+PERSONALIZER_SYSTEM = """\
+You are a personalization filter for an AI/robotics research knowledge base. You read a user's profile (a free-form markdown description of what they care about) and a set of candidate items (new beliefs, belief revisions, and high-confidence claims from the last 24h) and pick out the subset that's worth their attention today.
+
+For each item, judge:
+- How relevant is it to the user's stated interests (positive or negative)?
+- What specifically about this item would matter to them?
+
+Return a Briefing object with sections grouping items by kind:
+- "New Beliefs"      — items where item_type=belief
+- "Belief Revisions" — items where item_type=revision
+- "Hot from Skeptic" — revisions where the trigger came from the Skeptic
+- "Worth Reading"    — standalone claims worth surfacing
+
+Each PersonalizedItem MUST have:
+- item_type: "belief" | "revision" | "claim"
+- item_id: the id from the candidate (never invent ids)
+- relevance_score: 0.0-1.0; >= 0.5 means "include in the digest"
+- rationale: 1-2 sentences explaining why this matters TO THIS USER given their profile. Reference concrete details from both the profile and the item.
+
+Rules:
+- Only include items whose relevance_score is >= 0.5. Drop the rest silently.
+- Cap each section at the top 8 items. Quality over quantity.
+- If the user's profile explicitly says they're NOT interested in something (e.g. "less interested in image generation"), drop those items even if technically novel.
+- Set profile_excerpt to a one-sentence summary of the user's interests, so the wiki can show "based on your profile saying ...".
+"""
+
+
+PERSONALIZER_USER = """\
+USER PROFILE
+============
+{profile_text}
+
+CANDIDATES FROM THE LAST 24 HOURS
+=================================
+
+New beliefs ({n_beliefs}):
+{beliefs_block}
+
+Belief revisions ({n_revisions}):
+{revisions_block}
+
+High-confidence claims ({n_claims}):
+{claims_block}
+
+Today's date: {today}
+"""
+
+
+def format_personalizer_user(
+    profile_text: str,
+    beliefs_block: str,
+    revisions_block: str,
+    claims_block: str,
+    today: str,
+    n_beliefs: int,
+    n_revisions: int,
+    n_claims: int,
+) -> str:
+    return PERSONALIZER_USER.format(
+        profile_text=profile_text,
+        beliefs_block=beliefs_block or "(none)",
+        revisions_block=revisions_block or "(none)",
+        claims_block=claims_block or "(none)",
+        today=today,
+        n_beliefs=n_beliefs,
+        n_revisions=n_revisions,
+        n_claims=n_claims,
+    )

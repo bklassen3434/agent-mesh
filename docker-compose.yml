@@ -166,6 +166,33 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  personalizer:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.personalizer"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8013"
+      AGENT_PUBLIC_URL: "http://personalizer:8013"
+      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
+      # Sonnet is the recommended default for the briefing pass; falls back to
+      # MESH_LLM_MODEL_DEFAULT then provider default if unset.
+      MESH_LLM_MODEL_PERSONALIZER: ${MESH_LLM_MODEL_PERSONALIZER:-claude-sonnet-4-6}
+      MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    env_file:
+      - .env
+    ports:
+      - "8013:8013"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .

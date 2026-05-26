@@ -6,19 +6,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import duckdb
-from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.task_server import build_task_app
 from mesh_db.beliefs import list_beliefs
 from pydantic import BaseModel
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from mesh_agents.base import BaseAgent
 
@@ -183,6 +175,12 @@ def update_sota_pure(
     return _compute_belief_updates(score_claims, lambda topic: belief_map.get(topic))
 
 
+async def _handle_update_sota(payload: dict[str, Any]) -> dict[str, Any]:
+    skill_input = SotaUpdateSkillInput.model_validate(payload)
+    updates = update_sota_pure(skill_input.claims, skill_input.existing_sota_beliefs)
+    return SotaUpdateSkillOutput(belief_updates=updates).model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -210,7 +208,7 @@ class SotaTrackerAgent(BaseAgent):
         return SotaTrackerOutput(belief_updates=updates)
 
     async def run_skill(self, input: SotaUpdateSkillInput) -> SotaUpdateSkillOutput:
-        """Phase 2 path: pure, no DB. Used by the A2A server executor."""
+        """Phase 2 path: pure, no DB. Used by tests."""
         updates = update_sota_pure(input.claims, input.existing_sota_beliefs)
         return SotaUpdateSkillOutput(belief_updates=updates)
 
@@ -224,62 +222,11 @@ class SotaTrackerAgent(BaseAgent):
             skill_description="Compare new achievement claims against existing SOTA beliefs.",
             skill_tags=["sota", "beliefs", "tracking"],
         )
-        handler = DefaultRequestHandler(
-            agent_executor=_SotaTrackerExecutor(),
-            task_store=InMemoryTaskStore(),
+        return build_task_app(
             agent_card=card,
+            skill_handlers={"update_sota": _handle_update_sota},
+            agent_name="sota_tracker",
         )
-        routes: list[Route] = []
-        routes.extend(create_agent_card_routes(card))
-        routes.extend(create_jsonrpc_routes(handler, "/"))
-        return Starlette(routes=routes)
-
-
-# ---------------------------------------------------------------------------
-# A2A executor
-# ---------------------------------------------------------------------------
-
-
-class _SotaTrackerExecutor(AgentExecutor):
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        task = new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
-
-        raw: dict[str, Any] = {}
-        for part in context.message.parts:
-            if part.HasField("data"):
-                raw = dict(MessageToDict(part.data))
-                break
-        skill_input = SotaUpdateSkillInput.model_validate(raw)
-        updates = update_sota_pure(skill_input.claims, skill_input.existing_sota_beliefs)
-        output = SotaUpdateSkillOutput(belief_updates=updates)
-
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                artifact=new_data_artifact("result", output.model_dump(mode="json")),
-            )
-        )
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("cancel not supported")
 
 
 # ---------------------------------------------------------------------------

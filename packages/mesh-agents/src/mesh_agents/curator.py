@@ -14,23 +14,13 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.task_server import build_task_app
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from mesh_agents.base import BaseAgent
 
-# Default scoring weights. Equal weighting at start; document where each comes
-# from so anyone tuning these knows what they're trading off.
 _W_AGE = 1.0
 _W_WEAKNESS = 1.0
 _W_EXTREMITY = 1.0
@@ -148,58 +138,16 @@ def select_beliefs_to_challenge_pure(input: CuratorInput) -> CuratorOutput:
     return CuratorOutput(picks=picks)
 
 
-# A2A executor ---------------------------------------------------------------
-
-
-class _CuratorExecutor(AgentExecutor):
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        task = new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
-
-        raw: dict[str, Any] = {}
-        for part in context.message.parts:
-            if part.HasField("data"):
-                raw = dict(MessageToDict(part.data))
-                break
-        skill_input = SelectBeliefsSkillInput.model_validate(raw)
-        agent_input = CuratorInput(
-            beliefs=[BeliefForCuration.model_validate(b) for b in skill_input.beliefs],
-            pick_count=skill_input.pick_count,
-            now=skill_input.now or datetime.now(UTC),
-            cooldown_days=skill_input.cooldown_days,
-        )
-        output = select_beliefs_to_challenge_pure(agent_input)
-        skill_output = SelectBeliefsSkillOutput(picks=output.picks)
-
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                artifact=new_data_artifact("result", skill_output.model_dump(mode="json")),
-            )
-        )
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("cancel not supported")
-
-
-# Agent ----------------------------------------------------------------------
+async def _handle_select_beliefs(payload: dict[str, Any]) -> dict[str, Any]:
+    skill_input = SelectBeliefsSkillInput.model_validate(payload)
+    agent_input = CuratorInput(
+        beliefs=[BeliefForCuration.model_validate(b) for b in skill_input.beliefs],
+        pick_count=skill_input.pick_count,
+        now=skill_input.now or datetime.now(UTC),
+        cooldown_days=skill_input.cooldown_days,
+    )
+    output = select_beliefs_to_challenge_pure(agent_input)
+    return SelectBeliefsSkillOutput(picks=output.picks).model_dump(mode="json")
 
 
 class CuratorAgent(BaseAgent):
@@ -228,12 +176,8 @@ class CuratorAgent(BaseAgent):
             ),
             skill_tags=["curator", "falsification", "selection"],
         )
-        handler = DefaultRequestHandler(
-            agent_executor=_CuratorExecutor(),
-            task_store=InMemoryTaskStore(),
+        return build_task_app(
             agent_card=card,
+            skill_handlers={"select_beliefs_to_challenge": _handle_select_beliefs},
+            agent_name="curator",
         )
-        routes: list[Route] = []
-        routes.extend(create_agent_card_routes(card))
-        routes.extend(create_jsonrpc_routes(handler, "/"))
-        return Starlette(routes=routes)

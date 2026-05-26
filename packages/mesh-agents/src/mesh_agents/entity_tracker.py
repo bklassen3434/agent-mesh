@@ -4,20 +4,12 @@ import contextlib
 from typing import Any
 
 import duckdb
-from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.task_server import build_task_app
 from mesh_db.entities import create_entity
 from mesh_models.entity import Entity, EntityType
 from pydantic import BaseModel
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from mesh_agents.base import BaseAgent
 
@@ -138,6 +130,16 @@ def resolve_entities_pure(
     return result
 
 
+async def _handle_resolve_entities(payload: dict[str, Any]) -> dict[str, Any]:
+    skill_input = EntityResolveSkillInput.model_validate(payload)
+    resolved = resolve_entities_pure(
+        skill_input.candidate_names,
+        skill_input.existing_entities,
+        skill_input.type_hints,
+    )
+    return EntityResolveSkillOutput(resolved=resolved).model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -175,7 +177,7 @@ class EntityTrackerAgent(BaseAgent):
         return EntityTrackerOutput(resolved=resolved, created_count=created_count)
 
     async def run_skill(self, input: EntityResolveSkillInput) -> EntityResolveSkillOutput:
-        """Phase 2 path: pure, no DB. Used by the A2A server executor."""
+        """Phase 2 path: pure, no DB. Used by tests."""
         resolved = resolve_entities_pure(
             input.candidate_names,
             input.existing_entities,
@@ -193,63 +195,8 @@ class EntityTrackerAgent(BaseAgent):
             skill_description="Match candidate names to existing entities; create new ones.",
             skill_tags=["entities", "resolution", "deduplication"],
         )
-        handler = DefaultRequestHandler(
-            agent_executor=_EntityTrackerExecutor(),
-            task_store=InMemoryTaskStore(),
+        return build_task_app(
             agent_card=card,
+            skill_handlers={"resolve_entities": _handle_resolve_entities},
+            agent_name="entity_tracker",
         )
-        routes: list[Route] = []
-        routes.extend(create_agent_card_routes(card))
-        routes.extend(create_jsonrpc_routes(handler, "/"))
-        return Starlette(routes=routes)
-
-
-# ---------------------------------------------------------------------------
-# A2A executor
-# ---------------------------------------------------------------------------
-
-
-class _EntityTrackerExecutor(AgentExecutor):
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        task = new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
-
-        raw: dict[str, Any] = {}
-        for part in context.message.parts:
-            if part.HasField("data"):
-                raw = dict(MessageToDict(part.data))
-                break
-        skill_input = EntityResolveSkillInput.model_validate(raw)
-        resolved = resolve_entities_pure(
-            skill_input.candidate_names,
-            skill_input.existing_entities,
-            skill_input.type_hints,
-        )
-        output = EntityResolveSkillOutput(resolved=resolved)
-
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                artifact=new_data_artifact("result", output.model_dump(mode="json")),
-            )
-        )
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("cancel not supported")

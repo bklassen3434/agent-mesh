@@ -3,27 +3,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import arxiv
-from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from mesh_agents.base import BaseAgent
-
-if TYPE_CHECKING:
-    pass
 
 
 class ScoutedPaper(BaseModel):
@@ -128,62 +117,17 @@ def _fetch_papers(
     return papers
 
 
-# ---------------------------------------------------------------------------
-# A2A executor
-# ---------------------------------------------------------------------------
-
-
-class _ArxivScoutExecutor(AgentExecutor):
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        task = new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
-
-        # Parse skill input
-        raw: dict[str, Any] = {}
-        for part in context.message.parts:
-            if part.HasField("data"):
-                raw = dict(MessageToDict(part.data))
-                break
-        skill_input = ScoutArxivSkillInput.model_validate(raw)
-
-        since: datetime | None = None
-        if skill_input.since:
-            since = datetime.fromisoformat(skill_input.since)
-
-        papers = await asyncio.to_thread(
-            _fetch_papers, skill_input.categories, skill_input.max_results, since
-        )
-
-        output = ScoutArxivSkillOutput(
-            papers=[p.model_dump(mode="json") for p in papers]
-        )
-
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                artifact=new_data_artifact("result", output.model_dump(mode="json")),
-            )
-        )
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("cancel not supported")
+async def _handle_scout_arxiv(payload: dict[str, Any]) -> dict[str, Any]:
+    skill_input = ScoutArxivSkillInput.model_validate(payload)
+    since: datetime | None = None
+    if skill_input.since:
+        since = datetime.fromisoformat(skill_input.since)
+    papers = await asyncio.to_thread(
+        _fetch_papers, skill_input.categories, skill_input.max_results, since
+    )
+    return ScoutArxivSkillOutput(
+        papers=[p.model_dump(mode="json") for p in papers]
+    ).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +158,8 @@ class ArxivScoutAgent(BaseAgent):
             skill_description="Search arXiv for recent papers by category.",
             skill_tags=["arxiv", "papers", "research"],
         )
-        handler = DefaultRequestHandler(
-            agent_executor=_ArxivScoutExecutor(),
-            task_store=InMemoryTaskStore(),
+        return build_task_app(
             agent_card=card,
+            skill_handlers={"scout_arxiv": _handle_scout_arxiv},
+            agent_name="arxiv_scout",
         )
-        routes: list[Route] = []
-        routes.extend(create_agent_card_routes(card))
-        routes.extend(create_jsonrpc_routes(handler, "/"))
-        return Starlette(routes=routes)

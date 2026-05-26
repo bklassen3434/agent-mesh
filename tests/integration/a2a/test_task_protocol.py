@@ -14,6 +14,7 @@ import textwrap
 import time
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -40,7 +41,7 @@ def _wait_for_server(url: str, timeout: float = 10.0) -> None:
 def _free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
+    port: int = s.getsockname()[1]
     s.close()
     return port
 
@@ -128,7 +129,7 @@ def test_agent_card_advertises_skill(fake_agent_server: str) -> None:
 
 
 def test_submit_then_get_lifecycle(fake_agent_server: str) -> None:
-    async def _run() -> dict[str, str | None]:
+    async def _run() -> dict[str, Any]:
         async with MeshA2AClient() as c:
             await c.discover([fake_agent_server])
             task_id, url = await c.submit_task("fake_echo", {"value": "hi", "delay": 0.1})
@@ -140,8 +141,8 @@ def test_submit_then_get_lifecycle(fake_agent_server: str) -> None:
                     return {
                         "final": rec["status"],
                         "result": rec["result"],
-                        "saw_pending_or_running": str(
-                            any(s in ("pending", "running") for s in statuses)
+                        "saw_pending_or_running": any(
+                            s in ("pending", "running") for s in statuses
                         ),
                     }
                 await asyncio.sleep(0.05)
@@ -150,11 +151,11 @@ def test_submit_then_get_lifecycle(fake_agent_server: str) -> None:
     out = asyncio.run(_run())
     assert out["final"] == "completed"
     assert out["result"] == {"echo": "hi"}
-    assert out["saw_pending_or_running"] == "True"
+    assert out["saw_pending_or_running"] is True
 
 
 def test_call_skill_blocking_returns_result(fake_agent_server: str) -> None:
-    async def _run() -> dict[str, str]:
+    async def _run() -> dict[str, Any]:
         async with MeshA2AClient() as c:
             await c.discover([fake_agent_server])
             return await c.call_skill_blocking(

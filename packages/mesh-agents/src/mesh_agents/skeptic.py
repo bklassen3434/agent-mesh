@@ -12,20 +12,12 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.task_server import build_task_app
 from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError
 from mesh_llm.prompts import SKEPTIC_SYSTEM, format_skeptic_user
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from mesh_agents.base import BaseAgent
 from mesh_agents.sota_tracker import BeliefSummary
@@ -135,12 +127,7 @@ def _format_entities_block(entities: list[InScopeEntity]) -> str:
 def _filter_to_scope(
     assessment: SkepticAssessment, entities: list[InScopeEntity]
 ) -> SkepticAssessment:
-    """Drop any counter-claims that reference an out-of-scope entity_id.
-
-    Defensive — the prompt forbids out-of-scope refs, but the LLM may still
-    hallucinate them. Better to silently drop than to insert a claim pointing
-    at a non-existent entity.
-    """
+    """Drop any counter-claims that reference an out-of-scope entity_id."""
     if not assessment.counter_claims:
         return assessment
     allowed = {e.entity_id for e in entities}
@@ -180,7 +167,7 @@ def _assess_sync(llm: LLMClient, input: SkepticInput) -> SkepticAssessment:
 
 
 def challenge_belief_pure(llm: LLMClient, input: SkepticInput) -> SkepticAssessment:
-    """Synchronous pure entry point — used by both the agent and the A2A executor."""
+    """Synchronous pure entry point — used by both the agent and the A2A handler."""
     try:
         return _assess_sync(llm, input)
     except LLMProviderNotReadyError:
@@ -193,32 +180,9 @@ def challenge_belief_pure(llm: LLMClient, input: SkepticInput) -> SkepticAssessm
         return _INCONCLUSIVE.model_copy()
 
 
-# A2A executor ---------------------------------------------------------------
-
-
-class _SkepticExecutor(AgentExecutor):
-    def __init__(self, llm: LLMClient) -> None:
-        self._llm = llm
-
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        task = new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
-
-        raw: dict[str, Any] = {}
-        for part in context.message.parts:
-            if part.HasField("data"):
-                raw = dict(MessageToDict(part.data))
-                break
-        skill_input = ChallengeBeliefSkillInput.model_validate(raw)
+def _build_handler(llm: LLMClient) -> Any:
+    async def _handle_challenge_belief(payload: dict[str, Any]) -> dict[str, Any]:
+        skill_input = ChallengeBeliefSkillInput.model_validate(payload)
         agent_input = SkepticInput(
             belief=BeliefSummary.model_validate(skill_input.belief),
             supporting_claims=[
@@ -231,37 +195,16 @@ class _SkepticExecutor(AgentExecutor):
                 InScopeEntity.model_validate(e) for e in skill_input.in_scope_entities
             ],
         )
-
-        assessment = await asyncio.to_thread(challenge_belief_pure, self._llm, agent_input)
-
-        output = ChallengeBeliefSkillOutput(
+        assessment = await asyncio.to_thread(challenge_belief_pure, llm, agent_input)
+        return ChallengeBeliefSkillOutput(
             verdict=assessment.verdict,
             confidence=assessment.confidence,
             rationale=assessment.rationale,
             suggested_confidence_delta=assessment.suggested_confidence_delta,
             counter_claims=[c.model_dump(mode="json") for c in assessment.counter_claims],
-        )
+        ).model_dump(mode="json")
 
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                artifact=new_data_artifact("result", output.model_dump(mode="json")),
-            )
-        )
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("cancel not supported")
-
-
-# Agent ----------------------------------------------------------------------
+    return _handle_challenge_belief
 
 
 class SkepticAgent(BaseAgent):
@@ -292,12 +235,8 @@ class SkepticAgent(BaseAgent):
             ),
             skill_tags=["falsification", "skeptic", "beliefs"],
         )
-        handler = DefaultRequestHandler(
-            agent_executor=_SkepticExecutor(self.llm),
-            task_store=InMemoryTaskStore(),
+        return build_task_app(
             agent_card=card,
+            skill_handlers={"challenge_belief": _build_handler(self.llm)},
+            agent_name="skeptic",
         )
-        routes: list[Route] = []
-        routes.extend(create_agent_card_routes(card))
-        routes.extend(create_jsonrpc_routes(handler, "/"))
-        return Starlette(routes=routes)

@@ -4,15 +4,8 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from a2a.helpers.proto_helpers import new_data_artifact, new_task_from_user_message
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
-from google.protobuf.json_format import MessageToDict
 from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.task_server import build_task_app
 from mesh_llm import (
     LLMClient,
     LLMProviderNotReadyError,
@@ -21,7 +14,6 @@ from mesh_llm import (
 from mesh_llm.prompts import CLAIM_EXTRACTION_SYSTEM, format_extraction_user
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
@@ -82,38 +74,12 @@ def _extract_sync(llm: Any, paper: ScoutedPaper) -> tuple[list[ExtractedClaim], 
     return result.claims, latency_ms
 
 
-# ---------------------------------------------------------------------------
-# A2A executor
-# ---------------------------------------------------------------------------
-
-
-class _ClaimExtractorExecutor(AgentExecutor):
-    def __init__(self, llm: LLMClient) -> None:
-        self._llm = llm
-
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        task = new_task_from_user_message(context.message)
-        await event_queue.enqueue_event(task)
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
-
-        raw: dict[str, Any] = {}
-        for part in context.message.parts:
-            if part.HasField("data"):
-                raw = dict(MessageToDict(part.data))
-                break
-        skill_input = ExtractClaimsSkillInput.model_validate(raw)
+def _build_handler(llm: LLMClient) -> Any:
+    async def _handle_extract_claims(payload: dict[str, Any]) -> dict[str, Any]:
+        skill_input = ExtractClaimsSkillInput.model_validate(payload)
         paper = ScoutedPaper.model_validate(skill_input.paper)
-
         try:
-            claims, latency_ms = await asyncio.to_thread(_extract_sync, self._llm, paper)
+            claims, latency_ms = await asyncio.to_thread(_extract_sync, llm, paper)
         except LLMProviderNotReadyError:
             raise
         except LLMResponseError as exc:
@@ -122,31 +88,14 @@ class _ClaimExtractorExecutor(AgentExecutor):
                 extra={"arxiv_id": paper.arxiv_id, "error": str(exc)},
             )
             claims, latency_ms = [], 0
-
         entities_referenced = list({c.subject_name for c in claims})
-        output = ExtractClaimsSkillOutput(
+        return ExtractClaimsSkillOutput(
             claims=[c.model_dump(mode="json") for c in claims],
             entities_referenced=entities_referenced,
             latency_ms=latency_ms,
-        )
+        ).model_dump(mode="json")
 
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                artifact=new_data_artifact("result", output.model_dump(mode="json")),
-            )
-        )
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            )
-        )
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("cancel not supported")
+    return _handle_extract_claims
 
 
 # ---------------------------------------------------------------------------
@@ -193,12 +142,8 @@ class ClaimExtractorAgent(BaseAgent):
             skill_description="Extract structured claims (predicates, subjects, objects).",
             skill_tags=["llm", "claims", "extraction"],
         )
-        handler = DefaultRequestHandler(
-            agent_executor=_ClaimExtractorExecutor(self.llm),
-            task_store=InMemoryTaskStore(),
+        return build_task_app(
             agent_card=card,
+            skill_handlers={"extract_claims": _build_handler(self.llm)},
+            agent_name="claim_extractor",
         )
-        routes: list[Route] = []
-        routes.extend(create_agent_card_routes(card))
-        routes.extend(create_jsonrpc_routes(handler, "/"))
-        return Starlette(routes=routes)

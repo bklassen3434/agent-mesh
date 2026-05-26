@@ -10,6 +10,7 @@ from mesh_db.migrations import apply_migrations
 
 from mesh_api.routers import (
     beliefs,
+    briefing,
     claims,
     entities,
     health,
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(sources.router)
     app.include_router(beliefs.router)
     app.include_router(skeptic.router)
+    app.include_router(briefing.router)
     return app
 
 

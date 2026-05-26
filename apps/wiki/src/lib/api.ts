@@ -19,6 +19,9 @@ export type BeliefDetail = Schemas['BeliefDetail'];
 export type ClaimWithContext = Schemas['ClaimWithContext'];
 export type RevisionWithTriggers = Schemas['RevisionWithTriggers'];
 export type SkepticActivityItem = Schemas['SkepticActivityItem'];
+export type Briefing = Schemas['Briefing'];
+export type BriefingSection = Schemas['BriefingSection'];
+export type PersonalizedItem = Schemas['PersonalizedItem'];
 
 export type PageEntity = Schemas['Page_Entity_'];
 export type PageClaim = Schemas['Page_Claim_'];
@@ -109,4 +112,7 @@ export const api = {
     ),
   skepticRecent: (limit = 20) =>
     apiGet<SkepticActivityItem[]>('/api/v1/skeptic/recent', { query: { limit } }),
+
+  briefing: (date?: string) =>
+    apiGet<Briefing>('/api/v1/briefing', { query: date ? { date } : undefined }),
 };

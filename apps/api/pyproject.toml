@@ -9,11 +9,13 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "mesh-a2a",
     "mesh-db",
     "mesh-models",
 ]
 
 [tool.uv.sources]
+mesh-a2a = { workspace = true }
 mesh-db = { workspace = true }
 mesh-models = { workspace = true }
 

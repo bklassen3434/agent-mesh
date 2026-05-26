@@ -200,6 +200,29 @@ def test_call_skill_blocking_times_out_when_too_slow(fake_agent_server: str) -> 
     assert "did not complete within" in msg
 
 
+def test_agent_restart_surfaces_as_skill_call_error(fake_agent_server: str) -> None:
+    """If the agent restarts mid-task, in-memory registry loses the record,
+    so a poll returns 404 and the orchestrator sees a SkillCallError it can
+    catch and record on the source. This is the documented Phase 5a
+    behavior — durability is Phase 6.
+    """
+
+    async def _run() -> str:
+        async with MeshA2AClient() as c:
+            await c.discover([fake_agent_server])
+            try:
+                # Synthesizes "task vanished after agent restart": ask for a
+                # task_id we never created. Wire-level, this is identical to
+                # what happens after a real restart.
+                await c.get_task("00000000-0000-0000-0000-000000000000", fake_agent_server)
+            except SkillCallError as exc:
+                return str(exc)
+        return "no error raised"
+
+    msg = asyncio.run(_run())
+    assert "not found" in msg
+
+
 def test_submit_unknown_skill_raises(fake_agent_server: str) -> None:
     async def _run() -> None:
         async with MeshA2AClient() as c:

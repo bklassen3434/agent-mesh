@@ -180,3 +180,119 @@ Out-of-band from the main pipeline. Triggered manually by `make skeptic`.
 ```
 
 Coordinator (`apps/pipeline/coordinator.py`) is **unchanged** by this flow. Curator never calls Skeptic directly — `skeptic_sweep` brokers everything via A2A so the agent boundary stays load-bearing.
+
+---
+
+## Phase 5b — New scouts (complete)
+
+Phase 5b adds four new scout agents. All drop in via the existing
+`scout_*` skill-id prefix dispatch in the coordinator — no per-source
+branching was added.
+
+### GitHubScoutAgent (Phase 5b)
+
+**Responsibility**: Surface high-signal ML/AI work from GitHub.
+
+**Skill**: `scout_github` (port `8008`).
+
+Two fetch lanes, both unauthenticated by default:
+
+1. **Trending**: GitHub search API (`/search/repositories`) filtered by
+   `topic:` clauses (default: `llm`, `agents`, `machine-learning`,
+   `ai`, `robotics`), sorted by stars. For each repo the scout
+   best-effort fetches the README and uses it as the abstract; falls
+   back to description + topics list when the README is missing.
+2. **Watchlist**: per-repo `/releases.atom` feed for every `owner/repo`
+   slug in `MESH_GITHUB_WATCHLIST`. Release notes become the abstract.
+
+Env: `MESH_GITHUB_TOPICS`, `MESH_GITHUB_WATCHLIST`, `GITHUB_TOKEN`
+(optional; PAT raises the public 60/hr limit to 5000/hr).
+
+---
+
+### BlueskyScoutAgent (Phase 5b)
+
+**Responsibility**: Fetch AI/ML posts from Bluesky's public AppView API.
+
+**Skill**: `scout_bluesky` (port `8009`).
+
+Two lanes, both via the unauthenticated AppView at
+`public.api.bsky.app`:
+
+1. **Hashtag**: `app.bsky.feed.searchPosts` for each tag in
+   `MESH_BLUESKY_HASHTAGS` (default: `ai`, `ml`, `llm`).
+2. **Author**: `app.bsky.feed.getAuthorFeed` per handle in
+   `MESH_BLUESKY_HANDLES` (optional curated list).
+
+Posts shorter than ~40 chars get filtered to keep the LLM extraction
+budget on signal.
+
+---
+
+### RedditScoutAgent (Phase 5b)
+
+**Responsibility**: Top posts of the day from AI/ML subreddits.
+
+**Skill**: `scout_reddit` (port `8010`).
+
+Uses Reddit's free OAuth2 client-credentials grant — requires
+`REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` (create a "script"-type
+app at <https://www.reddit.com/prefs/apps>). Without creds the scout
+returns empty and logs a single warning; the rest of the pipeline keeps
+running.
+
+Default subreddits: `MachineLearning`, `LocalLLaMA`, `singularity`,
+`artificial` (override via `MESH_REDDIT_SUBS`). Min-score filter
+defaults to 20 to drop fly-by posts.
+
+---
+
+### BlogScoutAgent (Phase 5b)
+
+**Responsibility**: Ingest AI/ML blog posts via RSS/Atom feeds.
+
+**Skill**: `scout_blogs` (port `8011`).
+
+Reads feeds from `config/blog_feeds.yaml` (default), or overrides via:
+
+- `MESH_BLOG_FEEDS` — comma-separated URLs
+- `MESH_BLOG_FEEDS_FILE` — path to an alternate YAML file
+
+Default feed list (curated for Phase 5b): Anthropic, OpenAI, Google
+DeepMind, Meta AI, Hugging Face, Simon Willison, Lilian Weng, Sebastian
+Raschka, Berkeley BAIR, Stanford AI Lab.
+
+Lookback window `MESH_BLOG_LOOKBACK_HOURS` (default 24) skips entries
+older than the window so each run only ingests genuinely new posts.
+
+Uses `feedparser`, which is robust to malformed feeds — a broken or
+empty feed gets one warning and is skipped.
+
+---
+
+### LeaderboardScoutAgent (Phase 5b)
+
+**Responsibility**: Snapshot top entries from evaluation surfaces.
+
+**Skill**: `scout_leaderboards` (port `8012`).
+
+Three failure-isolated sub-fetchers; one breaking does not affect the
+others:
+
+1. **HuggingFace Open LLM Leaderboard** — via the public
+   `datasets-server.huggingface.co/rows` endpoint against the
+   `open-llm-leaderboard/contents` dataset.
+2. **Papers-with-Code SOTA** — `/api/v1/sota/<benchmark>/` for a small
+   set of foundational benchmarks (`mmlu`, `humaneval`, `gsm8k`,
+   `hellaswag`, `arc`).
+3. **Chatbot Arena (LMSys)** — the public CSV at
+   `huggingface.co/spaces/lmsys/chatbot-arena-leaderboard/.../leaderboard_table.csv`.
+
+Each lane produces one ScoutedPaper whose abstract lists the top-N
+entries in the format `"<rank>. <model> — <metric> on <benchmark>"`,
+which the claim extractor parses into structured `achieves_score`
+claims.
+
+The exact public endpoints these sub-fetchers hit can change. When one
+breaks, the agent stays up and the other lanes keep working — the user
+can iterate on the broken lane without redeploying everything.

@@ -221,6 +221,35 @@ decision in the Phase 5 prompt.
 See `docs/a2a.md` for the wire-level reference (request/response shapes,
 env vars, lifecycle diagram).
 
+## Phase 5b — Four new scouts (complete)
+
+Phase 5b broadens coverage. The mesh now ingests from arxiv, HN,
+GitHub, Bluesky, Reddit, curated blog feeds, and three structured
+leaderboards. All seven scouts run concurrently in the coordinator's
+scout phase and total pipeline runtime is bounded by the slowest
+single scout, not their sum.
+
+| Skill | Port | Source.type | What it pulls |
+|---|---|---|---|
+| `scout_arxiv` | 8001 | `arxiv` | Recent papers by category |
+| `scout_hn` | 8005 | `hn_post` | HN stories via Algolia, AI/ML keyword search |
+| `scout_github` | 8008 | `github` | Trending repos (topic search) + watchlist releases |
+| `scout_bluesky` | 8009 | `bluesky` | Hashtag + curated-handle posts via public AppView |
+| `scout_reddit` | 8010 | `reddit` | Top posts of the day from configured subreddits |
+| `scout_blogs` | 8011 | `blog` | RSS/Atom from a curated YAML feed list |
+| `scout_leaderboards` | 8012 | `leaderboard` | HF Open LLM + Papers-with-Code + Chatbot Arena |
+
+**Failure isolation is mandatory.** Any single scout going down (auth
+missing, parser broken, upstream HTTP error) does not break the
+pipeline — it logs, returns empty, and the other scouts continue.
+Inside multi-lane scouts (GitHub trending + watchlist, leaderboard's
+three sub-fetchers) the same isolation holds at sub-lane granularity.
+
+**Coordinator code did not grow source-type branches.** Every new
+scout was added by publishing its agent card with a `scout_*` skill
+id; the coordinator's existing prefix-loop dispatch picks them up
+automatically. See `docs/agents.md` for per-scout config knobs.
+
 ## Package layout
 
 ```

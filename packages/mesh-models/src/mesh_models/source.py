@@ -12,7 +12,9 @@ class SourceType(StrEnum):
     hn_post = "hn_post"
     hn_comment = "hn_comment"
     github = "github"
-    twitter = "twitter"
+    twitter = "twitter"  # reserved; no scout in Phase 5 (Bluesky + Reddit cover social)
+    bluesky = "bluesky"
+    reddit = "reddit"
     blog = "blog"
     leaderboard = "leaderboard"
     # Synthesized by an agent (e.g. Skeptic's rationale-as-source for the

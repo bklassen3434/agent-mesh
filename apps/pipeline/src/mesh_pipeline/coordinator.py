@@ -108,7 +108,7 @@ async def run_pipeline(
 
         papers: list[ScoutedPaper] = []
         for scout_id in scout_ids:
-            scout_result = await client.call_skill(
+            scout_result = await client.call_skill_blocking(
                 scout_id, scout_payload, traceparent=traceparent
             )
             for p in scout_result.get("papers", []):
@@ -148,7 +148,7 @@ async def run_pipeline(
         async def extract_one(paper: ScoutedPaper) -> None:
             async with semaphore:
                 try:
-                    result = await client.call_skill(
+                    result = await client.call_skill_blocking(
                         "extract_claims",
                         {"paper": paper.model_dump(mode="json")},
                         traceparent=traceparent,
@@ -206,7 +206,7 @@ async def run_pipeline(
         ]
 
         if "resolve_entities" in discovered:
-            resolve_result = await client.call_skill(
+            resolve_result = await client.call_skill_blocking(
                 "resolve_entities",
                 {
                     "candidate_names": list(all_names),
@@ -293,7 +293,7 @@ async def run_pipeline(
         ]
 
         if "update_sota" in discovered:
-            sota_result = await client.call_skill(
+            sota_result = await client.call_skill_blocking(
                 "update_sota",
                 {
                     "claims": [c.model_dump(mode="json") for c in all_resolved_claims],

@@ -87,6 +87,17 @@ class _FakeA2AClient:
         result: dict[str, Any] = self._responses[skill_id]
         return result
 
+    async def call_skill_blocking(
+        self,
+        skill_id: str,
+        payload: dict[str, Any],
+        *,
+        traceparent: str | None = None,
+        poll_interval: float | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        return await self.call_skill(skill_id, payload, traceparent=traceparent)
+
 
 def _patch_a2a(responses: dict[str, Any]) -> tuple[Any, _FakeA2AClient]:
     fake = _FakeA2AClient(responses)

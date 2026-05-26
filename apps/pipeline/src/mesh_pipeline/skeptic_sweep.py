@@ -301,7 +301,7 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
 
         # ── 1. Curator: rank and pick ──────────────────────────────────────
         curator_payload = _build_curator_payload(conn, held_beliefs, now)
-        curator_result = await client.call_skill(
+        curator_result = await client.call_skill_blocking(
             "select_beliefs_to_challenge",
             {
                 "beliefs": [b.model_dump(mode="json") for b in curator_payload],
@@ -324,7 +324,7 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
             contradicting = _hydrate_claims(conn, belief.contradicting_claim_ids)
             in_scope = _collect_in_scope_entities(conn, supporting, contradicting)
 
-            assessment_result = await client.call_skill(
+            assessment_result = await client.call_skill_blocking(
                 "challenge_belief",
                 {
                     "belief": BeliefSummary(

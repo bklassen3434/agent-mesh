@@ -973,12 +973,14 @@ version = "0.1.0"
 source = { editable = "packages/mesh-agents" }
 dependencies = [
     { name = "arxiv" },
+    { name = "feedparser" },
     { name = "httpx" },
     { name = "mesh-a2a" },
     { name = "mesh-db" },
     { name = "mesh-llm" },
     { name = "mesh-models" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -986,12 +988,14 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "arxiv", specifier = ">=2.1" },
+    { name = "feedparser", specifier = ">=6.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mesh-a2a", editable = "packages/mesh-a2a" },
     { name = "mesh-db", editable = "packages/mesh-db" },
     { name = "mesh-llm", editable = "packages/mesh-llm" },
     { name = "mesh-models", editable = "packages/mesh-models" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]

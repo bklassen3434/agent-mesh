@@ -119,6 +119,32 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  blog-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.blog_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8011"
+      AGENT_PUBLIC_URL: "http://blog-scout:8011"
+      MESH_BLOG_FEEDS: ${MESH_BLOG_FEEDS:-}
+      MESH_BLOG_FEEDS_FILE: ${MESH_BLOG_FEEDS_FILE:-/app/config/blog_feeds.yaml}
+      MESH_BLOG_LOOKBACK_HOURS: ${MESH_BLOG_LOOKBACK_HOURS:-24}
+    env_file:
+      - .env
+    volumes:
+      - ./config:/app/config:ro
+    ports:
+      - "8011:8011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .
@@ -291,7 +317,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011"
       MESH_DB_PATH: "/app/data/mesh.db"
     env_file:
       - .env
@@ -313,6 +339,8 @@ services:
       bluesky-scout:
         condition: service_healthy
       reddit-scout:
+        condition: service_healthy
+      blog-scout:
         condition: service_healthy
     profiles:
       - pipeline

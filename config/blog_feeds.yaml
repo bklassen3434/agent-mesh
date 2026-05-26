@@ -1,0 +1,28 @@
+# Default RSS/Atom feeds for the blog scout (scout_blogs).
+#
+# Override the entire list via $MESH_BLOG_FEEDS (comma-separated URLs) or by
+# pointing $MESH_BLOG_FEEDS_FILE at a YAML file with the same shape as this one.
+#
+# Curated for Phase 5b: lab blogs that publish substantive technical posts,
+# plus a few aggregators / individual researchers who reliably surface signal.
+feeds:
+  - name: Anthropic
+    url: https://www.anthropic.com/news/rss.xml
+  - name: OpenAI
+    url: https://openai.com/blog/rss/
+  - name: Google DeepMind
+    url: https://deepmind.google/blog/rss.xml
+  - name: Meta AI
+    url: https://ai.meta.com/blog/rss/
+  - name: Hugging Face
+    url: https://huggingface.co/blog/feed.xml
+  - name: Simon Willison
+    url: https://simonwillison.net/atom/everything/
+  - name: Lilian Weng
+    url: https://lilianweng.github.io/index.xml
+  - name: Sebastian Raschka
+    url: https://sebastianraschka.com/blog/index.xml
+  - name: Berkeley BAIR
+    url: https://bair.berkeley.edu/blog/feed.xml
+  - name: Stanford AI Lab
+    url: https://ai.stanford.edu/blog/feed.xml

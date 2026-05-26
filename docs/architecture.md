@@ -192,6 +192,35 @@ Key invariants preserved:
   (`/api/v1/skeptic/recent`, `/api/v1/beliefs/{id}/revisions`) and a `/skeptic`
   wiki route. No write paths.
 
+## Phase 5a — Async A2A foundation (complete)
+
+Phase 5a is a plumbing change: the wire protocol between orchestrators and
+agents moves from sync `send_message` (which blocked until the agent
+finished) to a task-based submit-then-poll pattern. **No new features, no
+new agents.** What changed:
+
+- Each agent server now exposes `POST /mesh/tasks/submit` and
+  `GET /mesh/tasks/{task_id}` (in addition to the existing agent card
+  endpoint). The submit returns `202` with a `task_id` immediately; the
+  actual work runs as a background `asyncio.create_task` whose status the
+  agent tracks in an in-memory `TaskRegistry`.
+- The coordinator and skeptic-sweep call `client.call_skill_blocking(...)`
+  which submits the task and polls until completion. The orchestrator code
+  shape (scout fan-out, extract semaphore, SOTA pass) is identical to
+  Phase 4 — only the dispatch transport changed.
+- The `AgentExecutor` + JSON-RPC handler scaffolding was removed from each
+  agent module; skills are plain `async def _handle_<skill>(payload) -> dict`
+  callables registered with `build_task_app`.
+
+Task state lives only in agent process memory. If an agent restarts
+mid-pipeline, the orchestrator's next poll returns 404 → `SkillCallError` and
+the source records the failure; the pipeline keeps going. Durable task
+storage is deferred to Phase 6 (alongside scheduling), per the locked
+decision in the Phase 5 prompt.
+
+See `docs/a2a.md` for the wire-level reference (request/response shapes,
+env vars, lifecycle diagram).
+
 ## Package layout
 
 ```

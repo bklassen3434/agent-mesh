@@ -621,7 +621,7 @@ export interface components {
          * SourceType
          * @enum {string}
          */
-        SourceType: "arxiv" | "hn_post" | "hn_comment" | "github" | "twitter" | "blog" | "leaderboard" | "agent_reasoning";
+        SourceType: "arxiv" | "hn_post" | "hn_comment" | "github" | "twitter" | "bluesky" | "reddit" | "blog" | "leaderboard" | "agent_reasoning";
         /** SourceWithCount */
         SourceWithCount: {
             source: components["schemas"]["Source"];

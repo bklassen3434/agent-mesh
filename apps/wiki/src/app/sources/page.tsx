@@ -16,12 +16,24 @@ function pick(sp: SP, key: string): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
+const SOURCE_TYPES = [
+  'arxiv',
+  'hn_post',
+  'github',
+  'bluesky',
+  'reddit',
+  'blog',
+  'leaderboard',
+  'agent_reasoning',
+] as const;
+
 export default async function SourcesPage(props: { searchParams: Promise<SP> }) {
   const sp = await props.searchParams;
   const limit = Number(pick(sp, 'limit') ?? 50);
   const offset = Number(pick(sp, 'offset') ?? 0);
+  const activeType = pick(sp, 'type');
 
-  const page = await api.listSources({ limit, offset });
+  const page = await api.listSources({ type: activeType, limit, offset });
 
   return (
     <main className="space-y-6">
@@ -32,8 +44,17 @@ export default async function SourcesPage(props: { searchParams: Promise<SP> }) 
         </p>
       </div>
 
+      <SourceTypeFilter active={activeType} />
+
       {page.items.length === 0 ? (
-        <EmptyState title="No sources yet" description="Run the pipeline to ingest sources." />
+        <EmptyState
+          title="No sources yet"
+          description={
+            activeType
+              ? `No sources of type "${activeType}" yet. Try a different filter or run the pipeline.`
+              : 'Run the pipeline to ingest sources.'
+          }
+        />
       ) : (
         <>
           <Table>
@@ -70,9 +91,43 @@ export default async function SourcesPage(props: { searchParams: Promise<SP> }) 
             limit={page.limit}
             offset={page.offset}
             basePath="/sources"
+            searchParams={activeType ? { type: activeType } : undefined}
           />
         </>
       )}
     </main>
+  );
+}
+
+function SourceTypeFilter({ active }: { active: string | undefined }) {
+  const baseChip =
+    'inline-flex items-center rounded-full border px-3 py-1 text-xs transition-colors';
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted-foreground mr-1">Filter:</span>
+      <Link
+        href="/sources"
+        className={`${baseChip} ${
+          !active
+            ? 'border-foreground bg-foreground text-background'
+            : 'border-border hover:bg-muted'
+        }`}
+      >
+        All
+      </Link>
+      {SOURCE_TYPES.map((t) => (
+        <Link
+          key={t}
+          href={`/sources?type=${t}`}
+          className={`${baseChip} ${
+            active === t
+              ? 'border-foreground bg-foreground text-background'
+              : 'border-border hover:bg-muted'
+          }`}
+        >
+          {t}
+        </Link>
+      ))}
+    </div>
   );
 }

@@ -48,6 +48,30 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  github-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.github_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8008"
+      AGENT_PUBLIC_URL: "http://github-scout:8008"
+      MESH_GITHUB_TOPICS: ${MESH_GITHUB_TOPICS:-llm,agents,machine-learning,ai,robotics}
+      MESH_GITHUB_WATCHLIST: ${MESH_GITHUB_WATCHLIST:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    env_file:
+      - .env
+    ports:
+      - "8008:8008"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .
@@ -220,7 +244,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008"
       MESH_DB_PATH: "/app/data/mesh.db"
     env_file:
       - .env
@@ -234,6 +258,10 @@ services:
       entity-tracker:
         condition: service_healthy
       sota-tracker:
+        condition: service_healthy
+      hn-scout:
+        condition: service_healthy
+      github-scout:
         condition: service_healthy
     profiles:
       - pipeline

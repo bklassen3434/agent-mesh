@@ -38,6 +38,8 @@ _DEFAULT_AGENT_URLS = [
     "http://claim-extractor:8002",
     "http://entity-tracker:8003",
     "http://sota-tracker:8004",
+    "http://hn-scout:8005",
+    "http://github-scout:8008",
 ]
 
 

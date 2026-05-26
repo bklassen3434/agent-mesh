@@ -40,6 +40,7 @@ _DEFAULT_AGENT_URLS = [
     "http://sota-tracker:8004",
     "http://hn-scout:8005",
     "http://github-scout:8008",
+    "http://bluesky-scout:8009",
 ]
 
 

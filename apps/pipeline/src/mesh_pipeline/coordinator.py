@@ -41,6 +41,7 @@ _DEFAULT_AGENT_URLS = [
     "http://hn-scout:8005",
     "http://github-scout:8008",
     "http://bluesky-scout:8009",
+    "http://reddit-scout:8010",
 ]
 
 

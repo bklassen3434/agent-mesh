@@ -95,6 +95,30 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  reddit-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.reddit_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8010"
+      AGENT_PUBLIC_URL: "http://reddit-scout:8010"
+      MESH_REDDIT_SUBS: ${MESH_REDDIT_SUBS:-MachineLearning,LocalLLaMA,singularity,artificial}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+    env_file:
+      - .env
+    ports:
+      - "8010:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .
@@ -267,7 +291,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010"
       MESH_DB_PATH: "/app/data/mesh.db"
     env_file:
       - .env
@@ -287,6 +311,8 @@ services:
       github-scout:
         condition: service_healthy
       bluesky-scout:
+        condition: service_healthy
+      reddit-scout:
         condition: service_healthy
     profiles:
       - pipeline

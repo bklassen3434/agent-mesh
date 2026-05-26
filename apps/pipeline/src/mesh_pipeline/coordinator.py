@@ -43,6 +43,7 @@ _DEFAULT_AGENT_URLS = [
     "http://bluesky-scout:8009",
     "http://reddit-scout:8010",
     "http://blog-scout:8011",
+    "http://leaderboard-scout:8012",
 ]
 
 

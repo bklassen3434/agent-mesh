@@ -145,6 +145,27 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  leaderboard-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.leaderboard_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8012"
+      AGENT_PUBLIC_URL: "http://leaderboard-scout:8012"
+    env_file:
+      - .env
+    ports:
+      - "8012:8012"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8012/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .
@@ -317,7 +338,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
       MESH_DB_PATH: "/app/data/mesh.db"
     env_file:
       - .env
@@ -341,6 +362,8 @@ services:
       reddit-scout:
         condition: service_healthy
       blog-scout:
+        condition: service_healthy
+      leaderboard-scout:
         condition: service_healthy
     profiles:
       - pipeline

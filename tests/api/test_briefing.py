@@ -67,7 +67,7 @@ def test_briefing_returns_quiet_day_when_no_candidates(
 
 
 def test_briefing_dispatches_to_personalizer_when_candidates_exist(
-    empty_client: TestClient, profile_at: Path, seeded_db_path: Path  # noqa: ARG001
+    empty_client: TestClient, profile_at: Path, seeded_db_path: Path
 ) -> None:
     """With candidates in the DB, the route should dispatch via MeshA2AClient.
 

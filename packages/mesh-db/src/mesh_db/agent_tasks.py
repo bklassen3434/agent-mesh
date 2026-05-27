@@ -261,6 +261,53 @@ def count_tasks_by_status(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
     return {str(r[0]): int(r[1]) for r in rows}
 
 
+class DuckDBTaskRecorder:
+    """TaskRecorder implementation that persists to ``agent_tasks``.
+
+    The orchestrator constructs one per run and passes it to
+    ``MeshA2AClient(task_recorder=...)``. The bound ``run_id`` is
+    written into ``dispatched_by_run_id`` for every task this recorder
+    sees, giving the status page a cheap join back to ``pipeline_runs``.
+    """
+
+    def __init__(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        dispatched_by_run_id: str | None = None,
+    ) -> None:
+        self._conn = conn
+        self._run_id = dispatched_by_run_id
+
+    def record_pending(
+        self,
+        *,
+        task_id: str,
+        skill_id: str,
+        agent_url: str,
+        payload: dict[str, Any],
+    ) -> None:
+        create_task(
+            self._conn,
+            task_id=task_id,
+            skill_id=skill_id,
+            agent_url=agent_url,
+            input_payload=payload,
+            dispatched_by_run_id=self._run_id,
+        )
+
+    def record_running(self, task_id: str) -> None:
+        mark_running(self._conn, task_id)
+
+    def record_heartbeat(self, task_id: str) -> None:
+        mark_heartbeat(self._conn, task_id)
+
+    def record_completed(self, task_id: str, output: dict[str, Any]) -> None:
+        mark_completed(self._conn, task_id, output)
+
+    def record_failed(self, task_id: str, error: str) -> None:
+        mark_failed(self._conn, task_id, error)
+
+
 def _row_to_task(row: tuple[Any, ...]) -> AgentTask:
     (
         id_, skill_id, agent_url, status, input_raw, output_raw, error,

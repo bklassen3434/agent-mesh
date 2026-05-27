@@ -28,6 +28,7 @@ from mesh_agents.skeptic import (
     SkepticCounterClaim,
 )
 from mesh_agents.sota_tracker import BeliefSummary
+from mesh_db.agent_tasks import DuckDBTaskRecorder, sweep_orphaned_tasks
 from mesh_db.beliefs import get_belief_by_id, list_beliefs, update_belief
 from mesh_db.claims import create_claim, get_claims_by_ids
 from mesh_db.connection import get_connection
@@ -81,6 +82,12 @@ def _cooldown_days() -> int:
 
 def _source_reliability() -> float:
     return float(os.environ.get("MESH_SKEPTIC_SOURCE_RELIABILITY", "0.4"))
+
+
+def _task_resume_threshold() -> int:
+    """Seconds an agent_task can sit pending/running before the startup
+    sweep considers it orphaned. Default 600s = 10 minutes."""
+    return int(os.environ.get("MESH_TASK_RESUME_THRESHOLD", "600"))
 
 
 def _last_skeptic_challenge(revisions: list[BeliefRevision]) -> datetime | None:
@@ -304,7 +311,12 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
             revisions_inserted=0,
         )
 
-    async with MeshA2AClient() as client:
+    # Phase 6b: persist dispatch lifecycle. Sweep orphans first so the
+    # table doesn't keep stale rows from a prior crash.
+    sweep_orphaned_tasks(conn, threshold_seconds=_task_resume_threshold())
+    recorder = DuckDBTaskRecorder(conn, dispatched_by_run_id=run.id)
+
+    async with MeshA2AClient(task_recorder=recorder) as client:
         discovered = await client.discover(_agent_urls())
         log.info("agents_discovered", skills=list(discovered.keys()))
 

@@ -17,6 +17,7 @@ from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.claim_extractor import ExtractedClaim
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
+from mesh_db.agent_tasks import DuckDBTaskRecorder, sweep_orphaned_tasks
 from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, update_belief
 from mesh_db.claims import create_claim
 from mesh_db.connection import get_connection
@@ -70,6 +71,12 @@ def _agent_urls() -> list[str]:
     return _DEFAULT_AGENT_URLS
 
 
+def _task_resume_threshold() -> int:
+    """Seconds an agent_task can sit pending/running before the startup
+    sweep considers it orphaned. Default 600s = 10 minutes."""
+    return int(os.environ.get("MESH_TASK_RESUME_THRESHOLD", "600"))
+
+
 async def run_pipeline(
     categories: list[str],
     max_papers: int,
@@ -94,7 +101,15 @@ async def run_pipeline(
     latencies: list[int] = []
     traceparent = new_traceparent()
 
-    async with MeshA2AClient() as client:
+    # Phase 6b: persist every skill dispatch through a DuckDB-backed
+    # recorder so the status page + post-crash debugging have something
+    # to look at. Orphaned tasks from a previous run get marked failed
+    # before we add fresh ones, so the table doesn't grow unbounded with
+    # stale rows.
+    sweep_orphaned_tasks(conn, threshold_seconds=_task_resume_threshold())
+    recorder = DuckDBTaskRecorder(conn, dispatched_by_run_id=run.id)
+
+    async with MeshA2AClient(task_recorder=recorder) as client:
         # ── 0. Discover agents ─────────────────────────────────────────────
         discovered = await client.discover(_agent_urls())
         log.info("agents_discovered", skills=list(discovered.keys()))

@@ -70,6 +70,14 @@ def create_app() -> FastAPI:
 
 
 def main() -> None:
-    host = os.environ.get("API_HOST", "0.0.0.0")
+    # Phase 6b: MESH_BIND_INTERFACE wins over API_HOST when set. For
+    # Tailscale-only deployment, set it to the host's tailnet IP
+    # (100.x.x.x). For local dev, leave it unset and the existing
+    # 0.0.0.0 default keeps the API reachable from localhost.
+    host = (
+        os.environ.get("MESH_BIND_INTERFACE")
+        or os.environ.get("API_HOST")
+        or "0.0.0.0"
+    )
     port = int(os.environ.get("API_PORT", "8000"))
     uvicorn.run("mesh_api.main:create_app", host=host, port=port, factory=True)

@@ -267,6 +267,11 @@ services:
       dockerfile: Dockerfile.api
     environment:
       MESH_DB_PATH: "/app/data/mesh.db"
+      # Phase 6b: MESH_BIND_INTERFACE wins over API_HOST when set. For
+      # Tailscale-only access, set MESH_BIND_INTERFACE in .env to the
+      # host's tailnet IP (100.x.x.x) and run this service in host
+      # network mode (docs/deployment.md).
+      MESH_BIND_INTERFACE: ${MESH_BIND_INTERFACE:-}
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
       API_CORS_ORIGINS: "http://localhost:3000"
@@ -291,6 +296,10 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: "http://localhost:8000"
       INTERNAL_API_URL: "http://api:8000"
+      # Phase 6b: HOSTNAME is the Next.js standalone bind address; default
+      # 0.0.0.0 in the Dockerfile. Override with MESH_BIND_INTERFACE for
+      # Tailscale-only access. See docs/deployment.md.
+      HOSTNAME: ${MESH_BIND_INTERFACE:-0.0.0.0}
     depends_on:
       api:
         condition: service_healthy

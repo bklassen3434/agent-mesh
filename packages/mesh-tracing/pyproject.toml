@@ -6,10 +6,7 @@ build-backend = "hatchling.build"
 name = "mesh-tracing"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = []
-
-[project.optional-dependencies]
-langfuse = ["langfuse>=2.0"]
+dependencies = ["langfuse>=2.0,<3.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mesh_tracing"]

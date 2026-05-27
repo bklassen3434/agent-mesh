@@ -12,8 +12,9 @@ COPY pyproject.toml uv.lock ./
 COPY packages/ packages/
 COPY apps/ apps/
 
-# Install the pipeline package (coordinator) and its dependencies
-RUN uv sync --package mesh-pipeline --no-dev
+# Install the pipeline package (coordinator) and the scheduler. Both share
+# this image — the scheduler shells out to mesh-pipeline / mesh-skeptic-sweep.
+RUN uv sync --package mesh-pipeline --package mesh-scheduler --no-dev
 
 # Data directory (DuckDB volume mount point)
 RUN mkdir -p /app/data

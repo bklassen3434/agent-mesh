@@ -421,6 +421,29 @@ services:
     profiles:
       - skeptic
 
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    # Reuse the coordinator image — the scheduler shells out to the same CLI
+    # entry points (mesh-pipeline, mesh-skeptic-sweep) so it needs the same
+    # workspace install and DB volume.
+    entrypoint: ["uv", "run", "mesh-scheduler"]
+    environment:
+      MESH_USE_A2A: "true"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
+      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
+      MESH_DB_PATH: "/app/data/mesh.db"
+      MESH_SCHEDULE_PIPELINE_CRON: ${MESH_SCHEDULE_PIPELINE_CRON:-0 */6 * * *}
+      MESH_SCHEDULE_SWEEP_CRON: ${MESH_SCHEDULE_SWEEP_CRON:-0 3 * * *}
+    env_file:
+      - .env
+    volumes:
+      - mesh-data:/app/data
+    profiles:
+      - scheduler
+    restart: unless-stopped
+
 volumes:
   mesh-data:
     driver: local

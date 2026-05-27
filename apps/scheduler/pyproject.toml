@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mesh-scheduler"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "apscheduler>=3.10,<4.0",
+    "structlog>=24.0",
+    "click>=8.0",
+    "mesh-db",
+]
+
+[tool.uv.sources]
+mesh-db = { workspace = true }
+
+[project.scripts]
+"mesh-scheduler" = "mesh_scheduler.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mesh_scheduler"]

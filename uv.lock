@@ -1009,18 +1009,22 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mesh-a2a" },
     { name = "mesh-db" },
     { name = "mesh-models" },
+    { name = "mesh-scheduler" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mesh-a2a", editable = "packages/mesh-a2a" },
     { name = "mesh-db", editable = "packages/mesh-db" },
     { name = "mesh-models", editable = "packages/mesh-models" },
+    { name = "mesh-scheduler", editable = "apps/scheduler" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 

@@ -19,6 +19,9 @@ from mesh_api.routers import (
     sources,
     stats,
 )
+from mesh_api.routers import (
+    status as status_router,
+)
 
 
 def _ensure_schema() -> None:
@@ -66,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(beliefs.router)
     app.include_router(skeptic.router)
     app.include_router(briefing.router)
+    app.include_router(status_router.router)
     return app
 
 

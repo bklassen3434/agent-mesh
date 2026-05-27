@@ -41,11 +41,13 @@ Phase 5a moves the wire protocol from sync `send_message` (which blocked until t
 
 A2A supports both polling (`tasks/get`) and push notifications. The mesh uses polling-only in Phase 5a. Push notifications are a possible Phase 6 addition if polling intervals become a problem; they aren't now.
 
-### Task state is in-memory and ephemeral
+### Task state is in-memory on the agent, durable on the orchestrator
 
-Each agent process holds an in-memory `TaskRegistry` (`packages/mesh-a2a/src/mesh_a2a/task_registry.py`): a `dict[task_id, TaskRecord]` protected by an `asyncio.Lock`. Records carry status (`pending | running | completed | failed`), result dict, error string, and timestamps.
+Each agent process holds an in-memory `TaskRegistry` (`packages/mesh-a2a/src/mesh_a2a/task_registry.py`): a `dict[task_id, TaskRecord]` protected by an `asyncio.Lock`. Records carry status (`pending | running | completed | failed`), result dict, error string, and timestamps. Agent-side state is still ephemeral — if an agent process restarts mid-task, that task is lost on the agent side.
 
-**If an agent process restarts mid-pipeline**, all in-flight task records vanish. The orchestrator's next poll will return `404 task not found`, the `call_skill_blocking` helper surfaces this as a `SkillCallError`, and the pipeline records the failure on that source and continues. **Durable task storage is deferred to Phase 6 alongside scheduling** — Phase 5 explicitly accepts the trade.
+**Orchestrator-side, every dispatch is now durable (Phase 6b).** `call_skill_blocking` accepts an optional `task_recorder: TaskRecorder` and drives it through the dispatch lifecycle: `record_pending` after submit, `record_running` on the first non-pending status, `record_heartbeat` every N polls, and `record_completed` / `record_failed` on terminal states. The coordinator and skeptic-sweep construct a `DuckDBTaskRecorder` bound to the current run id and pass it in, so every skill call leaves a trail in the `agent_tasks` + `agent_task_events` tables. The status page reads those tables.
+
+If the orchestrator crashes mid-run, the recovery story is "fail visibly, don't try to resume." On startup, the coordinator and sweep call `sweep_orphaned_tasks(threshold_seconds=MESH_TASK_RESUME_THRESHOLD)` (default 600s) which marks any pending/running tasks whose `updated_at` is older than the threshold as `failed` with `error='orphaned_on_restart'`. No retry, no resumption — the operator can re-run the pipeline manually and the status page surfaces the orphans in the "recent failures" panel.
 
 ### No auth
 

@@ -714,6 +714,82 @@ def a2a_call(skill_id: str, json_payload: str, agent_urls: str | None) -> None:
         raise SystemExit(1) from exc
 
 
+@cli.group("schedule")
+def schedule() -> None:
+    """Inspect the APScheduler-managed pipeline + sweep jobs."""
+
+
+@schedule.command("status")
+def schedule_status() -> None:
+    """Show next-run times and the latest run summary for each job.
+
+    Asks each configured CronTrigger directly for its next-fire-time —
+    the real scheduler runs in its own container. The latest-run summary
+    comes from ``pipeline_runs`` so the user sees what actually happened,
+    not just what was planned.
+    """
+    from mesh_scheduler import configured_cron_triggers
+
+    now = datetime.now(UTC)
+    triggers = configured_cron_triggers()
+    next_runs: dict[str, datetime | None] = {
+        job_id: trig.get_next_fire_time(None, now)
+        for job_id, trig in triggers.items()
+    }
+
+    conn = _get_conn()
+    try:
+        recent_pipeline = list_pipeline_runs(conn, limit=1, run_type="pipeline")
+        recent_sweep = list_pipeline_runs(conn, limit=1, run_type="skeptic_sweep")
+    finally:
+        conn.close()
+
+    last_by_job = {
+        "pipeline": recent_pipeline[0] if recent_pipeline else None,
+        "skeptic_sweep": recent_sweep[0] if recent_sweep else None,
+    }
+
+    table = Table(title="Mesh schedule")
+    table.add_column("Job", style="cyan")
+    table.add_column("Next run", style="green")
+    table.add_column("Last run", style="dim")
+    table.add_column("Duration")
+    table.add_column("Triggered by")
+    table.add_column("Counts")
+    for job_id in ("pipeline", "skeptic_sweep"):
+        next_run = next_runs.get(job_id)
+        last = last_by_job.get(job_id)
+        if last is None:
+            last_str = "—"
+            duration = "—"
+            trig = "—"
+            counts = "—"
+        else:
+            last_str = last.started_at.strftime("%Y-%m-%d %H:%M")
+            if last.finished_at:
+                secs = (last.finished_at - last.started_at).total_seconds()
+                duration = f"{secs:.0f}s"
+            else:
+                duration = "running"
+            trig = last.triggered_by
+            if job_id == "pipeline":
+                counts = (
+                    f"claims +{last.claims_inserted} / "
+                    f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"
+                )
+            else:
+                counts = f"beliefs ~{last.beliefs_revised}"
+        table.add_row(
+            job_id,
+            next_run.strftime("%Y-%m-%d %H:%M %Z") if next_run else "—",
+            last_str,
+            duration,
+            trig,
+            counts,
+        )
+    console.print(table)
+
+
 def _print_relationship_detail(r: Any) -> None:
     from rich.panel import Panel
 

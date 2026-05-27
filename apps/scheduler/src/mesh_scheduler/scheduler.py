@@ -29,6 +29,19 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def configured_cron_triggers() -> dict[str, CronTrigger]:
+    """Build the same CronTrigger objects ``register_jobs`` would use.
+
+    Read-only helper for ``mesh.cli schedule status`` so it can ask each
+    trigger for its next-fire-time without spinning up an actual
+    scheduler (BlockingScheduler.start would block the CLI thread).
+    """
+    return {
+        "pipeline": CronTrigger.from_crontab(_env("MESH_SCHEDULE_PIPELINE_CRON", "0 */6 * * *")),
+        "skeptic_sweep": CronTrigger.from_crontab(_env("MESH_SCHEDULE_SWEEP_CRON", "0 3 * * *")),
+    }
+
+
 def _run_subprocess(cmd: list[str], triggered_by: str) -> None:
     """Run a CLI subprocess inheriting the scheduler's environment.
 

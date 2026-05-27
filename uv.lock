@@ -1034,6 +1034,7 @@ dependencies = [
     { name = "mesh-db" },
     { name = "mesh-llm" },
     { name = "mesh-models" },
+    { name = "mesh-scheduler" },
     { name = "rich" },
 ]
 
@@ -1044,6 +1045,7 @@ requires-dist = [
     { name = "mesh-db", editable = "packages/mesh-db" },
     { name = "mesh-llm", editable = "packages/mesh-llm" },
     { name = "mesh-models", editable = "packages/mesh-models" },
+    { name = "mesh-scheduler", editable = "apps/scheduler" },
     { name = "rich", specifier = ">=13.0" },
 ]
 

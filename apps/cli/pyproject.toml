@@ -13,6 +13,7 @@ dependencies = [
     "mesh-db",
     "mesh-llm",
     "mesh-a2a",
+    "mesh-scheduler",
 ]
 
 [tool.uv.sources]
@@ -20,6 +21,7 @@ mesh-models = { workspace = true }
 mesh-db = { workspace = true }
 mesh-llm = { workspace = true }
 mesh-a2a = { workspace = true }
+mesh-scheduler = { workspace = true }
 
 [project.scripts]
 "mesh.cli" = "mesh_cli.main:cli"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import duckdb
@@ -104,6 +104,57 @@ def count_beliefs(
     where, params = _belief_filters(topic, currently_held)
     row = conn.execute(f"SELECT COUNT(*) FROM beliefs{where}", params).fetchone()
     return int(row[0]) if row else 0
+
+
+def find_stale_beliefs(
+    conn: duckdb.DuckDBPyConnection,
+    threshold_days: int,
+    limit: int = 100,
+) -> list[Belief]:
+    """Beliefs whose most recent supporting/contradicting claim is older than ``threshold_days``.
+
+    A belief with no claims attached is treated as stale (no fresh evidence).
+    Ordered by the oldest most-recent-claim first so callers (e.g. Curator)
+    can prioritize the staler ones. Currently-held beliefs only — superseded
+    beliefs don't need re-evaluation.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=threshold_days)
+    limit = min(max(limit, 0), MAX_LIMIT)
+    # Join via UNNEST on each claim-id array, MAX the extracted_at across both
+    # to get the most recent evidence timestamp per belief. COALESCE so the
+    # no-claims case sorts oldest first via a far-past sentinel.
+    rows = conn.execute(
+        """
+        WITH belief_claim_links AS (
+            SELECT id AS belief_id,
+                   UNNEST(supporting_claim_ids) AS claim_id
+            FROM beliefs WHERE is_currently_held = TRUE
+            UNION ALL
+            SELECT id AS belief_id,
+                   UNNEST(contradicting_claim_ids) AS claim_id
+            FROM beliefs WHERE is_currently_held = TRUE
+        ),
+        belief_evidence AS (
+            SELECT b.id AS belief_id,
+                   MAX(c.extracted_at) AS last_claim_at
+            FROM beliefs b
+            LEFT JOIN belief_claim_links bcl ON bcl.belief_id = b.id
+            LEFT JOIN claims c ON c.id = bcl.claim_id
+            WHERE b.is_currently_held = TRUE
+            GROUP BY b.id
+        )
+        SELECT b.id, b.topic, b.statement, b.supporting_claim_ids,
+               b.contradicting_claim_ids, b.confidence, b.last_revised_at,
+               b.revision_count, b.is_currently_held
+        FROM beliefs b
+        JOIN belief_evidence be ON be.belief_id = b.id
+        WHERE COALESCE(be.last_claim_at, TIMESTAMPTZ '1970-01-01') < ?
+        ORDER BY be.last_claim_at ASC NULLS FIRST
+        LIMIT ?
+        """,
+        [cutoff, limit],
+    ).fetchall()
+    return [_row_to_belief(r) for r in rows]
 
 
 def update_belief(

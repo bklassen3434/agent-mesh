@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import duckdb
 import pytest
-from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, update_belief
+from mesh_db.beliefs import (
+    create_belief,
+    find_stale_beliefs,
+    get_belief_by_id,
+    list_beliefs,
+    update_belief,
+)
+from mesh_db.claims import create_claim
+from mesh_db.entities import create_entity
 from mesh_db.revisions import create_revision, get_revision_by_id, list_revisions
+from mesh_db.sources import create_source
 from mesh_models.belief import Belief
+from mesh_models.claim import Claim
+from mesh_models.entity import Entity, EntityType
 from mesh_models.revision import BeliefRevision
+from mesh_models.source import Source, SourceType
 
 
 def _make_belief(**kwargs: object) -> Belief:
@@ -99,6 +113,101 @@ def test_list_revisions_by_belief(tmp_db: duckdb.DuckDBPyConnection) -> None:
         )
     revs = list_revisions(tmp_db, belief_id=b.id)
     assert len(revs) == 3
+
+
+def _seed_claim(
+    conn: duckdb.DuckDBPyConnection, extracted_at: datetime
+) -> str:
+    """Insert a claim with the given timestamp and return its id."""
+    now = datetime.now(UTC)
+    entity = create_entity(conn, Entity(canonical_name="Model X", type=EntityType.model))
+    source = create_source(
+        conn,
+        Source(
+            type=SourceType.arxiv,
+            url=f"http://test/{extracted_at.isoformat()}",
+            published_at=now,
+            raw_content="x",
+            raw_content_hash=f"h-{extracted_at.isoformat()}",
+            fetched_at=now,
+        ),
+    )
+    claim = create_claim(
+        conn,
+        Claim(
+            predicate="evaluated_on",
+            subject_entity_id=entity.id,
+            object={"benchmark": "MMLU"},
+            source_id=source.id,
+            extracted_at=extracted_at,
+            extracted_by_agent="t",
+            raw_excerpt="x",
+            confidence=0.9,
+        ),
+    )
+    return claim.id
+
+
+def test_find_stale_beliefs_orders_no_claims_then_oldest(
+    tmp_db: duckdb.DuckDBPyConnection,
+) -> None:
+    now = datetime.now(UTC)
+    old_claim_id = _seed_claim(tmp_db, now - timedelta(days=60))
+    fresh_claim_id = _seed_claim(tmp_db, now - timedelta(days=1))
+
+    create_belief(
+        tmp_db,
+        _make_belief(topic="stale", supporting_claim_ids=[old_claim_id]),
+    )
+    create_belief(
+        tmp_db,
+        _make_belief(topic="fresh", supporting_claim_ids=[fresh_claim_id]),
+    )
+    create_belief(tmp_db, _make_belief(topic="no-claims"))
+
+    stale = find_stale_beliefs(tmp_db, threshold_days=30)
+    topics = [b.topic for b in stale]
+    assert "fresh" not in topics
+    assert {"stale", "no-claims"}.issubset(topics)
+    # No-claims belief sorts NULLS FIRST so it leads the staler-than list.
+    assert stale[0].topic == "no-claims"
+
+
+def test_find_stale_beliefs_uses_max_across_supporting_and_contradicting(
+    tmp_db: duckdb.DuckDBPyConnection,
+) -> None:
+    now = datetime.now(UTC)
+    old_claim_id = _seed_claim(tmp_db, now - timedelta(days=60))
+    fresh_claim_id = _seed_claim(tmp_db, now - timedelta(days=1))
+    # A belief with an old supporting claim but a fresh contradicting claim
+    # should NOT count as stale — fresh evidence still arrived.
+    create_belief(
+        tmp_db,
+        _make_belief(
+            topic="contradicted-recently",
+            supporting_claim_ids=[old_claim_id],
+            contradicting_claim_ids=[fresh_claim_id],
+        ),
+    )
+    stale = find_stale_beliefs(tmp_db, threshold_days=30)
+    assert all(b.topic != "contradicted-recently" for b in stale)
+
+
+def test_find_stale_beliefs_skips_superseded(
+    tmp_db: duckdb.DuckDBPyConnection,
+) -> None:
+    now = datetime.now(UTC)
+    old_claim_id = _seed_claim(tmp_db, now - timedelta(days=60))
+    create_belief(
+        tmp_db,
+        _make_belief(
+            topic="dropped",
+            supporting_claim_ids=[old_claim_id],
+            is_currently_held=False,
+        ),
+    )
+    stale = find_stale_beliefs(tmp_db, threshold_days=30)
+    assert all(b.topic != "dropped" for b in stale)
 
 
 def test_revision_fk_constraint(tmp_db: duckdb.DuckDBPyConnection) -> None:

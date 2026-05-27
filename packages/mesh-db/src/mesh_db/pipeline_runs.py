@@ -20,6 +20,7 @@ class PipelineRun(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     run_type: str = "pipeline"  # "pipeline" | "skeptic_sweep" | future job types
+    triggered_by: str = "manual"  # "manual" | "scheduled"
     papers_scouted: int = 0
     sources_inserted: int = 0
     claims_inserted: int = 0
@@ -34,16 +35,17 @@ def create_pipeline_run(conn: duckdb.DuckDBPyConnection, model: PipelineRun) -> 
     conn.execute(
         """
         INSERT INTO pipeline_runs
-            (id, started_at, finished_at, run_type, papers_scouted, sources_inserted,
-             claims_inserted, entities_created, beliefs_created, beliefs_revised,
-             avg_extraction_latency_ms, errors)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, started_at, finished_at, run_type, triggered_by, papers_scouted,
+             sources_inserted, claims_inserted, entities_created, beliefs_created,
+             beliefs_revised, avg_extraction_latency_ms, errors)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             model.id,
             model.started_at,
             model.finished_at,
             model.run_type,
+            model.triggered_by,
             model.papers_scouted,
             model.sources_inserted,
             model.claims_inserted,
@@ -70,9 +72,9 @@ def list_pipeline_runs(
     params.append(limit)
     rows = conn.execute(
         f"""
-        SELECT id, started_at, finished_at, run_type, papers_scouted, sources_inserted,
-               claims_inserted, entities_created, beliefs_created, beliefs_revised,
-               avg_extraction_latency_ms, errors
+        SELECT id, started_at, finished_at, run_type, triggered_by, papers_scouted,
+               sources_inserted, claims_inserted, entities_created, beliefs_created,
+               beliefs_revised, avg_extraction_latency_ms, errors
         FROM pipeline_runs{where}
         ORDER BY started_at DESC LIMIT ?
         """,
@@ -83,10 +85,10 @@ def list_pipeline_runs(
 
 def _row_to_run(row: tuple[Any, ...]) -> PipelineRun:
     (
-        id_, started_at, finished_at, run_type, papers_scouted, sources_inserted,
-        claims_inserted, entities_created, beliefs_created, beliefs_revised,
-        avg_latency, errors_raw,
-    ) = row[:12]
+        id_, started_at, finished_at, run_type, triggered_by, papers_scouted,
+        sources_inserted, claims_inserted, entities_created, beliefs_created,
+        beliefs_revised, avg_latency, errors_raw,
+    ) = row[:13]
 
     errors_data: list[Any] = (
         json.loads(errors_raw) if isinstance(errors_raw, str) else (errors_raw or [])
@@ -101,6 +103,7 @@ def _row_to_run(row: tuple[Any, ...]) -> PipelineRun:
         started_at=_dt(started_at),
         finished_at=None if finished_at is None else _dt(finished_at),
         run_type=str(run_type) if run_type is not None else "pipeline",
+        triggered_by=str(triggered_by) if triggered_by is not None else "manual",
         papers_scouted=int(papers_scouted),
         sources_inserted=int(sources_inserted),
         claims_inserted=int(claims_inserted),

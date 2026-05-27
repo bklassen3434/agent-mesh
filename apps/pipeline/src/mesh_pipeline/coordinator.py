@@ -86,7 +86,10 @@ async def run_pipeline(
     conn = get_connection(db_path)
     apply_migrations(conn)
 
-    run = PipelineRun(started_at=datetime.now(UTC))
+    run = PipelineRun(
+        started_at=datetime.now(UTC),
+        triggered_by=os.environ.get("MESH_TRIGGERED_BY", "manual"),
+    )
     errors: list[PipelineError] = []
     latencies: list[int] = []
     traceparent = new_traceparent()

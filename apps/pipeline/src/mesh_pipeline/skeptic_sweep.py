@@ -263,7 +263,11 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
     now = datetime.now(UTC)
     traceparent = new_traceparent()
 
-    run = PipelineRun(run_type="skeptic_sweep", started_at=now)
+    run = PipelineRun(
+        run_type="skeptic_sweep",
+        started_at=now,
+        triggered_by=os.environ.get("MESH_TRIGGERED_BY", "manual"),
+    )
 
     held_beliefs = list_beliefs(conn, currently_held=True, limit=1000)
     log.info("beliefs_considered", count=len(held_beliefs))

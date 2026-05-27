@@ -127,7 +127,6 @@ def _seed_claim(
             type=SourceType.arxiv,
             url=f"http://test/{extracted_at.isoformat()}",
             published_at=now,
-            raw_content="x",
             raw_content_hash=f"h-{extracted_at.isoformat()}",
             fetched_at=now,
         ),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from mesh_agents.curator import (
     BeliefForCuration,
     CuratorAgent,
@@ -22,7 +23,14 @@ def _belief(
     revised_days_ago: int = 30,
     challenged_days_ago: int | None = None,
     recent_contradiction: bool = False,
+    evidence_days_ago: int | None = 0,
 ) -> BeliefForCuration:
+    """Build a curation candidate.
+
+    ``evidence_days_ago=0`` means fresh evidence (today). Pass ``None`` to
+    simulate "no claims attached" — that path is the maximum-staleness
+    fallback in score_belief.
+    """
     return BeliefForCuration(
         belief_id=belief_id,
         topic="sota:test",
@@ -37,6 +45,11 @@ def _belief(
             else None
         ),
         recent_contradicting_activity=recent_contradiction,
+        last_evidence_at=(
+            _NOW - timedelta(days=evidence_days_ago)
+            if evidence_days_ago is not None
+            else None
+        ),
     )
 
 
@@ -133,6 +146,50 @@ class TestCuratorAgent:
         )
         scores = [p.score for p in out.picks]
         assert scores == sorted(scores, reverse=True)
+
+    def test_stale_evidence_boosts_score_over_fresh(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Hold all other factors equal — only evidence age differs. The
+        # default 0.3 weight should still flip the order.
+        monkeypatch.delenv("MESH_CURATOR_STALENESS_WEIGHT", raising=False)
+        beliefs = [
+            _belief("fresh-evidence", evidence_days_ago=1),
+            _belief("stale-evidence", evidence_days_ago=120),
+        ]
+        out = select_beliefs_to_challenge_pure(
+            CuratorInput(beliefs=beliefs, now=_NOW, pick_count=2)
+        )
+        assert out.picks[0].belief_id == "stale-evidence"
+
+    def test_no_evidence_gets_max_staleness(self) -> None:
+        beliefs = [
+            _belief("has-evidence", evidence_days_ago=1),
+            _belief("no-evidence", evidence_days_ago=None),
+        ]
+        out = select_beliefs_to_challenge_pure(
+            CuratorInput(beliefs=beliefs, now=_NOW, pick_count=2)
+        )
+        assert out.picks[0].belief_id == "no-evidence"
+        no_ev = next(p for p in out.picks if p.belief_id == "no-evidence")
+        assert "no claims" in no_ev.rationale
+
+    def test_staleness_weight_env_override_changes_ranking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With staleness weight at zero the stale-evidence advantage
+        # disappears — the two beliefs are otherwise identical so order
+        # is no longer determined by evidence age.
+        monkeypatch.setenv("MESH_CURATOR_STALENESS_WEIGHT", "0.0")
+        beliefs = [
+            _belief("fresh-evidence", evidence_days_ago=1),
+            _belief("stale-evidence", evidence_days_ago=120),
+        ]
+        out = select_beliefs_to_challenge_pure(
+            CuratorInput(beliefs=beliefs, now=_NOW, pick_count=2)
+        )
+        # Both score identically, but sort is stable — confirm scores match
+        assert out.picks[0].score == out.picks[1].score
 
     def test_async_run_round_trips(self) -> None:
         beliefs = [_belief("only", revised_days_ago=30)]

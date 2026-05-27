@@ -11,6 +11,7 @@ operators can tune the weights without reading prompt code.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,6 +28,20 @@ _W_EXTREMITY = 1.0
 _W_CONTRADICTION_BOOST = 0.5
 _W_COOLDOWN_PENALTY = 1.0
 _DEFAULT_COOLDOWN_DAYS = 7
+# Phase 6a: evidence-staleness signal (max-extracted-at across the belief's
+# supporting + contradicting claims) is additive on top of the existing
+# age signal, which only tracks last_revised_at on the belief itself.
+_DEFAULT_STALENESS_WEIGHT = 0.3
+
+
+def _staleness_weight() -> float:
+    raw = os.environ.get("MESH_CURATOR_STALENESS_WEIGHT")
+    if raw is None:
+        return _DEFAULT_STALENESS_WEIGHT
+    try:
+        return float(raw)
+    except ValueError:
+        return _DEFAULT_STALENESS_WEIGHT
 
 
 class BeliefForCuration(BaseModel):
@@ -39,6 +54,7 @@ class BeliefForCuration(BaseModel):
     last_revised_at: datetime
     last_challenged_at: datetime | None = None
     recent_contradicting_activity: bool = False
+    last_evidence_at: datetime | None = None
 
 
 class CuratorInput(BaseModel):
@@ -95,6 +111,18 @@ def score_belief(
     extremity = 2.0 * abs(b.confidence - 0.5)
     contradiction_boost = _W_CONTRADICTION_BOOST if b.recent_contradicting_activity else 0.0
 
+    # Evidence staleness: time since the most recent supporting/contradicting
+    # claim arrived. No claims at all → max staleness (1.0).
+    if b.last_evidence_at is None:
+        evidence_staleness = 1.0
+        evidence_days: float | None = None
+    else:
+        evidence_days = max(
+            0.0, (now - b.last_evidence_at).total_seconds() / 86400.0
+        )
+        evidence_staleness = min(1.0, evidence_days / 90.0)
+    staleness_weight = _staleness_weight()
+
     cooldown_penalty = 0.0
     in_cooldown = False
     if b.last_challenged_at is not None:
@@ -108,6 +136,7 @@ def score_belief(
         + _W_WEAKNESS * weakness
         + _W_EXTREMITY * extremity
         + contradiction_boost
+        + staleness_weight * evidence_staleness
         - cooldown_penalty
     )
 
@@ -116,6 +145,13 @@ def score_belief(
         f"weakness={weakness:.2f} ({b.supporting_claim_count} supporters)",
         f"extremity={extremity:.2f} (conf={b.confidence:.2f})",
     ]
+    if evidence_days is None:
+        parts.append(f"staleness={evidence_staleness:.2f} (no claims)")
+    else:
+        parts.append(
+            f"staleness={evidence_staleness:.2f} "
+            f"(last evidence {evidence_days:.0f}d ago)"
+        )
     if contradiction_boost:
         parts.append("recent contradictions +0.5")
     if in_cooldown:

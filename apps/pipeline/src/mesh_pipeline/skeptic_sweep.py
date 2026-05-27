@@ -102,6 +102,17 @@ def _recent_contradicting_activity(
     return False
 
 
+def _last_evidence_at(conn: Any, belief: Belief) -> datetime | None:
+    """Most recent extracted_at across the belief's supporting + contradicting claims."""
+    ids = list(belief.supporting_claim_ids) + list(belief.contradicting_claim_ids)
+    if not ids:
+        return None
+    claims = get_claims_by_ids(conn, ids)
+    if not claims:
+        return None
+    return max(c.extracted_at for c in claims)
+
+
 def _build_curator_payload(
     conn: Any, beliefs: list[Belief], now: datetime
 ) -> list[BeliefForCuration]:
@@ -119,6 +130,7 @@ def _build_curator_payload(
                 last_revised_at=b.last_revised_at,
                 last_challenged_at=_last_skeptic_challenge(revs),
                 recent_contradicting_activity=_recent_contradicting_activity(revs, now),
+                last_evidence_at=_last_evidence_at(conn, b),
             )
         )
     return payload

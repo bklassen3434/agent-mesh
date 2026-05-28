@@ -281,6 +281,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operational status page
+         * @description Server-rendered HTML with meta-refresh every 60s. Shows last + next runs, total row counts, agent_tasks status breakdown, recent task failures, and the Langfuse 24h trace count when configured.
+         */
+        get: operations["status_page_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -572,6 +592,11 @@ export interface components {
              * @default pipeline
              */
             run_type: string;
+            /**
+             * Triggered By
+             * @default manual
+             */
+            triggered_by: string;
             /**
              * Papers Scouted
              * @default 0
@@ -1160,6 +1185,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_page_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
                 };
             };
         };

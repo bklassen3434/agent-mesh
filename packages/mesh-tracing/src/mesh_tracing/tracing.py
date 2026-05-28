@@ -30,7 +30,7 @@ def traced(operation_name: str) -> Generator[None, None, None]:
         return
 
     try:
-        import langfuse  # type: ignore[import-not-found]
+        import langfuse
 
         client = langfuse.Langfuse(
             public_key=config.public_key,

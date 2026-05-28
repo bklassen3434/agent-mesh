@@ -94,5 +94,7 @@ module = [
     "yaml",
     "apscheduler",
     "apscheduler.*",
+    "langfuse",
+    "langfuse.*",
 ]
 ignore_missing_imports = true

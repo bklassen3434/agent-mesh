@@ -75,11 +75,28 @@ class RevisionWithTriggers(BaseModel):
     trigger_claims: list[Claim]
 
 
+class BeliefSignals(BaseModel):
+    """Phase 7b derived signals over a belief.
+
+    Pulled from the belief_hype_substance + belief_reproduction views in
+    DuckDB; recomputed on read. Informational only — does not drive any
+    mesh behavior in 7b.
+    """
+
+    source_type_diversity: int
+    reproduction_count: int
+    skeptic_counter_claim_count: int
+    severe_failure_mode_count: int
+    claims_last_30d: int
+    hype_substance_score: float
+
+
 class BeliefDetail(BaseModel):
     belief: Belief
     supporting_claims: list[ClaimWithContext]
     contradicting_claims: list[ClaimWithContext]
     revisions: list[RevisionWithTriggers]
+    signals: BeliefSignals | None = None
 
 
 class SkepticActivityItem(BaseModel):

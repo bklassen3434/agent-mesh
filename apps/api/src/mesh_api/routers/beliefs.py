@@ -13,6 +13,7 @@ from mesh_models.revision import BeliefRevision
 from mesh_api.deps import ConnDep
 from mesh_api.schemas import (
     BeliefDetail,
+    BeliefSignals,
     ClaimWithContext,
     Page,
     RevisionWithTriggers,
@@ -112,11 +113,39 @@ def belief_detail(belief_id: str, conn: ConnDep) -> BeliefDetail:
     revisions = list_revisions(conn, belief_id=belief_id, limit=200)
     revisions_out = hydrate_revisions(conn, revisions)
 
+    signals = _read_signals(conn, belief_id) if belief.is_currently_held else None
+
     return BeliefDetail(
         belief=belief,
         supporting_claims=supporting,
         contradicting_claims=contradicting,
         revisions=revisions_out,
+        signals=signals,
+    )
+
+
+def _read_signals(
+    conn: duckdb.DuckDBPyConnection, belief_id: str
+) -> BeliefSignals | None:
+    row = conn.execute(
+        """
+        SELECT source_type_diversity, reproduction_count,
+               skeptic_counter_claim_count, severe_failure_mode_count,
+               claims_last_30d, hype_substance_score
+        FROM belief_hype_substance
+        WHERE belief_id = ?
+        """,
+        [belief_id],
+    ).fetchone()
+    if row is None:
+        return None
+    return BeliefSignals(
+        source_type_diversity=int(row[0]),
+        reproduction_count=int(row[1]),
+        skeptic_counter_claim_count=int(row[2]),
+        severe_failure_mode_count=int(row[3]),
+        claims_last_30d=int(row[4]),
+        hype_substance_score=float(row[5]),
     )
 
 

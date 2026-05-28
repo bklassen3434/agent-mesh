@@ -119,8 +119,14 @@ def test_reproduction_canonicalizes_close_scores(
     eid = _seed_entity(tmp_db)
     src_a = _seed_source(tmp_db, source_type=SourceType.arxiv, url_suffix="a")
     src_b = _seed_source(tmp_db, source_type=SourceType.blog, url_suffix="b")
-    c1 = _seed_claim(tmp_db, entity_id=eid, source_id=src_a, obj={"benchmark": "MMLU", "score": 78.42})
-    c2 = _seed_claim(tmp_db, entity_id=eid, source_id=src_b, obj={"benchmark": "MMLU", "score": 78.38})
+    c1 = _seed_claim(
+        tmp_db, entity_id=eid, source_id=src_a,
+        obj={"benchmark": "MMLU", "score": 78.42},
+    )
+    c2 = _seed_claim(
+        tmp_db, entity_id=eid, source_id=src_b,
+        obj={"benchmark": "MMLU", "score": 78.38},
+    )
     b = create_belief(
         tmp_db,
         Belief(

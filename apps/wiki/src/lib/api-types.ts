@@ -347,6 +347,7 @@ export interface components {
             contradicting_claims: components["schemas"]["ClaimWithContext"][];
             /** Revisions */
             revisions: components["schemas"]["RevisionWithTriggers"][];
+            signals?: components["schemas"]["BeliefSignals"] | null;
         };
         /** BeliefRevision */
         BeliefRevision: {
@@ -373,6 +374,28 @@ export interface components {
             revised_at?: string;
             /** Rationale */
             rationale: string;
+        };
+        /**
+         * BeliefSignals
+         * @description Phase 7b derived signals over a belief.
+         *
+         *     Pulled from the belief_hype_substance + belief_reproduction views in
+         *     DuckDB; recomputed on read. Informational only — does not drive any
+         *     mesh behavior in 7b.
+         */
+        BeliefSignals: {
+            /** Source Type Diversity */
+            source_type_diversity: number;
+            /** Reproduction Count */
+            reproduction_count: number;
+            /** Skeptic Counter Claim Count */
+            skeptic_counter_claim_count: number;
+            /** Severe Failure Mode Count */
+            severe_failure_mode_count: number;
+            /** Claims Last 30D */
+            claims_last_30d: number;
+            /** Hype Substance Score */
+            hype_substance_score: number;
         };
         /**
          * Briefing
@@ -436,6 +459,7 @@ export interface components {
             confidence: number;
             /** Superseded By Claim Id */
             superseded_by_claim_id?: string | null;
+            failure_mode?: components["schemas"]["FailureMode"] | null;
         };
         /** ClaimDetail */
         ClaimDetail: {
@@ -494,6 +518,17 @@ export interface components {
          * @enum {string}
          */
         EntityType: "model" | "paper" | "benchmark" | "method" | "person" | "lab" | "repo" | "concept";
+        /**
+         * FailureMode
+         * @description Structured taxonomy of why a Skeptic-authored counter-claim weakens
+         *     or contradicts the belief it targets. Non-Skeptic claims leave this null.
+         *
+         *     Phase 7 pre-work. Skeptic emits one of these alongside its free-text
+         *     rationale so downstream analysis (DSPy training, hype/substance score)
+         *     can group failures without re-parsing English.
+         * @enum {string}
+         */
+        FailureMode: "unsupported_extrapolation" | "cherry_picked_evidence" | "methodological_flaw" | "outdated_by_newer_claim" | "contradicted_by_source" | "definitional_ambiguity" | "other";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */

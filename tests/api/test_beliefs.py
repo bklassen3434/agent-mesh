@@ -48,6 +48,24 @@ def test_belief_detail_full_shape(client: TestClient) -> None:
     assert len(rev["trigger_claims"]) == 1
 
 
+def test_belief_detail_includes_phase7b_signals(client: TestClient) -> None:
+    """Currently-held beliefs return derived signals from the
+    belief_hype_substance view."""
+    listing = client.get("/api/v1/beliefs").json()
+    bid = listing["items"][0]["id"]
+    body = client.get(f"/api/v1/beliefs/{bid}").json()
+    sig = body.get("signals")
+    assert sig is not None
+    # All numeric fields present; score in [0, 1].
+    for k in (
+        "source_type_diversity", "reproduction_count",
+        "skeptic_counter_claim_count", "severe_failure_mode_count",
+        "claims_last_30d",
+    ):
+        assert isinstance(sig[k], int)
+    assert 0.0 <= sig["hype_substance_score"] <= 1.0
+
+
 def test_belief_detail_404(client: TestClient) -> None:
     r = client.get("/api/v1/beliefs/missing")
     assert r.status_code == 404

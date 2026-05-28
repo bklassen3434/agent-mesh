@@ -13,6 +13,7 @@ from mesh_api.routers import (
     briefing,
     claims,
     entities,
+    graph,
     health,
     pipeline_runs,
     skeptic,
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(skeptic.router)
     app.include_router(briefing.router)
     app.include_router(status_router.router)
+    app.include_router(graph.router)
     return app
 
 

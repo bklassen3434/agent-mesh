@@ -301,6 +301,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Knowledge graph nodes + edges
+         * @description All entities as nodes and all relationships as edges, in the shape a client-side graph library can consume directly. ``?max_nodes`` bounds the entity count for predictable browser performance on large meshes; the most recently created entities win.
+         */
+        get: operations["get_graph_api_v1_graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -529,6 +549,35 @@ export interface components {
          * @enum {string}
          */
         FailureMode: "unsupported_extrapolation" | "cherry_picked_evidence" | "methodological_flaw" | "outdated_by_newer_claim" | "contradicted_by_source" | "definitional_ambiguity" | "other";
+        /** GraphEdge */
+        GraphEdge: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Type */
+            type: string;
+            /** Confidence */
+            confidence: number;
+        };
+        /** GraphNode */
+        GraphNode: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
+        };
+        /** GraphResponse */
+        GraphResponse: {
+            /** Nodes */
+            nodes: components["schemas"]["GraphNode"][];
+            /** Edges */
+            edges: components["schemas"]["GraphEdge"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1240,6 +1289,38 @@ export interface operations {
                 };
                 content: {
                     "text/html": string;
+                };
+            };
+        };
+    };
+    get_graph_api_v1_graph_get: {
+        parameters: {
+            query?: {
+                max_nodes?: number;
+                max_edges?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -18,6 +18,9 @@ export type SourceWithCount = Schemas['SourceWithCount'];
 export type BeliefDetail = Schemas['BeliefDetail'];
 export type BeliefSignals = Schemas['BeliefSignals'];
 export type ClaimWithContext = Schemas['ClaimWithContext'];
+export type GraphResponse = Schemas['GraphResponse'];
+export type GraphNode = Schemas['GraphNode'];
+export type GraphEdge = Schemas['GraphEdge'];
 export type RevisionWithTriggers = Schemas['RevisionWithTriggers'];
 export type SkepticActivityItem = Schemas['SkepticActivityItem'];
 export type Briefing = Schemas['Briefing'];
@@ -116,4 +119,7 @@ export const api = {
 
   briefing: (date?: string) =>
     apiGet<Briefing>('/api/v1/briefing', { query: date ? { date } : undefined }),
+
+  graph: (q: { max_nodes?: number; max_edges?: number } = {}) =>
+    apiGet<GraphResponse>('/api/v1/graph', { query: q }),
 };

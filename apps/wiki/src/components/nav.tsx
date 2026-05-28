@@ -8,6 +8,7 @@ const links = [
   { href: '/claims', label: 'Claims' },
   { href: '/sources', label: 'Sources' },
   { href: '/skeptic', label: 'Skeptic' },
+  { href: '/graph', label: 'Graph' },
 ];
 
 // Status lives on the API service, not the wiki — link out so the page

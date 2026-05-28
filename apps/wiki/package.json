@@ -13,12 +13,15 @@
   "dependencies": {
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cytoscape": "^3.33.4",
     "next": "15.5.9",
     "react": "19.0.0",
+    "react-cytoscapejs": "^2.0.0",
     "react-dom": "19.0.0",
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
+    "@types/cytoscape": "^3.21.9",
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",

@@ -266,6 +266,7 @@ def _counter_to_claim(cc: SkepticCounterClaim, source_id: str) -> Claim:
         extracted_by_agent="skeptic",
         raw_excerpt=cc.raw_excerpt,
         confidence=cc.confidence,
+        failure_mode=cc.failure_mode,
     )
 
 

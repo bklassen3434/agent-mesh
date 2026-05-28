@@ -16,6 +16,7 @@ from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
 from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError
 from mesh_llm.prompts import SKEPTIC_SYSTEM, format_skeptic_user
+from mesh_models.claim import FailureMode
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
@@ -53,6 +54,10 @@ class SkepticCounterClaim(BaseModel):
     object: dict[str, Any]
     raw_excerpt: str
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Phase 7 pre-work: structured taxonomy alongside the free-text
+    # rationale. The Skeptic LLM must pick one when emitting a
+    # counter-claim. `other` is the fallback when none fit.
+    failure_mode: FailureMode = Field(default=FailureMode.other)
 
 
 class SkepticAssessment(BaseModel):

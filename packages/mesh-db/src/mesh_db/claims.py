@@ -5,15 +5,15 @@ from datetime import datetime
 from typing import Any
 
 import duckdb
-from mesh_models.claim import Claim, ClaimStatus
+from mesh_models.claim import Claim, ClaimStatus, FailureMode
 
 
 def _row_to_claim(row: tuple[Any, ...]) -> Claim:
     (
         id_, predicate, subject_entity_id, object_, source_id,
         extracted_at, extracted_by_agent, raw_excerpt, status,
-        confidence, superseded_by_claim_id,
-    ) = row[:11]
+        confidence, superseded_by_claim_id, failure_mode,
+    ) = row[:12]
     return Claim(
         id=id_,
         predicate=predicate,
@@ -29,12 +29,14 @@ def _row_to_claim(row: tuple[Any, ...]) -> Claim:
         status=ClaimStatus(status),
         confidence=float(confidence),
         superseded_by_claim_id=superseded_by_claim_id,
+        failure_mode=FailureMode(failure_mode) if failure_mode else None,
     )
 
 
 _SELECT = (
     "SELECT id, predicate, subject_entity_id, object, source_id, "
-    "extracted_at, extracted_by_agent, raw_excerpt, status, confidence, superseded_by_claim_id "
+    "extracted_at, extracted_by_agent, raw_excerpt, status, confidence, "
+    "superseded_by_claim_id, failure_mode "
     "FROM claims"
 )
 
@@ -45,8 +47,8 @@ def create_claim(conn: duckdb.DuckDBPyConnection, model: Claim) -> Claim:
         INSERT INTO claims
             (id, predicate, subject_entity_id, object, source_id,
             extracted_at, extracted_by_agent, raw_excerpt, status, confidence,
-            superseded_by_claim_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            superseded_by_claim_id, failure_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             model.id,
@@ -60,6 +62,7 @@ def create_claim(conn: duckdb.DuckDBPyConnection, model: Claim) -> Claim:
             model.status.value,
             model.confidence,
             model.superseded_by_claim_id,
+            model.failure_mode.value if model.failure_mode else None,
         ],
     )
     return model

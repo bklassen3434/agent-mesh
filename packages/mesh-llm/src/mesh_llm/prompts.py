@@ -123,6 +123,14 @@ Return a SkepticAssessment with:
   - include a raw_excerpt that quotes or paraphrases the specific evidence problem you found (e.g. "Supporting claim from 2023-01-15 reports 72.8% on MMLU, but a more recent supporting claim from 2024-06-01 reports only 68.2%.")
   - object: a JSON dict appropriate for the predicate (same shape as claim_extractor)
   - confidence: 0.0-1.0
+  - failure_mode: a structured classification of WHY this counter-claim weakens the belief. Pick the single best match:
+    - unsupported_extrapolation: the belief generalizes beyond what its supporting claims actually show
+    - cherry_picked_evidence: the supporting claims selectively report favorable results; broader picture differs
+    - methodological_flaw: a supporting claim's methodology is unsound (e.g. wrong benchmark version, unfair comparison)
+    - outdated_by_newer_claim: a more recent supporting claim contradicts an older one cited as evidence
+    - contradicted_by_source: the source the supporting claim quotes actually says something different
+    - definitional_ambiguity: the belief or its supporting claims hinge on imprecise terminology
+    - other: when nothing above fits
 - If verdict is "supported" or "inconclusive", counter_claims MUST be an empty list.
 
 Be conservative. If the supporting claims are recent, internally consistent, and well-sourced, return "supported" with confidence 0.7+ and no counter_claims.

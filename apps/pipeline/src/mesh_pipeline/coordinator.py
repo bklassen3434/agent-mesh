@@ -22,6 +22,11 @@ from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, updat
 from mesh_db.claims import create_claim
 from mesh_db.connection import get_connection
 from mesh_db.entities import list_entities
+from mesh_db.investigations import (
+    attach_claim_to_investigation,
+    list_investigations,
+    update_investigation,
+)
 from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import PipelineError, PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision
@@ -29,6 +34,7 @@ from mesh_db.sources import create_source, list_sources
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.entity import Entity, EntityType
+from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from pydantic import BaseModel
 
@@ -75,6 +81,17 @@ def _task_resume_threshold() -> int:
     """Seconds an agent_task can sit pending/running before the startup
     sweep considers it orphaned. Default 600s = 10 minutes."""
     return int(os.environ.get("MESH_TASK_RESUME_THRESHOLD", "600"))
+
+
+def _investigation_claims_threshold() -> int:
+    """Collected claims needed to mark an Investigation resolved."""
+    return int(os.environ.get("MESH_INVESTIGATION_CLAIMS_THRESHOLD", "3"))
+
+
+def _investigation_max_runs() -> int:
+    """Pipeline runs to attempt before abandoning an Investigation that
+    keeps coming up empty."""
+    return int(os.environ.get("MESH_INVESTIGATION_MAX_RUNS", "5"))
 
 
 async def run_pipeline(
@@ -138,6 +155,62 @@ async def run_pipeline(
             for p in scout_result.get("papers", []):
                 papers.append(ScoutedPaper.model_validate(p))
             log.info("scout_returned", scout=scout_id, total_papers_so_far=len(papers))
+
+        # ── 1b. Investigation dispatch (Phase 7a) ──────────────────────────
+        # Each open investigation gets dispatched to the scouts matching its
+        # suggested_source_types. Results are appended to `papers` and tagged
+        # via investigation_papers so claim attachment can wire them once
+        # extraction finishes.
+        investigation_papers: dict[str, list[str]] = {}  # inv_id -> source.url list
+        open_investigations = list_investigations(
+            conn, status=InvestigationStatus.open, limit=100
+        ) + list_investigations(
+            conn, status=InvestigationStatus.in_progress, limit=100
+        )
+        for inv in open_investigations:
+            # Bump attempt counter + transition to in_progress.
+            update_investigation(
+                conn,
+                inv.id,
+                status=InvestigationStatus.in_progress,
+                pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
+            )
+            n_new_for_inv = 0
+            for source_type in inv.suggested_source_types:
+                skill_id = f"investigate_{source_type}"
+                if skill_id not in discovered:
+                    continue
+                try:
+                    inv_result = await client.call_skill_blocking(
+                        skill_id,
+                        {
+                            "investigation_id": inv.id,
+                            "hypothesis": inv.hypothesis or inv.question,
+                            "target_entity_id": inv.target_entity_id,
+                            "suggested_source_types": inv.suggested_source_types,
+                            "max_results": 10,
+                        },
+                        traceparent=traceparent,
+                    )
+                except (SkillNotFoundError, SkillCallError) as exc:
+                    log.warning(
+                        "investigate_dispatch_failed",
+                        skill=skill_id,
+                        investigation_id=inv.id,
+                        error=str(exc),
+                    )
+                    continue
+                for raw in inv_result.get("source_records", []):
+                    paper = ScoutedPaper.model_validate(raw)
+                    papers.append(paper)
+                    investigation_papers.setdefault(inv.id, []).append(paper.source.url)
+                    n_new_for_inv += 1
+            log.info(
+                "investigation_dispatched",
+                investigation_id=inv.id,
+                source_records_returned=n_new_for_inv,
+            )
+
         run.papers_scouted = len(papers)
 
         # ── 2. Deduplicate ─────────────────────────────────────────────────
@@ -273,6 +346,13 @@ async def run_pipeline(
         all_resolved_claims: list[ResolvedClaim] = []
         claims_inserted = 0
 
+        # Invert investigation_papers → url -> inv_id so we can tag each
+        # claim's investigation lineage in one lookup.
+        url_to_investigation_id: dict[str, str] = {}
+        for inv_id, urls in investigation_papers.items():
+            for u in urls:
+                url_to_investigation_id[u] = inv_id
+
         for paper, extracted_claims, _ in extraction_results:
             for ec in extracted_claims:
                 entity_id = entity_map.get(ec.subject_name)
@@ -289,6 +369,12 @@ async def run_pipeline(
                 )
                 create_claim(conn, claim)
                 claims_inserted += 1
+                # Phase 7a: claim → investigation linkage. If this paper
+                # came from an investigate skill dispatch, attach the new
+                # claim id so the lifecycle sweep below can resolve.
+                inv_id_or_none = url_to_investigation_id.get(paper.source.url)
+                if inv_id_or_none is not None:
+                    attach_claim_to_investigation(conn, inv_id_or_none, claim.id)
                 all_resolved_claims.append(
                     ResolvedClaim(
                         claim_id=claim.id,
@@ -303,6 +389,39 @@ async def run_pipeline(
 
         run.claims_inserted = claims_inserted
         log.info("claims_inserted", count=claims_inserted)
+
+        # ── 7b. Investigation lifecycle (Phase 7a) ────────────────────────
+        # Re-read each touched investigation and apply the resolve/abandon
+        # rules. Resolve when collected claims clear the threshold; abandon
+        # when max_runs elapsed with nothing to show.
+        claims_threshold = _investigation_claims_threshold()
+        max_runs = _investigation_max_runs()
+        for inv in open_investigations:
+            current = update_investigation(conn, inv.id)  # re-fetch
+            if len(current.collected_claim_ids) >= claims_threshold:
+                update_investigation(
+                    conn,
+                    inv.id,
+                    status=InvestigationStatus.resolved,
+                    resolved_at=datetime.now(UTC),
+                )
+                log.info(
+                    "investigation_resolved",
+                    investigation_id=inv.id,
+                    claim_count=len(current.collected_claim_ids),
+                )
+            elif current.pipeline_runs_attempted >= max_runs:
+                update_investigation(
+                    conn,
+                    inv.id,
+                    status=InvestigationStatus.abandoned,
+                    resolved_at=datetime.now(UTC),
+                )
+                log.info(
+                    "investigation_abandoned",
+                    investigation_id=inv.id,
+                    runs_attempted=current.pipeline_runs_attempted,
+                )
 
         # ── 8. SOTA tracking ───────────────────────────────────────────────
         existing_sota = [

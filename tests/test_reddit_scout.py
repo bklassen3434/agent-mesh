@@ -133,8 +133,10 @@ def test_handle_scout_reddit_returns_dict(fake_client: MagicMock) -> None:
     assert out["papers"][0]["source"]["type"] == "reddit"
 
 
-@patch("mesh_agents.reddit_scout.build_agent_card")
+@patch("mesh_agents.reddit_scout.build_multi_skill_card")
 def test_a2a_card_declares_scout_reddit_skill(mock_card: MagicMock) -> None:
     RedditScoutAgent().to_a2a_server(url="http://reddit-scout:8010")
     kwargs = mock_card.call_args.kwargs
-    assert kwargs["skill_id"] == "scout_reddit"
+    skill_ids = {s.id for s in kwargs["skills"]}
+    assert "scout_reddit" in skill_ids
+    assert "investigate_reddit" in skill_ids

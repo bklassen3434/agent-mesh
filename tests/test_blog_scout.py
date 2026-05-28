@@ -136,11 +136,13 @@ def test_handle_returns_dict() -> None:
     assert out["papers"][0]["source"]["type"] == "blog"
 
 
-@patch("mesh_agents.blog_scout.build_agent_card")
+@patch("mesh_agents.blog_scout.build_multi_skill_card")
 def test_a2a_card_declares_scout_blogs_skill(mock_card: MagicMock) -> None:
     BlogScoutAgent().to_a2a_server(url="http://blog-scout:8011")
     kwargs = mock_card.call_args.kwargs
-    assert kwargs["skill_id"] == "scout_blogs"
+    skill_ids = {s.id for s in kwargs["skills"]}
+    assert "scout_blogs" in skill_ids
+    assert "investigate_blog" in skill_ids
 
 
 def test_default_feed_file_exists() -> None:

@@ -135,8 +135,10 @@ def test_handle_returns_dict() -> None:
     assert "papers" in out
 
 
-@patch("mesh_agents.leaderboard_scout.build_agent_card")
+@patch("mesh_agents.leaderboard_scout.build_multi_skill_card")
 def test_a2a_card_declares_scout_leaderboards_skill(mock_card: MagicMock) -> None:
     LeaderboardScoutAgent().to_a2a_server(url="http://leaderboard-scout:8012")
     kwargs = mock_card.call_args.kwargs
-    assert kwargs["skill_id"] == "scout_leaderboards"
+    skill_ids = {s.id for s in kwargs["skills"]}
+    assert "scout_leaderboards" in skill_ids
+    assert "investigate_leaderboard" in skill_ids

@@ -160,11 +160,13 @@ def test_handle_scout_github_returns_dict(fake_client: MagicMock) -> None:
     assert out["papers"][0]["source"]["type"] == "github"
 
 
-@patch("mesh_agents.github_scout.build_agent_card")
+@patch("mesh_agents.github_scout.build_multi_skill_card")
 def test_a2a_card_declares_scout_github_skill(mock_card: MagicMock) -> None:
     GitHubScoutAgent().to_a2a_server(url="http://github-scout:8008")
     kwargs = mock_card.call_args.kwargs
-    assert kwargs["skill_id"] == "scout_github"
+    skill_ids = {s.id for s in kwargs["skills"]}
+    assert "scout_github" in skill_ids
+    assert "investigate_github" in skill_ids
     assert kwargs["name"] == "GitHub Scout"
 
 

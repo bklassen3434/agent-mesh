@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -28,6 +28,10 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    investigate_skill_spec,
+    make_empty_investigate_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -264,23 +268,31 @@ class LeaderboardScoutAgent(BaseAgent):
         raise NotImplementedError("LeaderboardScoutAgent uses the A2A skill path only")
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="Leaderboard Scout",
             description=(
                 "Snapshots the top entries of HuggingFace Open LLM Leaderboard, "
                 "Papers-with-Code SOTA, and Chatbot Arena."
             ),
             url=url,
-            skill_id="scout_leaderboards",
-            skill_name="Scout Leaderboards",
-            skill_description=(
-                "Three failure-isolated lanes: hf_open_llm, papers_with_code, "
-                "chatbot_arena. One lane failing does not affect the others."
-            ),
-            skill_tags=["leaderboard", "benchmarks", "evaluations"],
+            skills=[
+                SkillSpec(
+                    id="scout_leaderboards",
+                    name="Scout Leaderboards",
+                    description=(
+                        "Three failure-isolated lanes: hf_open_llm, papers_with_code, "
+                        "chatbot_arena. One lane failing does not affect the others."
+                    ),
+                    tags=["leaderboard", "benchmarks", "evaluations"],
+                ),
+                investigate_skill_spec("leaderboard"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_leaderboards": _handle_scout_leaderboards},
+            skill_handlers={
+                "scout_leaderboards": _handle_scout_leaderboards,
+                "investigate_leaderboard": make_empty_investigate_handler("leaderboard"),
+            },
             agent_name="leaderboard_scout",
         )

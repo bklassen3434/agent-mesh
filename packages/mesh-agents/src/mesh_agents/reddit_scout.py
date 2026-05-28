@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -27,6 +27,10 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    investigate_skill_spec,
+    make_empty_investigate_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -220,20 +224,28 @@ class RedditScoutAgent(BaseAgent):
         raise NotImplementedError("RedditScoutAgent uses the A2A skill path only")
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="Reddit Scout",
             description="Fetches top posts from AI/ML subreddits via Reddit's OAuth2 API.",
             url=url,
-            skill_id="scout_reddit",
-            skill_name="Scout Reddit",
-            skill_description=(
-                "Top posts of the configured listing window for each subreddit in "
-                "MESH_REDDIT_SUBS. Requires REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET."
-            ),
-            skill_tags=["reddit", "social", "posts"],
+            skills=[
+                SkillSpec(
+                    id="scout_reddit",
+                    name="Scout Reddit",
+                    description=(
+                        "Top posts of the configured listing window for each subreddit "
+                        "in MESH_REDDIT_SUBS. Requires REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET."
+                    ),
+                    tags=["reddit", "social", "posts"],
+                ),
+                investigate_skill_spec("reddit"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_reddit": _handle_scout_reddit},
+            skill_handlers={
+                "scout_reddit": _handle_scout_reddit,
+                "investigate_reddit": make_empty_investigate_handler("reddit"),
+            },
             agent_name="reddit_scout",
         )

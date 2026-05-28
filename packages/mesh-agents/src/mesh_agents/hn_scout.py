@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -25,6 +25,10 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    investigate_skill_spec,
+    make_empty_investigate_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,17 +176,25 @@ class HNScoutAgent(BaseAgent):
         return HNScoutOutput(papers=papers)
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="HN Scout",
             description="Fetches AI/robotics-relevant stories from Hacker News via Algolia.",
             url=url,
-            skill_id="scout_hn",
-            skill_name="Scout Hacker News",
-            skill_description="Search Hacker News for recent AI/robotics-relevant stories.",
-            skill_tags=["hackernews", "hn", "stories"],
+            skills=[
+                SkillSpec(
+                    id="scout_hn",
+                    name="Scout Hacker News",
+                    description="Search Hacker News for recent AI/robotics-relevant stories.",
+                    tags=["hackernews", "hn", "stories"],
+                ),
+                investigate_skill_spec("hn"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_hn": _handle_scout_hn},
+            skill_handlers={
+                "scout_hn": _handle_scout_hn,
+                "investigate_hn": make_empty_investigate_handler("hn"),
+            },
             agent_name="hn_scout",
         )

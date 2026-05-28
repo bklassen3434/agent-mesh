@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -26,6 +26,10 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    investigate_skill_spec,
+    make_empty_investigate_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,20 +219,28 @@ class BlueskyScoutAgent(BaseAgent):
         raise NotImplementedError("BlueskyScoutAgent uses the A2A skill path only")
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="Bluesky Scout",
             description="Fetches AI/ML posts from Bluesky's public AppView API.",
             url=url,
-            skill_id="scout_bluesky",
-            skill_name="Scout Bluesky",
-            skill_description=(
-                "Search Bluesky by hashtag and (optionally) by curated author "
-                "handles via the public unauthenticated AppView."
-            ),
-            skill_tags=["bluesky", "social", "posts"],
+            skills=[
+                SkillSpec(
+                    id="scout_bluesky",
+                    name="Scout Bluesky",
+                    description=(
+                        "Search Bluesky by hashtag and (optionally) by curated author "
+                        "handles via the public unauthenticated AppView."
+                    ),
+                    tags=["bluesky", "social", "posts"],
+                ),
+                investigate_skill_spec("bluesky"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_bluesky": _handle_scout_bluesky},
+            skill_handlers={
+                "scout_bluesky": _handle_scout_bluesky,
+                "investigate_bluesky": make_empty_investigate_handler("bluesky"),
+            },
             agent_name="bluesky_scout",
         )

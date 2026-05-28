@@ -23,7 +23,7 @@ from typing import Any
 
 import feedparser
 import yaml
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -31,6 +31,10 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    investigate_skill_spec,
+    make_empty_investigate_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -237,20 +241,28 @@ class BlogScoutAgent(BaseAgent):
         raise NotImplementedError("BlogScoutAgent uses the A2A skill path only")
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="Blog Scout",
             description="Ingests AI/ML blog posts from curated RSS/Atom feeds.",
             url=url,
-            skill_id="scout_blogs",
-            skill_name="Scout Blogs",
-            skill_description=(
-                "Pull recent entries (within MESH_BLOG_LOOKBACK_HOURS) from each feed "
-                "in MESH_BLOG_FEEDS or the YAML feed file at MESH_BLOG_FEEDS_FILE."
-            ),
-            skill_tags=["blogs", "rss", "atom"],
+            skills=[
+                SkillSpec(
+                    id="scout_blogs",
+                    name="Scout Blogs",
+                    description=(
+                        "Pull recent entries (within MESH_BLOG_LOOKBACK_HOURS) from "
+                        "each feed in MESH_BLOG_FEEDS or the YAML at MESH_BLOG_FEEDS_FILE."
+                    ),
+                    tags=["blogs", "rss", "atom"],
+                ),
+                investigate_skill_spec("blog"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_blogs": _handle_scout_blogs},
+            skill_handlers={
+                "scout_blogs": _handle_scout_blogs,
+                "investigate_blog": make_empty_investigate_handler("blog"),
+            },
             agent_name="blog_scout",
         )

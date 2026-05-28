@@ -23,7 +23,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 import httpx
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -31,6 +31,10 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    investigate_skill_spec,
+    make_empty_investigate_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -325,23 +329,31 @@ class GitHubScoutAgent(BaseAgent):
         raise NotImplementedError("GitHubScoutAgent uses the A2A skill path only")
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="GitHub Scout",
             description=(
                 "Surfaces trending ML/AI repos by topic search and release notes "
                 "for a watchlist of foundational repos."
             ),
             url=url,
-            skill_id="scout_github",
-            skill_name="Scout GitHub",
-            skill_description=(
-                "Search GitHub by topic for trending repos and fetch release notes for "
-                "watchlist repos via /releases.atom."
-            ),
-            skill_tags=["github", "code", "releases", "trending"],
+            skills=[
+                SkillSpec(
+                    id="scout_github",
+                    name="Scout GitHub",
+                    description=(
+                        "Search GitHub by topic for trending repos and fetch release "
+                        "notes for watchlist repos via /releases.atom."
+                    ),
+                    tags=["github", "code", "releases", "trending"],
+                ),
+                investigate_skill_spec("github"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_github": _handle_scout_github},
+            skill_handlers={
+                "scout_github": _handle_scout_github,
+                "investigate_github": make_empty_investigate_handler("github"),
+            },
             agent_name="github_scout",
         )

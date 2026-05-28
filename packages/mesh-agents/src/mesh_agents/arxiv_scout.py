@@ -6,13 +6,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 import arxiv
-from mesh_a2a.card_builder import build_agent_card
+from mesh_a2a.card_builder import SkillSpec, build_multi_skill_card
 from mesh_a2a.task_server import build_task_app
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
 from starlette.applications import Starlette
 
 from mesh_agents.base import BaseAgent
+from mesh_agents.investigation import (
+    InvestigateSkillInput,
+    InvestigateSkillOutput,
+    investigate_skill_spec,
+)
 
 
 class ScoutedPaper(BaseModel):
@@ -130,6 +135,60 @@ async def _handle_scout_arxiv(payload: dict[str, Any]) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+# Phase 7a investigation -------------------------------------------------
+
+
+def _fetch_papers_by_query(query: str, max_results: int) -> list[ScoutedPaper]:
+    """Keyword search variant of _fetch_papers used by investigate_arxiv.
+
+    arxiv's API supports free-text queries via the ``all:`` field. The
+    hypothesis becomes a quoted phrase to keep multi-word matches together
+    where possible.
+    """
+    search = arxiv.Search(
+        query=f"all:{query}",
+        max_results=max_results,
+        sort_by=arxiv.SortCriterion.Relevance,
+        sort_order=arxiv.SortOrder.Descending,
+    )
+    client = arxiv.Client()
+    papers: list[ScoutedPaper] = []
+    for result in client.results(search):
+        arxiv_id = result.entry_id.split("/")[-1]
+        url = f"https://arxiv.org/abs/{arxiv_id}"
+        abstract = result.summary.replace("\n", " ")
+        author = result.authors[0].name if result.authors else None
+        source = Source(
+            type=SourceType.arxiv,
+            url=url,
+            author=author,
+            published_at=result.published or datetime.now(UTC),
+            raw_content_hash=_make_hash(abstract),
+        )
+        papers.append(
+            ScoutedPaper(
+                source=source,
+                title=result.title,
+                abstract=abstract,
+                arxiv_id=arxiv_id,
+            )
+        )
+        if len(papers) >= max_results:
+            break
+    return papers
+
+
+async def _handle_investigate_arxiv(payload: dict[str, Any]) -> dict[str, Any]:
+    skill_input = InvestigateSkillInput.model_validate(payload)
+    papers = await asyncio.to_thread(
+        _fetch_papers_by_query, skill_input.hypothesis, skill_input.max_results
+    )
+    return InvestigateSkillOutput(
+        investigation_id=skill_input.investigation_id,
+        source_records=[p.model_dump(mode="json") for p in papers],
+    ).model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -149,17 +208,28 @@ class ArxivScoutAgent(BaseAgent):
         return ArxivScoutOutput(papers=papers)
 
     def to_a2a_server(self, url: str) -> Starlette:
-        card = build_agent_card(
+        card = build_multi_skill_card(
             name="ArXiv Scout",
-            description="Fetches recent papers from arXiv by category.",
+            description=(
+                "Fetches recent papers from arXiv by category and runs "
+                "hypothesis-directed searches."
+            ),
             url=url,
-            skill_id="scout_arxiv",
-            skill_name="Scout arXiv",
-            skill_description="Search arXiv for recent papers by category.",
-            skill_tags=["arxiv", "papers", "research"],
+            skills=[
+                SkillSpec(
+                    id="scout_arxiv",
+                    name="Scout arXiv",
+                    description="Search arXiv for recent papers by category.",
+                    tags=["arxiv", "papers", "research"],
+                ),
+                investigate_skill_spec("arxiv"),
+            ],
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"scout_arxiv": _handle_scout_arxiv},
+            skill_handlers={
+                "scout_arxiv": _handle_scout_arxiv,
+                "investigate_arxiv": _handle_investigate_arxiv,
+            },
             agent_name="arxiv_scout",
         )

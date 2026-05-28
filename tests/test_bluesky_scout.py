@@ -125,8 +125,10 @@ def test_handle_returns_dict(fake_client: MagicMock) -> None:
     assert out["papers"][0]["source"]["type"] == "bluesky"
 
 
-@patch("mesh_agents.bluesky_scout.build_agent_card")
+@patch("mesh_agents.bluesky_scout.build_multi_skill_card")
 def test_a2a_card_declares_scout_bluesky_skill(mock_card: MagicMock) -> None:
     BlueskyScoutAgent().to_a2a_server(url="http://bluesky-scout:8009")
     kwargs = mock_card.call_args.kwargs
-    assert kwargs["skill_id"] == "scout_bluesky"
+    skill_ids = {s.id for s in kwargs["skills"]}
+    assert "scout_bluesky" in skill_ids
+    assert "investigate_bluesky" in skill_ids

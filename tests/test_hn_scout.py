@@ -124,9 +124,11 @@ def test_agent_run_returns_hnscoutoutput(fake_client: MagicMock) -> None:
     assert len(result.papers) == 1
 
 
-@patch("mesh_agents.hn_scout.build_agent_card")
+@patch("mesh_agents.hn_scout.build_multi_skill_card")
 def test_a2a_card_declares_scout_hn_skill(mock_card: MagicMock) -> None:
     HNScoutAgent().to_a2a_server(url="http://hn-scout:8005")
     kwargs = mock_card.call_args.kwargs
-    assert kwargs["skill_id"] == "scout_hn"
+    skill_ids = {s.id for s in kwargs["skills"]}
+    assert "scout_hn" in skill_ids
+    assert "investigate_hn" in skill_ids
     assert kwargs["name"] == "HN Scout"

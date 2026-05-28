@@ -14,13 +14,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 from mesh_a2a.client import MeshA2AClient
 from mesh_a2a.tracing import new_traceparent
-from mesh_agents.curator import BeliefForCuration, CuratorPick
+from mesh_agents.curator import (
+    BeliefForCuration,
+    CuratorPick,
+    InvestigationSuggestion,
+)
 from mesh_agents.skeptic import (
     HydratedClaim,
     InScopeEntity,
@@ -33,12 +38,17 @@ from mesh_db.beliefs import get_belief_by_id, list_beliefs, update_belief
 from mesh_db.claims import create_claim, get_claims_by_ids
 from mesh_db.connection import get_connection
 from mesh_db.entities import get_entity_by_id
+from mesh_db.investigations import (
+    create_investigation,
+    list_investigations,
+)
 from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision, list_revisions
 from mesh_db.sources import create_source, get_source_by_id
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
+from mesh_models.investigation import Investigation, InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
 from pydantic import BaseModel
@@ -257,6 +267,59 @@ def _persist_assessment(
     return (len(new_claim_ids), 1)
 
 
+def _target_entity_for_belief(conn: Any, belief: Belief) -> str | None:
+    """Best-effort target entity = most common subject across the belief's
+    supporting + contradicting claims. Used when persisting an Investigation
+    so scouts know where to look. None when the belief has no claims yet
+    (rare; usually only happens at bootstrap time)."""
+    ids = list(belief.supporting_claim_ids) + list(belief.contradicting_claim_ids)
+    if not ids:
+        return None
+    claims = get_claims_by_ids(conn, ids)
+    if not claims:
+        return None
+    counts = Counter(c.subject_entity_id for c in claims)
+    most_common, _ = counts.most_common(1)[0]
+    return most_common
+
+
+def _persist_investigation_suggestions(
+    conn: Any, suggestions: list[InvestigationSuggestion]
+) -> int:
+    """Translate Curator suggestions into Investigation rows.
+
+    Skips beliefs that already have an open or in_progress investigation
+    so the same stale belief doesn't spawn duplicates on every sweep.
+    """
+    if not suggestions:
+        return 0
+    existing_belief_ids = {
+        inv.opened_by_belief_id
+        for inv in list_investigations(conn, limit=1000)
+        if inv.status in (InvestigationStatus.open, InvestigationStatus.in_progress)
+        and inv.opened_by_belief_id
+    }
+    n = 0
+    for s in suggestions:
+        if s.belief_id in existing_belief_ids:
+            continue
+        belief = get_belief_by_id(conn, s.belief_id)
+        target = _target_entity_for_belief(conn, belief) if belief is not None else None
+        create_investigation(
+            conn,
+            Investigation(
+                question=s.hypothesis,
+                hypothesis=s.hypothesis,
+                target_entity_id=target,
+                suggested_source_types=s.suggested_source_types,
+                opened_by_belief_id=s.belief_id,
+                related_entity_ids=[target] if target else [],
+            ),
+        )
+        n += 1
+    return n
+
+
 def _counter_to_claim(cc: SkepticCounterClaim, source_id: str) -> Claim:
     return Claim(
         predicate=cc.predicate,
@@ -342,6 +405,16 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
         )
         picks = [CuratorPick.model_validate(p) for p in curator_result.get("picks", [])]
         log.info("beliefs_picked", count=len(picks), ids=[p.belief_id for p in picks])
+
+        # Phase 7a: persist any investigation suggestions Curator emitted.
+        # These run on the *next* pipeline pass via the coordinator's
+        # investigation-dispatch phase — the sweep just records them.
+        suggestions = [
+            InvestigationSuggestion.model_validate(s)
+            for s in curator_result.get("investigation_suggestions", [])
+        ]
+        n_investigations_opened = _persist_investigation_suggestions(conn, suggestions)
+        log.info("investigations_opened", count=n_investigations_opened)
 
         # ── 2. Skeptic: assess each pick, persist applicable assessments ──
         for pick in picks:

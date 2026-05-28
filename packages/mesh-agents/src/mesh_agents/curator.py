@@ -70,8 +70,24 @@ class CuratorPick(BaseModel):
     rationale: str
 
 
+class InvestigationSuggestion(BaseModel):
+    """Phase 7a: Curator-emitted suggestion that an Investigation be opened
+    on a belief. Orchestrator-side (skeptic-sweep) translates these into
+    Investigation rows.
+
+    The Curator suggests *what* to investigate; the orchestrator decides
+    *target_entity_id* (from the belief's supporting claims) and persists.
+    """
+
+    belief_id: str
+    hypothesis: str
+    suggested_source_types: list[str] = Field(default_factory=list)
+    rationale: str
+
+
 class CuratorOutput(BaseModel):
     picks: list[CuratorPick] = Field(default_factory=list)
+    investigation_suggestions: list[InvestigationSuggestion] = Field(default_factory=list)
 
 
 # Phase 2 A2A skill types ----------------------------------------------------
@@ -86,6 +102,7 @@ class SelectBeliefsSkillInput(BaseModel):
 
 class SelectBeliefsSkillOutput(BaseModel):
     picks: list[CuratorPick]
+    investigation_suggestions: list[InvestigationSuggestion] = Field(default_factory=list)
 
 
 # Pure scoring logic ---------------------------------------------------------
@@ -160,6 +177,62 @@ def score_belief(
     return score, rationale
 
 
+def _suggested_source_types_for(topic: str) -> list[str]:
+    """Pick scout types likely to surface fresh evidence on the topic.
+
+    Heuristic-only — no LLM call. The defaults cover the "primary
+    research" pipeline (arxiv) plus the corroboration sources
+    (leaderboards, curated blogs). Adds github when the topic touches
+    code / models / repos. Adds social when the topic is broad enough
+    that practitioner discussion likely beats formal papers.
+    """
+    base = ["arxiv", "leaderboard", "blog"]
+    topic_l = topic.lower()
+    if any(t in topic_l for t in ("repo", "code", "library", "framework", "open-source")):
+        base.append("github")
+    if any(t in topic_l for t in ("adoption", "practice", "tooling", "ops", "deploy")):
+        base.extend(["hn", "reddit"])
+    # Preserve order, dedup
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in base:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def _should_investigate(b: BeliefForCuration, now: datetime) -> tuple[bool, str]:
+    """Decide whether a belief warrants opening an Investigation.
+
+    Heuristic: any of these signals trip the threshold —
+    - belief has fewer than 2 supporters AND has been around > 14 days
+      (thin evidence base that hasn't grown)
+    - evidence is stale (> 60 days since the most recent supporting/
+      contradicting claim arrived)
+    - recent contradicting activity (someone challenged it lately and
+      it deserves a fresh round of evidence-gathering)
+    """
+    reasons: list[str] = []
+    days_since_revised = max(0.0, (now - b.last_revised_at).total_seconds() / 86400.0)
+    if b.supporting_claim_count < 2 and days_since_revised > 14:
+        reasons.append(
+            f"thin evidence ({b.supporting_claim_count} supporters, "
+            f"{days_since_revised:.0f}d old)"
+        )
+    if b.last_evidence_at is None:
+        reasons.append("no claims attached yet")
+    else:
+        evidence_age = (now - b.last_evidence_at).total_seconds() / 86400.0
+        if evidence_age > 60:
+            reasons.append(f"evidence is {evidence_age:.0f}d old")
+    if b.recent_contradicting_activity:
+        reasons.append("recent contradicting activity")
+    if not reasons:
+        return False, ""
+    return True, "; ".join(reasons)
+
+
 def select_beliefs_to_challenge_pure(input: CuratorInput) -> CuratorOutput:
     if not input.beliefs:
         return CuratorOutput(picks=[])
@@ -171,7 +244,28 @@ def select_beliefs_to_challenge_pure(input: CuratorInput) -> CuratorOutput:
         CuratorPick(belief_id=b.belief_id, score=score, rationale=rationale)
         for (score, rationale), b in scored[: input.pick_count]
     ]
-    return CuratorOutput(picks=picks)
+
+    # Investigation suggestions are independent of the Skeptic pick set —
+    # any belief in the input that trips the threshold qualifies. A belief
+    # can both go to Skeptic for falsification AND get an investigation
+    # opened to gather more evidence; these are parallel paths.
+    suggestions: list[InvestigationSuggestion] = []
+    for _, belief in scored:
+        should, reason = _should_investigate(belief, input.now)
+        if not should:
+            continue
+        suggestions.append(
+            InvestigationSuggestion(
+                belief_id=belief.belief_id,
+                hypothesis=(
+                    f"Is the belief '{belief.statement}' "
+                    f"(topic: {belief.topic}) still supported by recent evidence?"
+                ),
+                suggested_source_types=_suggested_source_types_for(belief.topic),
+                rationale=reason,
+            )
+        )
+    return CuratorOutput(picks=picks, investigation_suggestions=suggestions)
 
 
 async def _handle_select_beliefs(payload: dict[str, Any]) -> dict[str, Any]:
@@ -183,7 +277,10 @@ async def _handle_select_beliefs(payload: dict[str, Any]) -> dict[str, Any]:
         cooldown_days=skill_input.cooldown_days,
     )
     output = select_beliefs_to_challenge_pure(agent_input)
-    return SelectBeliefsSkillOutput(picks=output.picks).model_dump(mode="json")
+    return SelectBeliefsSkillOutput(
+        picks=output.picks,
+        investigation_suggestions=output.investigation_suggestions,
+    ).model_dump(mode="json")
 
 
 class CuratorAgent(BaseAgent):

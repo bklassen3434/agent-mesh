@@ -1,5 +1,7 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { BeliefSignalsCard } from '@/components/belief-signals-card';
 import { ClaimCard } from '@/components/claim-card';
 import { RevisionTimeline } from '@/components/revision-timeline';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +21,7 @@ export default async function BeliefDetailPage(props: { params: Promise<{ id: st
     throw e;
   }
 
-  const { belief, supporting_claims, contradicting_claims, revisions } = detail;
+  const { belief, supporting_claims, contradicting_claims, revisions, signals } = detail;
 
   return (
     <main className="space-y-8">
@@ -36,6 +38,8 @@ export default async function BeliefDetailPage(props: { params: Promise<{ id: st
           </span>
         </div>
       </header>
+
+      {signals ? <BeliefSignalsCard signals={signals} /> : null}
 
       <section className="grid gap-6 md:grid-cols-2">
         <Card>
@@ -65,7 +69,17 @@ export default async function BeliefDetailPage(props: { params: Promise<{ id: st
       </section>
 
       <section>
-        <h2 className="mb-4 text-lg font-semibold tracking-tight">Revision timeline</h2>
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold tracking-tight">Revision timeline</h2>
+          {revisions.length > 0 ? (
+            <Link
+              href={`/beliefs/${encodeURIComponent(id)}/timeline`}
+              className="text-xs font-mono uppercase tracking-wider text-primary hover:underline"
+            >
+              full timeline →
+            </Link>
+          ) : null}
+        </div>
         <RevisionTimeline revisions={revisions} />
       </section>
     </main>

@@ -16,6 +16,7 @@ export type ClaimDetail = Schemas['ClaimDetail'];
 export type SourceDetail = Schemas['SourceDetail'];
 export type SourceWithCount = Schemas['SourceWithCount'];
 export type BeliefDetail = Schemas['BeliefDetail'];
+export type BeliefSignals = Schemas['BeliefSignals'];
 export type ClaimWithContext = Schemas['ClaimWithContext'];
 export type RevisionWithTriggers = Schemas['RevisionWithTriggers'];
 export type SkepticActivityItem = Schemas['SkepticActivityItem'];

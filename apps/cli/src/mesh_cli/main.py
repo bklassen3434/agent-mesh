@@ -10,7 +10,7 @@ from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, updat
 from mesh_db.claims import create_claim, get_claim_by_id, list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
-from mesh_db.investigations import get_investigation_by_id
+from mesh_db.investigations import get_investigation_by_id, list_investigations
 from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.relationships import get_relationship_by_id
@@ -19,7 +19,7 @@ from mesh_db.sources import create_source, get_source_by_id, list_sources
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus
 from mesh_models.entity import Entity, EntityType
-from mesh_models.investigation import Investigation
+from mesh_models.investigation import Investigation, InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
 from rich.console import Console
@@ -802,3 +802,63 @@ def _print_relationship_detail(r: Any) -> None:
         f"[bold]Evidence:[/bold] {', '.join(r.evidence_claim_ids) or '—'}",
     ]
     console.print(Panel("\n".join(lines), title="Relationship"))
+
+
+@cli.group("investigations")
+def investigations() -> None:
+    """Phase 7a investigation lifecycle inspection."""
+
+
+_STATUS_CHOICES = click.Choice([s.value for s in InvestigationStatus])
+
+
+@investigations.command("list")
+@click.option(
+    "--status",
+    "status_filter",
+    type=_STATUS_CHOICES,
+    default=None,
+    help="Filter by status (open|in_progress|resolved|abandoned).",
+)
+@click.option("--limit", default=50, type=int, show_default=True)
+def investigations_list(status_filter: str | None, limit: int) -> None:
+    """List investigations with attached-claim + run-attempt counts."""
+    conn = _get_conn()
+    try:
+        if status_filter:
+            rows = list_investigations(
+                conn, status=InvestigationStatus(status_filter), limit=limit
+            )
+        else:
+            rows = list_investigations(conn, limit=limit)
+    finally:
+        conn.close()
+
+    if not rows:
+        console.print("[dim]No investigations recorded.[/dim]")
+        return
+
+    table = Table(title="Investigations")
+    table.add_column("ID", style="dim", max_width=8)
+    table.add_column("Status", style="cyan")
+    table.add_column("Target entity", style="dim", max_width=8)
+    table.add_column("Belief", style="dim", max_width=8)
+    table.add_column("Sources")
+    table.add_column("Runs / Claims")
+    table.add_column("Hypothesis", overflow="fold")
+    for inv in rows:
+        sources = ", ".join(inv.suggested_source_types) or "—"
+        runs_claims = (
+            f"{inv.pipeline_runs_attempted} run / "
+            f"{len(inv.collected_claim_ids)} claims"
+        )
+        table.add_row(
+            inv.id[:8],
+            inv.status.value,
+            (inv.target_entity_id or "—")[:8],
+            (inv.opened_by_belief_id or "—")[:8],
+            sources,
+            runs_claims,
+            inv.hypothesis or inv.question,
+        )
+    console.print(table)

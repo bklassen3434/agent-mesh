@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
-from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError
+from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError, LLMUsage
 from mesh_llm.prompts import SKEPTIC_SYSTEM, format_skeptic_user
 from mesh_models.claim import FailureMode
 from pydantic import BaseModel, Field
@@ -93,6 +93,8 @@ class ChallengeBeliefSkillOutput(BaseModel):
     rationale: str
     suggested_confidence_delta: float
     counter_claims: list[dict[str, Any]]
+    usage: dict[str, int] = Field(default_factory=dict)
+    model: str = ""
 
 
 # Shared assessment logic ----------------------------------------------------
@@ -156,7 +158,9 @@ def _filter_to_scope(
     return assessment.model_copy(update={"counter_claims": kept})
 
 
-def _assess_sync(llm: LLMClient, input: SkepticInput) -> SkepticAssessment:
+def _assess_sync(
+    llm: LLMClient, input: SkepticInput
+) -> tuple[SkepticAssessment, LLMUsage, str]:
     user_prompt = format_skeptic_user(
         topic=input.belief.topic,
         statement=input.belief.statement,
@@ -168,18 +172,24 @@ def _assess_sync(llm: LLMClient, input: SkepticInput) -> SkepticAssessment:
         n_supporting=len(input.supporting_claims),
         n_contradicting=len(input.contradicting_claims),
     )
-    result, _ = llm.complete_with_latency(
+    result, _, usage = llm.complete_with_usage(
         name="challenge_belief",
         system=SKEPTIC_SYSTEM,
         user=user_prompt,
         response_model=SkepticAssessment,
     )
     assert isinstance(result, SkepticAssessment)
-    return _filter_to_scope(result, input.in_scope_entities)
+    return _filter_to_scope(result, input.in_scope_entities), usage, getattr(llm, "model", "")
 
 
-def challenge_belief_pure(llm: LLMClient, input: SkepticInput) -> SkepticAssessment:
-    """Synchronous pure entry point — used by both the agent and the A2A handler."""
+def challenge_belief_pure(
+    llm: LLMClient, input: SkepticInput
+) -> tuple[SkepticAssessment, LLMUsage, str]:
+    """Synchronous pure entry point — used by both the agent and the A2A handler.
+
+    Returns ``(assessment, usage, model)``; the agent path discards usage, the
+    A2A handler threads it back to the coordinator for the cost ledger.
+    """
     try:
         return _assess_sync(llm, input)
     except LLMProviderNotReadyError:
@@ -189,7 +199,7 @@ def challenge_belief_pure(llm: LLMClient, input: SkepticInput) -> SkepticAssessm
             "skeptic_parse_failure",
             extra={"belief_id": input.belief.belief_id, "error": str(exc)},
         )
-        return _INCONCLUSIVE.model_copy()
+        return _INCONCLUSIVE.model_copy(), LLMUsage(), getattr(llm, "model", "")
 
 
 def _build_handler(llm: LLMClient) -> Any:
@@ -207,13 +217,17 @@ def _build_handler(llm: LLMClient) -> Any:
                 InScopeEntity.model_validate(e) for e in skill_input.in_scope_entities
             ],
         )
-        assessment = await asyncio.to_thread(challenge_belief_pure, llm, agent_input)
+        assessment, usage, model = await asyncio.to_thread(
+            challenge_belief_pure, llm, agent_input
+        )
         return ChallengeBeliefSkillOutput(
             verdict=assessment.verdict,
             confidence=assessment.confidence,
             rationale=assessment.rationale,
             suggested_confidence_delta=assessment.suggested_confidence_delta,
             counter_claims=[c.model_dump(mode="json") for c in assessment.counter_claims],
+            usage=usage.model_dump(),
+            model=model,
         ).model_dump(mode="json")
 
     return _handle_challenge_belief
@@ -228,7 +242,10 @@ class SkepticAgent(BaseAgent):
     async def run(self, input: BaseModel) -> SkepticAssessment:
         assert isinstance(input, SkepticInput)
         assert self.llm is not None, "SkepticAgent requires an llm client"
-        return await asyncio.to_thread(challenge_belief_pure, self.llm, input)
+        assessment, _, _ = await asyncio.to_thread(
+            challenge_belief_pure, self.llm, input
+        )
+        return assessment
 
     def to_a2a_server(self, url: str) -> Starlette:
         assert self.llm is not None, "SkepticAgent requires an llm client"

@@ -61,6 +61,8 @@ class MockLLM:
         self._response_json = response_json or _FIXTURE.read_text()
         self._raise_exc = raise_exc
 
+    model = "mock-model"
+
     def complete_with_latency(
         self,
         name: str,
@@ -69,6 +71,21 @@ class MockLLM:
         response_model: type | None = None,
         options: object | None = None,
     ) -> tuple[object, int]:
+        parsed, latency, _ = self.complete_with_usage(
+            name, system, user, response_model, options
+        )
+        return parsed, latency
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type | None = None,
+        options: object | None = None,
+    ) -> tuple[object, int, object]:
+        from mesh_llm import LLMUsage
+
         if self._raise_exc is not None:
             raise self._raise_exc
         assert response_model is not None
@@ -76,7 +93,7 @@ class MockLLM:
             parsed = response_model.model_validate_json(self._response_json)  # type: ignore[attr-defined]
         except Exception as exc:
             raise LLMResponseError(f"mock parse failure: {exc}") from exc
-        return parsed, 500
+        return parsed, 500, LLMUsage(input_tokens=100, output_tokens=50)
 
 
 class TestSkepticAgent:

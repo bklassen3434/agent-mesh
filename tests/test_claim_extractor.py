@@ -46,6 +46,8 @@ class MockOllamaClient:
         self._response_json = response_json or _FIXTURE.read_text()
         self._raise_exc = raise_exc
 
+    model = "mock-model"
+
     def complete_with_latency(
         self,
         name: str,
@@ -54,15 +56,31 @@ class MockOllamaClient:
         response_model: type | None = None,
         options: object | None = None,
     ) -> tuple[object, int]:
+        parsed, latency, _ = self.complete_with_usage(
+            name, system, user, response_model, options
+        )
+        return parsed, latency
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type | None = None,
+        options: object | None = None,
+    ) -> tuple[object, int, object]:
+        from mesh_llm import LLMUsage
+
         if self._raise_exc is not None:
             raise self._raise_exc
+        usage = LLMUsage(input_tokens=120, output_tokens=60)
         if response_model is not None:
             try:
                 parsed = response_model.model_validate_json(self._response_json)  # type: ignore[attr-defined]
             except Exception as exc:
                 raise LLMResponseError(f"mock parse failure: {exc}") from exc
-            return parsed, 500
-        return self._response_json, 500
+            return parsed, 500, usage
+        return self._response_json, 500, usage
 
 
 class TestClaimExtractorAgent:

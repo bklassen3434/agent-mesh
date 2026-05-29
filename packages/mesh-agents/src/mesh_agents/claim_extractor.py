@@ -10,6 +10,7 @@ from mesh_llm import (
     LLMClient,
     LLMProviderNotReadyError,
     LLMResponseError,
+    LLMUsage,
 )
 from mesh_llm.prompts import CLAIM_EXTRACTION_SYSTEM, format_extraction_user
 from pydantic import BaseModel, Field
@@ -41,6 +42,8 @@ class ClaimExtractorOutput(BaseModel):
     claims: list[ExtractedClaim]
     entities_referenced: list[str]
     latency_ms: int = 0
+    usage: LLMUsage = Field(default_factory=LLMUsage)
+    model: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +59,8 @@ class ExtractClaimsSkillOutput(BaseModel):
     claims: list[dict[str, Any]]
     entities_referenced: list[str]
     latency_ms: int = 0
+    usage: dict[str, int] = Field(default_factory=dict)
+    model: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -63,15 +68,17 @@ class ExtractClaimsSkillOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _extract_sync(llm: Any, paper: ScoutedPaper) -> tuple[list[ExtractedClaim], int]:
+def _extract_sync(
+    llm: Any, paper: ScoutedPaper
+) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
     user_prompt = format_extraction_user(title=paper.title, abstract=paper.abstract)
-    result, latency_ms = llm.complete_with_latency(
+    result, latency_ms, usage = llm.complete_with_usage(
         name="extract_claims",
         system=CLAIM_EXTRACTION_SYSTEM,
         user=user_prompt,
         response_model=ClaimExtractionResult,
     )
-    return result.claims, latency_ms
+    return result.claims, latency_ms, usage, getattr(llm, "model", "")
 
 
 def _build_handler(llm: LLMClient) -> Any:
@@ -79,7 +86,9 @@ def _build_handler(llm: LLMClient) -> Any:
         skill_input = ExtractClaimsSkillInput.model_validate(payload)
         paper = ScoutedPaper.model_validate(skill_input.paper)
         try:
-            claims, latency_ms = await asyncio.to_thread(_extract_sync, llm, paper)
+            claims, latency_ms, usage, model = await asyncio.to_thread(
+                _extract_sync, llm, paper
+            )
         except LLMProviderNotReadyError:
             raise
         except LLMResponseError as exc:
@@ -87,12 +96,14 @@ def _build_handler(llm: LLMClient) -> Any:
                 "claim_extraction_parse_failure",
                 extra={"arxiv_id": paper.arxiv_id, "error": str(exc)},
             )
-            claims, latency_ms = [], 0
+            claims, latency_ms, usage, model = [], 0, LLMUsage(), getattr(llm, "model", "")
         entities_referenced = list({c.subject_name for c in claims})
         return ExtractClaimsSkillOutput(
             claims=[c.model_dump(mode="json") for c in claims],
             entities_referenced=entities_referenced,
             latency_ms=latency_ms,
+            usage=usage.model_dump(),
+            model=model,
         ).model_dump(mode="json")
 
     return _handle_extract_claims
@@ -114,7 +125,9 @@ class ClaimExtractorAgent(BaseAgent):
         assert self.llm is not None, "ClaimExtractorAgent requires an llm client"
 
         try:
-            claims, latency_ms = await asyncio.to_thread(_extract_sync, self.llm, input.paper)
+            claims, latency_ms, usage, model = await asyncio.to_thread(
+                _extract_sync, self.llm, input.paper
+            )
         except LLMProviderNotReadyError:
             raise
         except LLMResponseError as exc:
@@ -129,6 +142,8 @@ class ClaimExtractorAgent(BaseAgent):
             claims=claims,
             entities_referenced=entities_referenced,
             latency_ms=latency_ms,
+            usage=usage,
+            model=model,
         )
 
     def to_a2a_server(self, url: str) -> Starlette:

@@ -44,10 +44,26 @@ class MockOllamaClient:
         response_model: type | None = None,
         options: object | None = None,
     ) -> tuple[object, int]:
+        parsed, latency, _ = self.complete_with_usage(
+            name, system, user, response_model, options
+        )
+        return parsed, latency
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type | None = None,
+        options: object | None = None,
+    ) -> tuple[object, int, object]:
+        from mesh_llm import LLMUsage
+
+        usage = LLMUsage(input_tokens=100, output_tokens=40)
         if response_model is not None:
             parsed = response_model.model_validate_json(self._fixture_json)  # type: ignore[attr-defined]
-            return parsed, 200
-        return self._fixture_json, 200
+            return parsed, 200, usage
+        return self._fixture_json, 200, usage
 
 
 def _run_pipeline(tmp_path: Path, arxiv_ids: list[str] | None = None) -> PipelineResult:
@@ -175,13 +191,29 @@ class TestOrchestrator:
                 response_model: type | None = None,
                 options: object | None = None,
             ) -> tuple[object, int]:
+                parsed, latency, _ = self.complete_with_usage(
+                    name, system, user, response_model, options
+                )
+                return parsed, latency
+
+            def complete_with_usage(
+                self,
+                name: str,
+                system: str,
+                user: str,
+                response_model: type | None = None,
+                options: object | None = None,
+            ) -> tuple[object, int, object]:
+                from mesh_llm import LLMUsage
+
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
                     raise RuntimeError("simulated extraction failure")
+                usage = LLMUsage(input_tokens=100, output_tokens=40)
                 if response_model is not None:
-                    return response_model.model_validate_json(_FIXTURE.read_text()), 100  # type: ignore[attr-defined]
-                return "", 100
+                    return response_model.model_validate_json(_FIXTURE.read_text()), 100, usage  # type: ignore[attr-defined]
+                return "", 100, usage
 
         with (
             patch("mesh_agents.arxiv_scout.arxiv.Client") as mock_cls,

@@ -53,10 +53,13 @@ from mesh_db.investigations import (
     list_investigations,
     update_investigation,
 )
+from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import PipelineError, PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
+from mesh_llm.pricing import estimate_cost
+from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.entity import Entity, EntityType
@@ -386,13 +389,20 @@ async def _extract_papers(
     papers: list[ScoutedPaper],
     traceparent: str,
     semaphore: asyncio.Semaphore,
-) -> tuple[list[tuple[ScoutedPaper, list[ExtractedClaim]]], list[dict[str, Any]]]:
+) -> tuple[
+    list[tuple[ScoutedPaper, list[ExtractedClaim]]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     """Bounded-concurrency extraction used by the investigation node (the main
-    path fans out through the graph instead)."""
+    path fans out through the graph instead).
+
+    Returns (pairs, errors, usage_rows) where each usage row is
+    ``{"usage": {...}, "model": "..."}`` for the coordinator to ledger."""
 
     async def _one(
         paper: ScoutedPaper,
-    ) -> tuple[ScoutedPaper, list[ExtractedClaim], Any]:
+    ) -> tuple[ScoutedPaper, list[ExtractedClaim], Any, dict[str, Any] | None]:
         async with semaphore:
             result, err = await call_skill_node(
                 client,
@@ -403,17 +413,21 @@ async def _extract_papers(
             )
         if result is not None:
             claims = [ExtractedClaim.model_validate(c) for c in result.get("claims", [])]
-            return paper, claims, None
-        return paper, [], err
+            usage_row = {"usage": result.get("usage") or {}, "model": result.get("model") or ""}
+            return paper, claims, None, usage_row
+        return paper, [], err, None
 
     pairs: list[tuple[ScoutedPaper, list[ExtractedClaim]]] = []
     errors: list[dict[str, Any]] = []
-    for paper, claims, err in await asyncio.gather(*(_one(p) for p in papers)):
+    usage_rows: list[dict[str, Any]] = []
+    for paper, claims, err, usage_row in await asyncio.gather(*(_one(p) for p in papers)):
         if err is not None:
             errors.append(err.model_dump())
         else:
             pairs.append((paper, claims))
-    return pairs, errors
+        if usage_row is not None:
+            usage_rows.append(usage_row)
+    return pairs, errors, usage_rows
 
 
 def _open_investigations(conn: Any) -> list[Any]:
@@ -452,6 +466,38 @@ def _investigation_lifecycle(conn: Any, investigations: list[Any]) -> tuple[int,
 def _paper_id_for_error(err: dict[str, Any]) -> str:
     ctx = err.get("context") or {}
     return str(ctx.get("arxiv_id") or ctx.get("investigation_id") or err.get("skill_id") or "")
+
+
+def _persist_llm_usage(
+    conn: Any,
+    run_id: str,
+    skill_id: str,
+    agent_name: str,
+    usage_dict: dict[str, Any] | None,
+    model: str,
+) -> None:
+    """Write one llm_usage ledger row (coordinator is the single DuckDB writer).
+
+    No-ops when the call recorded no tokens (e.g. a parse failure that never
+    reached the provider)."""
+    usage = LLMUsage(**(usage_dict or {}))
+    if usage.total_tokens == 0:
+        return
+    cost = estimate_cost(model, usage)
+    create_llm_usage(
+        conn,
+        LLMUsageRecord(
+            run_id=run_id,
+            agent_name=agent_name,
+            skill_id=skill_id,
+            model=model or None,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            cache_creation_tokens=usage.cache_creation_tokens,
+            estimated_cost_usd=cost.total_cost,
+        ),
+    )
 
 
 def _avg_latency(extractions: list[dict[str, Any]]) -> int:
@@ -540,6 +586,8 @@ def build_coordinator_graph(
                     "paper": paper,
                     "claims": list(result.get("claims", [])),
                     "latency_ms": int(result.get("latency_ms") or 0),
+                    "usage": result.get("usage") or {},
+                    "model": result.get("model") or "",
                 }
             ]
         if err is not None:
@@ -643,8 +691,19 @@ def build_coordinator_graph(
                     dispatched += 1
 
         new_papers = _dedup_and_insert_sources(conn, gathered)
-        pairs, extract_errors = await _extract_papers(client, new_papers, tp, semaphore)
+        pairs, extract_errors, usage_rows = await _extract_papers(
+            client, new_papers, tp, semaphore
+        )
         errors.extend(extract_errors)
+        for row in usage_rows:
+            _persist_llm_usage(
+                conn,
+                state["run_id"],
+                "extract_claims",
+                "claim_extractor",
+                row.get("usage"),
+                str(row.get("model") or ""),
+            )
 
         names = {ec.subject_name for _, claims in pairs for ec in claims}
         resolved = await _resolve_entities(conn, client, list(names), tp)
@@ -672,6 +731,17 @@ def build_coordinator_graph(
 
     async def finalize(state: CoordinatorState) -> dict[str, Any]:
         avg = _avg_latency(state["extractions"])
+        # Persist per-call token usage for every extraction (main fan-out path).
+        # Investigation re-extraction usage is recorded in dispatch_investigations.
+        for e in state["extractions"]:
+            _persist_llm_usage(
+                conn,
+                state["run_id"],
+                "extract_claims",
+                "claim_extractor",
+                e.get("usage"),
+                str(e.get("model") or ""),
+            )
         errors = [
             PipelineError(
                 paper_id=_paper_id_for_error(e),

@@ -50,10 +50,13 @@ from mesh_db.beliefs import get_belief_by_id, list_beliefs, update_belief
 from mesh_db.claims import create_claim, get_claims_by_ids
 from mesh_db.connection import get_connection
 from mesh_db.entities import get_entity_by_id
+from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision, list_revisions
 from mesh_db.sources import create_source, get_source_by_id
+from mesh_llm.pricing import estimate_cost
+from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.revision import BeliefRevision
@@ -453,6 +456,8 @@ def build_sweep_graph(
                     "applied": applied,
                     "n_counter_claims": n_claims,
                     "n_revisions": n_revs,
+                    "usage": result.get("usage") or {},
+                    "model": result.get("model") or "",
                 }
             ]
         }
@@ -476,6 +481,25 @@ def build_sweep_graph(
 
     async def finalize(state: SweepState) -> dict[str, Any]:
         verdicts = state["verdicts"]
+        for v in verdicts:
+            usage = LLMUsage(**(v.get("usage") or {}))
+            if usage.total_tokens == 0:
+                continue
+            model = str(v.get("model") or "")
+            create_llm_usage(
+                conn,
+                LLMUsageRecord(
+                    run_id=state["run_id"],
+                    agent_name="skeptic",
+                    skill_id="challenge_belief",
+                    model=model or None,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_creation_tokens=usage.cache_creation_tokens,
+                    estimated_cost_usd=estimate_cost(model, usage).total_cost,
+                ),
+            )
         counter_claims = sum(int(v["n_counter_claims"]) for v in verdicts)
         revisions = sum(int(v["n_revisions"]) for v in verdicts)
         run = PipelineRun(

@@ -12,7 +12,11 @@ from mesh_a2a.node import TaskError, call_skill_node
 class _FakeClient:
     """Minimal stand-in exposing only call_skill_blocking."""
 
-    def __init__(self, responses: dict[str, Any], raises: dict[str, Exception] | None = None):
+    def __init__(
+        self,
+        responses: dict[str, dict[str, Any]],
+        raises: dict[str, Exception] | None = None,
+    ):
         self._responses = responses
         self._raises = raises or {}
         self.calls: list[tuple[str, dict[str, Any], str | None]] = []

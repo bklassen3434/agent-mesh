@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 POSTGRES_URL_ENV = "LANGGRAPH_POSTGRES_URL"
@@ -29,7 +30,7 @@ def postgres_url() -> str | None:
     return url or None
 
 
-def thread_config(thread_id: str) -> dict[str, Any]:
+def thread_config(thread_id: str) -> RunnableConfig:
     """RunnableConfig selecting the checkpoint thread for a run.
 
     One thread per pipeline/sweep run (thread_id == run_id), so the

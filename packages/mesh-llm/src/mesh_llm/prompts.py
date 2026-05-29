@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 CLAIM_EXTRACTION_SYSTEM = """\
-You are a scientific claim extractor for an AI/robotics research knowledge base.
+You are a claim extractor for an AI/robotics research knowledge base.
 
-Given a paper title and abstract, extract ONLY the most concrete, factual claims that can be expressed using one of these predicates:
+Given a title and a piece of source text — which may be a paper abstract, blog post, forum discussion, repository description, or leaderboard snapshot — extract ONLY the most concrete, factual claims that can be expressed using one of these predicates:
 - achieves_score: the subject entity achieved a numeric score on a benchmark
 - outperforms: the subject entity outperforms another entity on some task
 - developed_by: the subject entity was developed by a lab or team
 - evaluated_on: the subject entity was evaluated on a benchmark or dataset
 
 Rules:
-1. Only extract claims directly stated or clearly implied by the abstract text.
-2. Each claim must include a verbatim excerpt from the abstract that supports it.
+1. Only extract claims directly stated or clearly implied by the source text.
+2. Each claim must include a verbatim excerpt from the source text that supports it.
 3. The object must be a JSON dict. For achieves_score: {"score": <number>, "benchmark": "<name>", "metric": "<optional>"}. For outperforms: {"compared_to": "<entity name>", "on": "<task/benchmark>"}. For developed_by: {"lab": "<lab name>"}. For evaluated_on: {"benchmark": "<name>"}.
-4. subject_name should be the canonical entity name as it appears in the paper (e.g. "GPT-4", "RoboAgent", "MMLU").
+4. subject_name should be the canonical entity name as it appears in the source text (e.g. "GPT-4", "RoboAgent", "MMLU").
 5. If no claims fit these predicates, return an empty claims list.
-6. Do NOT invent claims not in the abstract.
+6. Do NOT invent claims not in the source text.
 
 === EXAMPLE 1 ===
 Title: "LLaMA 2: Open Foundation and Fine-Tuned Chat Models"
-Abstract: "...Llama 2-Chat achieves 72.8% on MMLU, outperforming GPT-3 on multiple benchmarks. Llama 2 was developed by Meta AI..."
+Content: "...Llama 2-Chat achieves 72.8% on MMLU, outperforming GPT-3 on multiple benchmarks. Llama 2 was developed by Meta AI..."
 
 Output:
 {
@@ -50,7 +50,7 @@ Output:
 
 === EXAMPLE 2 ===
 Title: "GR00T N1: A Generalist Robot Policy"
-Abstract: "...GR00T N1 is evaluated on 50 manipulation tasks from RoboArena and achieves a 78% task success rate, outperforming prior single-task specialists..."
+Content: "...GR00T N1 is evaluated on 50 manipulation tasks from RoboArena and achieves a 78% task success rate, outperforming prior single-task specialists..."
 
 Output:
 {
@@ -79,13 +79,13 @@ Output:
   ]
 }
 
-Now extract claims from the following paper. Return only valid JSON matching the schema.
+Now extract claims from the following source. Return only valid JSON matching the schema.
 """
 
 CLAIM_EXTRACTION_USER = """\
 Title: {title}
 
-Abstract: {abstract}
+Content: {abstract}
 """
 
 
@@ -98,7 +98,7 @@ You are a skeptic in an AI/robotics research knowledge base. Your job is to fals
 
 You will receive:
 - A belief (topic, statement, current confidence)
-- The supporting claims (with predicates, objects, raw_excerpts, source URLs, and statuses)
+- The supporting claims (with predicates, objects, raw_excerpts, extraction dates, source URLs, source reliability, and statuses)
 - Contradicting claims if any
 - A set of in_scope_entities you may reference by id
 

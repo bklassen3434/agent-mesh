@@ -127,3 +127,44 @@ class TestSkepticAgent:
         data = json.loads(_FIXTURE.read_text())
         assessment = SkepticAssessment.model_validate(data)
         assert assessment.verdict in {"supported", "weakened", "contradicted", "inconclusive"}
+
+
+class TestClaimBlockProvenance:
+    """The system prompt promises source URLs, reliability, and extraction
+    dates; the block formatter must actually render them (regression guard for
+    the provenance-drop bug)."""
+
+    def test_block_renders_provenance_fields(self) -> None:
+        from mesh_agents.skeptic import _format_claim_block
+
+        claim = HydratedClaim(
+            claim_id="cl-1",
+            predicate="achieves_score",
+            subject_entity_id="ent-x",
+            object={"score": 87.5, "benchmark": "MMLU"},
+            raw_excerpt="X achieves 87.5 on MMLU",
+            confidence=0.9,
+            source_url="https://arxiv.org/abs/2306.00001",
+            source_published_at=datetime(2023, 6, 15, tzinfo=UTC),
+            source_reliability=0.8,
+            extracted_at=datetime(2024, 1, 2, tzinfo=UTC),
+        )
+        block = _format_claim_block([claim])
+        assert "https://arxiv.org/abs/2306.00001" in block
+        assert "source_reliability=0.80" in block
+        assert "extracted_at=2024-01-02" in block
+
+    def test_block_marks_missing_provenance_unknown(self) -> None:
+        from mesh_agents.skeptic import _format_claim_block
+
+        claim = HydratedClaim(
+            claim_id="cl-2",
+            predicate="achieves_score",
+            subject_entity_id="ent-x",
+            object={},
+            raw_excerpt="excerpt",
+            confidence=0.5,
+        )
+        block = _format_claim_block([claim])
+        assert "source_url=unknown" in block
+        assert "source_reliability=unknown" in block

@@ -45,6 +45,8 @@ class HydratedClaim(BaseModel):
     confidence: float
     source_url: str | None = None
     source_published_at: datetime | None = None
+    source_reliability: float | None = None
+    extracted_at: datetime | None = None
     status: str = "active"
 
 
@@ -111,11 +113,16 @@ def _format_claim_block(claims: list[HydratedClaim]) -> str:
     lines: list[str] = []
     for c in claims:
         published = c.source_published_at.isoformat() if c.source_published_at else "unknown"
+        extracted = c.extracted_at.isoformat() if c.extracted_at else "unknown"
+        reliability = (
+            f"{c.source_reliability:.2f}" if c.source_reliability is not None else "unknown"
+        )
         lines.append(
             f"- [{c.claim_id}] predicate={c.predicate} subject_entity_id={c.subject_entity_id} "
             f"object={json.dumps(c.object, default=str)} status={c.status} "
-            f"source_published_at={published} confidence={c.confidence:.2f} "
-            f"excerpt={c.raw_excerpt!r}"
+            f"extracted_at={extracted} source_published_at={published} "
+            f"source_url={c.source_url or 'unknown'} source_reliability={reliability} "
+            f"confidence={c.confidence:.2f} excerpt={c.raw_excerpt!r}"
         )
     return "\n".join(lines)
 

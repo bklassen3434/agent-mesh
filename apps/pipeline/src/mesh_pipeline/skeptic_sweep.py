@@ -212,6 +212,8 @@ def _hydrate_claims(conn: Any, ids: list[str]) -> list[HydratedClaim]:
                 confidence=c.confidence,
                 source_url=source.url if source else None,
                 source_published_at=source.published_at if source else None,
+                source_reliability=source.reliability_prior if source else None,
+                extracted_at=c.extracted_at,
                 status=c.status.value,
             )
         )

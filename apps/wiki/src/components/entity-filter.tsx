@@ -27,7 +27,7 @@ export function EntityFilter({
       else params.delete('q');
       if (newType) params.set('type', newType);
       else params.delete('type');
-      router.push(`/entities?${params.toString()}`);
+      router.push(`/knowledge/entities?${params.toString()}`);
     },
     [router, sp, q, type],
   );

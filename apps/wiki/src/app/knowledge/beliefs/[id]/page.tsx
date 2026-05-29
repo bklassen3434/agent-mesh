@@ -73,7 +73,7 @@ export default async function BeliefDetailPage(props: { params: Promise<{ id: st
           <h2 className="text-lg font-semibold tracking-tight">Revision timeline</h2>
           {revisions.length > 0 ? (
             <Link
-              href={`/beliefs/${encodeURIComponent(id)}/timeline`}
+              href={`/knowledge/beliefs/${encodeURIComponent(id)}/timeline`}
               className="text-xs font-mono uppercase tracking-wider text-primary hover:underline"
             >
               full timeline →

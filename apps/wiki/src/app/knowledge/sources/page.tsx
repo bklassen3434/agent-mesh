@@ -71,7 +71,7 @@ export default async function SourcesPage(props: { searchParams: Promise<SP> }) 
               {page.items.map((row) => (
                 <TableRow key={row.source.id}>
                   <TableCell className="max-w-md truncate">
-                    <Link href={`/sources/${row.source.id}`} className="hover:underline">
+                    <Link href={`/knowledge/sources/${row.source.id}`} className="hover:underline">
                       {row.source.url}
                     </Link>
                   </TableCell>
@@ -90,7 +90,7 @@ export default async function SourcesPage(props: { searchParams: Promise<SP> }) 
             total={page.total}
             limit={page.limit}
             offset={page.offset}
-            basePath="/sources"
+            basePath="/knowledge/sources"
             searchParams={activeType ? { type: activeType } : undefined}
           />
         </>
@@ -106,7 +106,7 @@ function SourceTypeFilter({ active }: { active: string | undefined }) {
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-muted-foreground mr-1">Filter:</span>
       <Link
-        href="/sources"
+        href="/knowledge/sources"
         className={`${baseChip} ${
           !active
             ? 'border-foreground bg-foreground text-background'
@@ -118,7 +118,7 @@ function SourceTypeFilter({ active }: { active: string | undefined }) {
       {SOURCE_TYPES.map((t) => (
         <Link
           key={t}
-          href={`/sources?type=${t}`}
+          href={`/knowledge/sources?type=${t}`}
           className={`${baseChip} ${
             active === t
               ? 'border-foreground bg-foreground text-background'

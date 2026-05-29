@@ -116,7 +116,7 @@ export function GraphView({
     });
     cy.on('tap', 'node', (evt) => {
       const id = evt.target.data('id') as string;
-      router.push(`/entities/${encodeURIComponent(id)}`);
+      router.push(`/knowledge/entities/${encodeURIComponent(id)}`);
     });
     cyRef.current = cy;
     return () => {

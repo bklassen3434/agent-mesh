@@ -71,7 +71,7 @@ export default async function ClaimsPage(props: { searchParams: Promise<SP> }) {
               {page.items.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-mono text-xs">
-                    <Link href={`/claims/${c.id}`} className="hover:underline">{c.predicate}</Link>
+                    <Link href={`/knowledge/claims/${c.id}`} className="hover:underline">{c.predicate}</Link>
                   </TableCell>
                   <TableCell className="max-w-md text-xs text-muted-foreground">{c.raw_excerpt}</TableCell>
                   <TableCell>{formatConfidence(c.confidence)}</TableCell>
@@ -88,7 +88,7 @@ export default async function ClaimsPage(props: { searchParams: Promise<SP> }) {
             total={page.total}
             limit={page.limit}
             offset={page.offset}
-            basePath="/claims"
+            basePath="/knowledge/claims"
             searchParams={{ predicate, source_id }}
           />
         </>

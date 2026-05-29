@@ -18,7 +18,7 @@ export function ClaimCard({ entry }: { entry: ClaimWithContext }) {
         {subject_entity ? (
           <span>
             About{' '}
-            <Link href={`/entities/${subject_entity.id}`} className="underline-offset-2 hover:underline">
+            <Link href={`/knowledge/entities/${subject_entity.id}`} className="underline-offset-2 hover:underline">
               {subject_entity.canonical_name}
             </Link>
           </span>
@@ -26,12 +26,12 @@ export function ClaimCard({ entry }: { entry: ClaimWithContext }) {
         {source ? (
           <span>
             From{' '}
-            <Link href={`/sources/${source.id}`} className="underline-offset-2 hover:underline">
+            <Link href={`/knowledge/sources/${source.id}`} className="underline-offset-2 hover:underline">
               {source.url}
             </Link>
           </span>
         ) : null}
-        <Link href={`/claims/${claim.id}`} className="ml-auto hover:underline">
+        <Link href={`/knowledge/claims/${claim.id}`} className="ml-auto hover:underline">
           claim detail →
         </Link>
       </div>

@@ -59,7 +59,7 @@ export default async function SkepticPage() {
                         Belief
                       </div>
                       <Link
-                        href={`/beliefs/${item.belief.id}`}
+                        href={`/knowledge/beliefs/${item.belief.id}`}
                         className="mt-1 block font-medium hover:underline"
                       >
                         {item.belief.statement}
@@ -91,7 +91,7 @@ export default async function SkepticPage() {
                             return (
                               <Link
                                 key={cid}
-                                href={`/claims/${cid}`}
+                                href={`/knowledge/claims/${cid}`}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-border bg-accent/40 px-2 py-1 text-xs hover:bg-accent"
                               >
                                 <span className="font-mono">{c.predicate}</span>

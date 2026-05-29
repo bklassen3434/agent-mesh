@@ -67,7 +67,7 @@ export default async function EntityDetailPage(props: { params: Promise<{ id: st
                       <Badge variant={c.status === 'active' ? 'secondary' : 'outline'}>{c.status}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Link href={`/claims/${c.id}`} className="text-xs hover:underline">
+                      <Link href={`/knowledge/claims/${c.id}`} className="text-xs hover:underline">
                         view →
                       </Link>
                     </TableCell>
@@ -99,12 +99,12 @@ export default async function EntityDetailPage(props: { params: Promise<{ id: st
                   <TableRow key={r.id}>
                     <TableCell className="font-mono text-xs">{r.type}</TableCell>
                     <TableCell className="font-mono text-xs">
-                      <Link href={`/entities/${r.from_entity_id}`} className="hover:underline">
+                      <Link href={`/knowledge/entities/${r.from_entity_id}`} className="hover:underline">
                         {r.from_entity_id === entity.id ? '(this)' : r.from_entity_id.slice(0, 8)}
                       </Link>
                     </TableCell>
                     <TableCell className="font-mono text-xs">
-                      <Link href={`/entities/${r.to_entity_id}`} className="hover:underline">
+                      <Link href={`/knowledge/entities/${r.to_entity_id}`} className="hover:underline">
                         {r.to_entity_id === entity.id ? '(this)' : r.to_entity_id.slice(0, 8)}
                       </Link>
                     </TableCell>

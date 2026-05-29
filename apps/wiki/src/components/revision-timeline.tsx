@@ -70,7 +70,7 @@ export function RevisionTimeline({ revisions }: { revisions: RevisionWithTrigger
                         return (
                           <Link
                             key={cid}
-                            href={`/claims/${cid}`}
+                            href={`/knowledge/claims/${cid}`}
                             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-accent/40 px-2 py-1 text-xs hover:bg-accent"
                           >
                             <span className="font-mono">{c.predicate}</span>

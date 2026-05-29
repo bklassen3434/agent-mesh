@@ -127,9 +127,9 @@ function BriefingItemCard({ item }: { item: PersonalizedItem }) {
 function itemHref(item: PersonalizedItem): string | null {
   switch (item.item_type) {
     case 'belief':
-      return `/beliefs/${encodeURIComponent(item.item_id)}`;
+      return `/knowledge/beliefs/${encodeURIComponent(item.item_id)}`;
     case 'claim':
-      return `/claims/${encodeURIComponent(item.item_id)}`;
+      return `/knowledge/claims/${encodeURIComponent(item.item_id)}`;
     case 'revision':
       // Revisions don't have a standalone route; link to the skeptic feed.
       return '/skeptic';

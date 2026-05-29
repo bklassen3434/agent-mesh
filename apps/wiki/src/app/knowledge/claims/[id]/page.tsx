@@ -29,7 +29,7 @@ export default async function ClaimDetailPage(props: { params: Promise<{ id: str
         </div>
         <h1 className="text-xl font-semibold leading-snug">
           {subject_entity ? (
-            <Link href={`/entities/${subject_entity.id}`} className="hover:underline">
+            <Link href={`/knowledge/entities/${subject_entity.id}`} className="hover:underline">
               {subject_entity.canonical_name}
             </Link>
           ) : (
@@ -70,7 +70,7 @@ export default async function ClaimDetailPage(props: { params: Promise<{ id: str
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <div>
-              <Link href={`/sources/${source.id}`} className="font-medium hover:underline">
+              <Link href={`/knowledge/sources/${source.id}`} className="font-medium hover:underline">
                 {source.url}
               </Link>
             </div>

@@ -4,7 +4,7 @@ import { EmptyState } from '@/components/empty-state';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { api } from '@/lib/api';
+import { api, type BeliefSignalSummary } from '@/lib/api';
 import { formatConfidence, formatDateTime } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +16,12 @@ function pick(sp: SP, key: string): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
+function scoreTone(score: number): string {
+  if (score < 0.35) return 'text-amber-700';
+  if (score < 0.65) return 'text-muted-foreground';
+  return 'text-emerald-700';
+}
+
 export default async function BeliefsPage(props: { searchParams: Promise<SP> }) {
   const sp = await props.searchParams;
   const topic = pick(sp, 'topic');
@@ -23,6 +29,18 @@ export default async function BeliefsPage(props: { searchParams: Promise<SP> }) 
   const offset = Number(pick(sp, 'offset') ?? 0);
 
   const page = await api.listBeliefs({ topic, limit, offset });
+
+  // Inline hype/substance + reproduction per row (Phase 9). Batch lookup;
+  // best-effort so the list still renders if the signal views are empty.
+  const signals: Record<string, BeliefSignalSummary> = {};
+  const ids = page.items.map((b) => b.id).filter((id): id is string => Boolean(id));
+  try {
+    for (const s of await api.beliefSignals(ids)) {
+      signals[s.belief_id] = s;
+    }
+  } catch {
+    /* signals are decorative — ignore lookup failures */
+  }
 
   return (
     <main className="space-y-6">
@@ -63,14 +81,30 @@ export default async function BeliefsPage(props: { searchParams: Promise<SP> }) 
       ) : (
         <>
           <div className="space-y-3">
-            {page.items.map((b) => (
-              <Link key={b.id} href={`/beliefs/${b.id}`} className="block">
+            {page.items.map((b) => {
+              const sig = b.id ? signals[b.id] : undefined;
+              return (
+              <Link key={b.id} href={`/knowledge/beliefs/${b.id}`} className="block">
                 <Card className="transition-colors hover:bg-accent/30">
                   <CardContent className="pt-6">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{b.topic}</div>
                         <p className="mt-1 font-medium">{b.statement}</p>
+                        {sig && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                            <span className={scoreTone(sig.hype_substance_score)}>
+                              hype↔substance{' '}
+                              <span className="font-semibold tabular-nums">
+                                {Math.round(sig.hype_substance_score * 100)}
+                              </span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              reproduced{' '}
+                              <span className="font-mono tabular-nums">{sig.reproduction_count}×</span>
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col items-end gap-1 text-xs">
                         <Badge variant={b.is_currently_held ? 'secondary' : 'outline'}>
@@ -85,14 +119,15 @@ export default async function BeliefsPage(props: { searchParams: Promise<SP> }) 
                   </CardContent>
                 </Card>
               </Link>
-            ))}
+              );
+            })}
           </div>
 
           <Pagination
             total={page.total}
             limit={page.limit}
             offset={page.offset}
-            basePath="/beliefs"
+            basePath="/knowledge/beliefs"
             searchParams={{ topic }}
           />
         </>

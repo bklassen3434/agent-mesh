@@ -65,7 +65,7 @@ export default async function SourceDetailPage(props: { params: Promise<{ id: st
                     <TableCell className="max-w-md text-xs text-muted-foreground">{c.raw_excerpt}</TableCell>
                     <TableCell>{formatConfidence(c.confidence)}</TableCell>
                     <TableCell>
-                      <Link href={`/claims/${c.id}`} className="text-xs hover:underline">view →</Link>
+                      <Link href={`/knowledge/claims/${c.id}`} className="text-xs hover:underline">view →</Link>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -57,7 +57,7 @@ export default async function EntitiesPage(props: { searchParams: Promise<SP> })
               {page.items.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell>
-                    <Link href={`/entities/${e.id}`} className="font-medium hover:underline">
+                    <Link href={`/knowledge/entities/${e.id}`} className="font-medium hover:underline">
                       {e.canonical_name}
                     </Link>
                   </TableCell>
@@ -77,7 +77,7 @@ export default async function EntitiesPage(props: { searchParams: Promise<SP> })
             total={page.total}
             limit={page.limit}
             offset={page.offset}
-            basePath="/entities"
+            basePath="/knowledge/entities"
             searchParams={{ q, type }}
           />
         </>

@@ -183,7 +183,7 @@ export default async function BeliefTimelinePage(props: {
     <main className="space-y-6">
       <header className="space-y-2">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          <Link href={`/beliefs/${encodeURIComponent(id)}`} className="hover:underline">
+          <Link href={`/knowledge/beliefs/${encodeURIComponent(id)}`} className="hover:underline">
             ← belief detail
           </Link>
         </div>

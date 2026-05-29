@@ -98,7 +98,7 @@ export default async function HomePage() {
                 {beliefs.items.map((b) => (
                   <li key={b.id}>
                     <Link
-                      href={`/beliefs/${b.id}`}
+                      href={`/knowledge/beliefs/${b.id}`}
                       className="block hover:underline"
                     >
                       <div className="text-sm font-medium">{b.topic}</div>

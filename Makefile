@@ -1,4 +1,5 @@
-.PHONY: up down logs pipeline skeptic smoke wiki api types
+.PHONY: up down logs pipeline skeptic smoke wiki api types \
+	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
 
@@ -56,3 +57,24 @@ api:
 # Errors out if the API isn't reachable — boot it via `make up` first.
 types:
 	@cd apps/wiki && npm run generate-types
+
+# ── Tests ───────────────────────────────────────────────────────────────────
+
+# Full suite: Python unit tests + wiki Playwright E2E.
+test:
+	uv run pytest
+	$(MAKE) test-ui
+
+# Wiki E2E. Playwright boots a mock API + a production wiki build itself
+# (see apps/wiki/playwright.config.ts) — no docker-compose stack needed.
+test-ui:
+	cd apps/wiki && npx playwright test
+
+test-ui-headed:
+	cd apps/wiki && npx playwright test --headed
+
+test-ui-debug:
+	cd apps/wiki && npx playwright test --debug
+
+test-ui-report:
+	cd apps/wiki && npx playwright show-report

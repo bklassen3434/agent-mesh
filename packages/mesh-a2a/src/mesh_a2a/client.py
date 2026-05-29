@@ -17,7 +17,6 @@ from typing import Any
 import httpx
 from a2a.client import A2ACardResolver
 
-from mesh_a2a.task_recorder import NullTaskRecorder, TaskRecorder
 from mesh_a2a.tracing import new_traceparent
 
 logger = logging.getLogger(__name__)
@@ -28,17 +27,6 @@ logger = logging.getLogger(__name__)
 
 def _default_poll_interval() -> float:
     return float(os.environ.get("MESH_TASK_POLL_INTERVAL_SECONDS", "0.5"))
-
-
-def _default_heartbeat_every_n() -> int:
-    """How many poll cycles between heartbeat writes.
-
-    With the default 0.5s poll interval and N=20, the recorder sees a
-    heartbeat every ~10s — frequent enough that the orphan sweep (which
-    defaults to a 600s threshold) catches dead tasks promptly without
-    spamming the DB.
-    """
-    return int(os.environ.get("MESH_TASK_HEARTBEAT_EVERY_N", "20"))
 
 
 def _default_timeout(skill_id: str) -> float:
@@ -88,15 +76,11 @@ class MeshA2AClient:
             )
     """
 
-    def __init__(self, task_recorder: TaskRecorder | None = None) -> None:
+    def __init__(self) -> None:
         # Submit/poll requests are short; only the task itself may be long.
         # 30s is generous for either; the poll loop enforces real timeouts.
         self._http = httpx.AsyncClient(timeout=30.0)
         self._registry: dict[str, str] = {}  # skill_id -> agent base URL
-        # Orchestrator-side durability lives behind this recorder. The
-        # default is a no-op so non-orchestrator callers (tests, ad-hoc
-        # CLI invocations) keep working unchanged.
-        self._recorder: TaskRecorder = task_recorder or NullTaskRecorder()
 
     async def __aenter__(self) -> MeshA2AClient:
         return self
@@ -200,73 +184,30 @@ class MeshA2AClient:
         """
         interval = poll_interval if poll_interval is not None else _default_poll_interval()
         deadline = timeout if timeout is not None else _default_timeout(skill_id)
-        heartbeat_every_n = _default_heartbeat_every_n()
 
         task_id, url = await self.submit_task(
             skill_id, payload, traceparent=traceparent
         )
-        # Record pending immediately so a crashed coordinator leaves
-        # evidence of *what* was dispatched, not just *that something* was.
-        self._safe_record(
-            self._recorder.record_pending,
-            task_id=task_id,
-            skill_id=skill_id,
-            agent_url=url,
-            payload=payload,
-        )
         start = time.monotonic()
-        poll_count = 0
-        seen_running = False
         while True:
             record = await self.get_task(task_id, url)
             status = record.get("status")
-            poll_count += 1
-            if status == "running" and not seen_running:
-                self._safe_record(self._recorder.record_running, task_id)
-                seen_running = True
             if status == "completed":
                 result = record.get("result")
                 if result is None:
-                    self._safe_record(
-                        self._recorder.record_failed,
-                        task_id,
-                        "completed_without_result",
-                    )
                     raise SkillCallError(
                         f"task {task_id} reported completed with no result"
                     )
-                self._safe_record(
-                    self._recorder.record_completed, task_id, dict(result)
-                )
                 return dict(result)
             if status == "failed":
                 err = record.get("error") or "unknown error"
-                self._safe_record(self._recorder.record_failed, task_id, err)
                 raise SkillCallError(f"skill '{skill_id}' failed: {err}")
             if time.monotonic() - start > deadline:
-                msg = (
+                raise TaskTimeoutError(
                     f"skill '{skill_id}' task {task_id} did not complete within "
                     f"{deadline:.1f}s (last status: {status})"
                 )
-                self._safe_record(self._recorder.record_failed, task_id, "task_timeout")
-                raise TaskTimeoutError(msg)
-            if heartbeat_every_n > 0 and poll_count % heartbeat_every_n == 0:
-                self._safe_record(self._recorder.record_heartbeat, task_id)
             await asyncio.sleep(interval)
-
-    @staticmethod
-    def _safe_record(fn: Any, *args: Any, **kwargs: Any) -> None:
-        """Call a recorder hook, swallow + log any exception.
-
-        Durability is best-effort — a failing recorder must never crash
-        skill dispatch. Phase 6b accepts this tradeoff because the
-        agent-side state is still in memory and the operator can re-run
-        manually if needed.
-        """
-        try:
-            fn(*args, **kwargs)
-        except Exception as exc:
-            logger.warning("task_recorder_error", extra={"error": str(exc)})
 
     # ── backward compat ────────────────────────────────────────────────────
 

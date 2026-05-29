@@ -277,8 +277,12 @@ services:
       API_CORS_ORIGINS: "http://localhost:3000"
       # Status page reads orchestration run state from the LangGraph checkpoint
       # store (Phase 8). Read-only access to the same Postgres the coordinator
-      # writes checkpoints to.
+      # writes checkpoints to. Phase 9 also reads/writes the `schedules` table
+      # here for the Pipelines page.
       LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
+      # Phase 9: where to reach the scheduler's HTTP control surface. The API
+      # proxies trigger/status/reload here; degrades gracefully if it's down.
+      SCHEDULER_URL: "http://scheduler:9100"
     env_file:
       - .env
     volumes:
@@ -456,16 +460,31 @@ services:
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
       MESH_DB_PATH: "/app/data/mesh.db"
+      # Phase 9: schedule config (interval + enabled) is read from this
+      # Postgres `schedules` table, not the legacy crons below.
       LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
+      # HTTP control surface the API proxies to (status / reload / run).
+      SCHEDULER_HOST: "0.0.0.0"
+      SCHEDULER_PORT: "9100"
+      # Legacy crons still consumed by the /status page via the API; the
+      # live schedule is now interval-based and stored in Postgres.
       MESH_SCHEDULE_PIPELINE_CRON: ${MESH_SCHEDULE_PIPELINE_CRON:-0 */6 * * *}
       MESH_SCHEDULE_SWEEP_CRON: ${MESH_SCHEDULE_SWEEP_CRON:-0 3 * * *}
     env_file:
       - .env
     volumes:
       - mesh-data:/app/data
+    ports:
+      - "9100:9100"
     depends_on:
       langgraph-db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     profiles:
       - scheduler
     restart: unless-stopped

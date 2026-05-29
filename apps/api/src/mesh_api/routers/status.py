@@ -15,14 +15,7 @@ import duckdb
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
-from mesh_db.agent_tasks import (
-    TASK_STATUS_COMPLETED,
-    TASK_STATUS_FAILED,
-    TASK_STATUS_PENDING,
-    TASK_STATUS_RUNNING,
-    count_tasks_by_status,
-    list_recent_failures,
-)
+from mesh_a2a.checkpoint import RunCheckpointState, read_run_states
 from mesh_db.beliefs import count_beliefs
 from mesh_db.claims import count_claims
 from mesh_db.pipeline_runs import PipelineRun, list_pipeline_runs
@@ -45,6 +38,12 @@ def _duration_seconds(run: PipelineRun) -> int | None:
     if run.finished_at is None:
         return None
     return int((run.finished_at - run.started_at).total_seconds())
+
+
+def _interrupted_threshold() -> int:
+    """Seconds a non-finalized run's latest checkpoint can age before /status
+    flags it interrupted. Reuses the old orphan-sweep knob."""
+    return int(os.environ.get("MESH_TASK_RESUME_THRESHOLD", "600"))
 
 
 def _ago(when: datetime) -> str:
@@ -197,13 +196,14 @@ def _section_runs(conn: duckdb.DuckDBPyConnection) -> str:
     return f"<section><h2>Runs</h2><table>{''.join(rows)}</table></section>"
 
 
-def _section_counts(conn: duckdb.DuckDBPyConnection) -> str:
+def _section_counts(
+    conn: duckdb.DuckDBPyConnection, run_states: list[RunCheckpointState]
+) -> str:
     n_claims = count_claims(conn)
     n_beliefs_held = count_beliefs(conn, currently_held=True)
     n_beliefs_total = count_beliefs(conn)
     n_sources = count_sources(conn)
     by_type = _sources_by_type(conn)
-    task_counts = count_tasks_by_status(conn)
     rows = [
         _row("Claims", str(n_claims)),
         _row(
@@ -215,37 +215,42 @@ def _section_counts(conn: duckdb.DuckDBPyConnection) -> str:
     if by_type:
         type_line = ", ".join(f"{k} {v}" for k, v in by_type.items())
         rows.append(_row("&nbsp;&nbsp;&nbsp;by type", type_line))
-    for status in (
-        TASK_STATUS_COMPLETED,
-        TASK_STATUS_RUNNING,
-        TASK_STATUS_PENDING,
-        TASK_STATUS_FAILED,
-    ):
-        n = task_counts.get(status, 0)
-        cls = "bad" if status == TASK_STATUS_FAILED and n > 0 else ""
-        rows.append(_row(f"Tasks — {status}", str(n), cls=cls))
+
+    threshold = _interrupted_threshold()
+    interrupted = sum(
+        1 for s in run_states if s.is_interrupted(threshold_seconds=threshold)
+    )
+    in_flight = sum(1 for s in run_states if not s.finalized) - interrupted
+    rows.append(_row("Runs — checkpointed", str(len(run_states))))
+    rows.append(_row("Runs — in flight", str(max(in_flight, 0))))
+    rows.append(
+        _row("Runs — interrupted", str(interrupted), cls="bad" if interrupted else "")
+    )
     return f"<section><h2>Counts</h2><table>{''.join(rows)}</table></section>"
 
 
-def _section_failures(conn: duckdb.DuckDBPyConnection) -> str:
-    failures = list_recent_failures(conn, limit=10)
-    if not failures:
+def _section_failures(run_states: list[RunCheckpointState]) -> str:
+    """Errors surfaced from each run's latest LangGraph checkpoint state."""
+    items: list[str] = []
+    for state in run_states:
+        for err in state.errors:
+            skill = str(err.get("skill_id") or "?")
+            msg = str(err.get("error_message") or err.get("error_type") or "—")
+            items.append(
+                f"<li><span class='bad'>{skill}</span> · "
+                f"{msg} · "
+                f"<span class='muted'>{state.run_type} {state.run_id[:8]}</span></li>"
+            )
+            if len(items) >= 10:
+                break
+        if len(items) >= 10:
+            break
+    if not items:
         return (
-            "<section><h2>Recent task failures</h2>"
-            "<p class='muted'>No failures recorded.</p></section>"
+            "<section><h2>Recent run errors</h2>"
+            "<p class='muted'>No errors recorded.</p></section>"
         )
-    items = []
-    for f in failures:
-        when = _ago(f.updated_at)
-        items.append(
-            f"<li><span class='bad'>{f.skill_id}</span> · "
-            f"{when} · {f.error or '—'} · "
-            f"<span class='muted'>{f.agent_url}</span></li>"
-        )
-    return (
-        "<section><h2>Recent task failures</h2>"
-        f"<ul>{''.join(items)}</ul></section>"
-    )
+    return f"<section><h2>Recent run errors</h2><ul>{''.join(items)}</ul></section>"
 
 
 def _section_langfuse() -> str:
@@ -275,12 +280,15 @@ def _section_langfuse() -> str:
     summary="Operational status page",
     description=(
         "Server-rendered HTML with meta-refresh every 60s. Shows last + next "
-        "runs, total row counts, agent_tasks status breakdown, recent task "
-        "failures, and the Langfuse 24h trace count when configured."
+        "runs, total row counts, LangGraph checkpoint run state (in-flight / "
+        "interrupted), recent run errors, and the Langfuse 24h trace count when "
+        "configured."
     ),
 )
 def status_page(conn: ConnDep) -> HTMLResponse:
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S %Z")
+    # One read of the checkpoint store per request, shared across panels.
+    run_states = read_run_states()
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -293,8 +301,8 @@ def status_page(conn: ConnDep) -> HTMLResponse:
   <h1>Mesh status</h1>
   <p class="sub">As of {now} · auto-refresh 60s</p>
   {_section_runs(conn)}
-  {_section_counts(conn)}
-  {_section_failures(conn)}
+  {_section_counts(conn, run_states)}
+  {_section_failures(run_states)}
   {_section_langfuse()}
 </body>
 </html>"""

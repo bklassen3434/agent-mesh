@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from mesh_db.agent_tasks import create_task, mark_failed
 from mesh_db.connection import get_connection
 
 
@@ -25,14 +24,14 @@ def test_status_renders_with_empty_db(empty_client: TestClient) -> None:
     # Empty DB → "never" for last runs, zeros for counts.
     assert "never" in body
     assert "Claims" in body and "Beliefs" in body and "Sources" in body
-    # Recent failures section in the empty state should say nothing yet.
-    assert "No failures" in body
+    # Run-errors panel (from LangGraph checkpoints) is empty without a
+    # checkpoint store configured in tests.
+    assert "No errors recorded" in body
+    assert "Runs — checkpointed" in body
 
 
-def test_status_shows_recent_runs_and_failures(
-    empty_client: TestClient, empty_db_path: Path
-) -> None:
-    # Seed a completed pipeline run and a failed task.
+def test_status_shows_recent_runs(empty_client: TestClient, empty_db_path: Path) -> None:
+    # Seed a completed pipeline run; the run panels still read pipeline_runs.
     from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
 
     conn = get_connection(read_only=False)
@@ -46,14 +45,6 @@ def test_status_shows_recent_runs_and_failures(
             beliefs_revised=1,
         )
         create_pipeline_run(conn, run)
-        create_task(
-            conn,
-            task_id="task-fail",
-            skill_id="extract_claims",
-            agent_url="http://claim-extractor:8002",
-            input_payload={},
-        )
-        mark_failed(conn, "task-fail", "boom: model 503")
     finally:
         conn.close()
 
@@ -65,9 +56,6 @@ def test_status_shows_recent_runs_and_failures(
     assert "+7 claims" in body
     assert "+2 / ~1 beliefs" in body
     assert "scheduled" in body
-    # Failed task surfaces.
-    assert "extract_claims" in body
-    assert "boom" in body
 
 
 def test_status_langfuse_section_when_unconfigured(

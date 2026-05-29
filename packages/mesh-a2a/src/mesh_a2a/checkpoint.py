@@ -16,6 +16,8 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -58,3 +60,102 @@ async def open_checkpointer() -> AsyncIterator[BaseCheckpointSaver[Any]]:
     async with AsyncPostgresSaver.from_conn_string(url) as saver:
         await saver.setup()
         yield saver
+
+
+# ── status-page read side ────────────────────────────────────────────────────
+
+
+@dataclass
+class RunCheckpointState:
+    """Latest checkpoint state for one orchestration run (one thread).
+
+    Read by the /status page to surface in-flight runs, interrupted runs,
+    and the errors each run accumulated — replacing the old agent_tasks
+    table.
+    """
+
+    run_id: str
+    run_type: str  # "pipeline" | "skeptic_sweep" | "unknown"
+    finalized: bool
+    updated_at: datetime | None
+    errors: list[dict[str, Any]] = field(default_factory=list)
+
+    def is_interrupted(self, *, threshold_seconds: int, now: datetime | None = None) -> bool:
+        """A run is interrupted if it never finalized and its latest checkpoint
+        is older than the threshold (the graph stopped making progress)."""
+        if self.finalized or self.updated_at is None:
+            return False
+        ref = now or datetime.now(UTC)
+        return (ref - self.updated_at).total_seconds() > threshold_seconds
+
+
+def _classify_run(channel_values: dict[str, Any]) -> str:
+    if "papers_scouted" in channel_values:
+        return "pipeline"
+    if "beliefs_considered" in channel_values:
+        return "skeptic_sweep"
+    return "unknown"
+
+
+def _parse_ts(raw: Any) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def read_run_states(*, scan_limit: int = 1000) -> list[RunCheckpointState]:
+    """Latest checkpoint state per run thread, newest first.
+
+    Returns an empty list when no Postgres checkpoint store is configured
+    (local runs / tests), so callers degrade gracefully. ``scan_limit``
+    bounds how many raw checkpoints are scanned before grouping by thread.
+    """
+    url = postgres_url()
+    if url is None:
+        return []
+
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    latest: dict[str, RunCheckpointState] = {}
+    try:
+        with PostgresSaver.from_conn_string(url) as saver:
+            for tup in saver.list(None, limit=scan_limit):
+                configurable = tup.config.get("configurable") or {}
+                thread_id = str(configurable.get("thread_id") or "")
+                if not thread_id:
+                    continue
+                ts = _parse_ts(tup.checkpoint.get("ts"))
+                existing = latest.get(thread_id)
+                if (
+                    existing is not None
+                    and existing.updated_at is not None
+                    and ts is not None
+                    and existing.updated_at >= ts
+                ):
+                    continue
+                cv = tup.checkpoint.get("channel_values") or {}
+                errors = cv.get("errors") or []
+                latest[thread_id] = RunCheckpointState(
+                    run_id=thread_id,
+                    run_type=_classify_run(cv),
+                    finalized=bool(cv.get("finalized", False)),
+                    updated_at=ts,
+                    errors=list(errors),
+                )
+    except Exception:
+        # Best-effort: a status page must not 500 because the checkpoint
+        # store is unreachable or mid-migration. Degrade to what we have.
+        return sorted(
+            latest.values(),
+            key=lambda s: s.updated_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+
+    return sorted(
+        latest.values(),
+        key=lambda s: s.updated_at or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )

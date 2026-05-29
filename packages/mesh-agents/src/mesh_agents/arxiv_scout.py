@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -138,12 +139,30 @@ async def _handle_scout_arxiv(payload: dict[str, Any]) -> dict[str, Any]:
 # Phase 7a investigation -------------------------------------------------
 
 
+def _query_from_hypothesis(hypothesis: str) -> str:
+    """Reduce a Curator hypothesis to arxiv keyword terms.
+
+    The Curator phrases hypotheses for humans, e.g. ``Is the belief
+    '<statement>' (topic: <topic>) still supported by recent evidence?``.
+    Searching arxiv with that whole sentence buries the signal under
+    stop-words ("is the belief still supported by recent evidence"), so pull
+    out the belief statement and topic and use those as the free-text query.
+    Falls back to the raw hypothesis if the expected structure isn't present.
+    """
+    statement_match = re.search(r"'([^']+)'", hypothesis)
+    topic_match = re.search(r"\(topic:\s*([^)]+)\)", hypothesis)
+    statement = statement_match.group(1).strip() if statement_match else ""
+    topic = topic_match.group(1).strip() if topic_match else ""
+    terms = " ".join(t for t in (topic, statement) if t)
+    return terms or hypothesis
+
+
 def _fetch_papers_by_query(query: str, max_results: int) -> list[ScoutedPaper]:
     """Keyword search variant of _fetch_papers used by investigate_arxiv.
 
-    arxiv's API supports free-text queries via the ``all:`` field. The
-    hypothesis becomes a quoted phrase to keep multi-word matches together
-    where possible.
+    arxiv's API supports free-text queries via the ``all:`` field. ``query``
+    is expected to be keyword terms (see ``_query_from_hypothesis``), not a
+    natural-language question.
     """
     search = arxiv.Search(
         query=f"all:{query}",
@@ -180,8 +199,9 @@ def _fetch_papers_by_query(query: str, max_results: int) -> list[ScoutedPaper]:
 
 async def _handle_investigate_arxiv(payload: dict[str, Any]) -> dict[str, Any]:
     skill_input = InvestigateSkillInput.model_validate(payload)
+    query = _query_from_hypothesis(skill_input.hypothesis)
     papers = await asyncio.to_thread(
-        _fetch_papers_by_query, skill_input.hypothesis, skill_input.max_results
+        _fetch_papers_by_query, query, skill_input.max_results
     )
     return InvestigateSkillOutput(
         investigation_id=skill_input.investigation_id,

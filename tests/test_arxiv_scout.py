@@ -4,7 +4,33 @@ import asyncio
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from mesh_agents.arxiv_scout import ArxivScoutAgent, ArxivScoutInput, ScoutedPaper, _make_hash
+from mesh_agents.arxiv_scout import (
+    ArxivScoutAgent,
+    ArxivScoutInput,
+    ScoutedPaper,
+    _make_hash,
+    _query_from_hypothesis,
+)
+
+
+class TestQueryFromHypothesis:
+    """investigate_arxiv must search on keyword terms, not the Curator's
+    natural-language question (regression guard for the question-as-query bug)."""
+
+    def test_extracts_statement_and_topic(self) -> None:
+        hypothesis = (
+            "Is the belief 'GR00T N1 achieves 78% on RoboArena' "
+            "(topic: robot policy) still supported by recent evidence?"
+        )
+        query = _query_from_hypothesis(hypothesis)
+        assert "GR00T N1 achieves 78% on RoboArena" in query
+        assert "robot policy" in query
+        # The English scaffolding must be gone.
+        assert "still supported" not in query
+        assert "Is the belief" not in query
+
+    def test_falls_back_to_raw_when_unstructured(self) -> None:
+        assert _query_from_hypothesis("plain keywords") == "plain keywords"
 
 
 def _fake_result(

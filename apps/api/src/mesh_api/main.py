@@ -74,7 +74,10 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[o.strip() for o in allowed if o.strip()],
         allow_credentials=False,
-        allow_methods=["GET"],
+        # Phase 9 adds the only writes in the API: the Pipelines page PATCHes
+        # schedules and POSTs manual triggers from the browser, so the wiki
+        # origin needs more than GET.
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["*"],
     )
 

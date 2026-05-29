@@ -201,6 +201,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/beliefs/signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Batch belief signal summaries
+         * @description hype/substance score + reproduction count for the given belief ids (or all currently-held beliefs when none are given). Powers the inline signal badges on the beliefs list without an N+1 fan-out. Registered before /{belief_id} so 'signals' isn't read as an id.
+         */
+        get: operations["belief_signals_batch_api_v1_beliefs_signals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/beliefs/{belief_id}": {
         parameters: {
             query?: never;
@@ -290,7 +310,7 @@ export interface paths {
         };
         /**
          * Operational status page
-         * @description Server-rendered HTML with meta-refresh every 60s. Shows last + next runs, total row counts, agent_tasks status breakdown, recent task failures, and the Langfuse 24h trace count when configured.
+         * @description Server-rendered HTML with meta-refresh every 60s. Shows last + next runs, total row counts, LangGraph checkpoint run state (in-flight / interrupted), recent run errors, and the Langfuse 24h trace count when configured.
          */
         get: operations["status_page_status_get"];
         put?: never;
@@ -313,6 +333,106 @@ export interface paths {
          * @description All entities as nodes and all relationships as edges, in the shape a client-side graph library can consume directly. ``?max_nodes`` bounds the entity count for predictable browser performance on large meshes; the most recently created entities win.
          */
         get: operations["get_graph_api_v1_graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/graph/data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pre-aggregated graph data for the redesigned /graph view
+         * @description Node + edge lists with density baked in: node ``belief_count`` drives radius, edge ``claim_count`` drives stroke width. Capped at the top 200 entities by belief count; ``total_entities`` lets the UI show a 'showing N of M' notice. Edges are only included when both endpoints survive the cap.
+         */
+        get: operations["get_graph_data_api_v1_graph_data_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List pipeline schedules
+         * @description Current interval + enabled state for each pipeline job.
+         */
+        get: operations["list_schedules_endpoint_api_v1_schedules_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a pipeline schedule
+         * @description Patch the interval and/or enabled flag for a job. Persists to Postgres and signals the scheduler to apply the change without a restart. ``interval_hours`` must be one of [1, 2, 4, 6, 12, 24, 48].
+         */
+        patch: operations["patch_schedule_api_v1_schedules__job_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/pipelines/{job_id}/trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an immediate pipeline run
+         * @description Starts an out-of-band run of the coordinator or skeptic sweep. Returns 409 if a run for that job is already in progress.
+         */
+        post: operations["trigger_pipeline_api_v1_pipelines__job_id__trigger_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scheduler/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live scheduler job state
+         * @description Per-job next-run, last-run, and state (running / idle / disabled) from the running scheduler. Returns an empty list if the scheduler is unreachable so the Pipelines page degrades gracefully.
+         */
+        get: operations["scheduler_status_api_v1_scheduler_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -394,6 +514,21 @@ export interface components {
             revised_at?: string;
             /** Rationale */
             rationale: string;
+        };
+        /**
+         * BeliefSignalSummary
+         * @description Just the two signals the beliefs *list* surfaces inline per row.
+         *
+         *     The full BeliefSignals breakdown stays on the detail page; this keeps
+         *     the list's batch lookup cheap.
+         */
+        BeliefSignalSummary: {
+            /** Belief Id */
+            belief_id: string;
+            /** Hype Substance Score */
+            hype_substance_score: number;
+            /** Reproduction Count */
+            reproduction_count: number;
         };
         /**
          * BeliefSignals
@@ -549,6 +684,43 @@ export interface components {
          * @enum {string}
          */
         FailureMode: "unsupported_extrapolation" | "cherry_picked_evidence" | "methodological_flaw" | "outdated_by_newer_claim" | "contradicted_by_source" | "definitional_ambiguity" | "other";
+        /**
+         * GraphData
+         * @description Bounded graph payload. ``total_entities`` lets the UI show a
+         *     "showing N of M" notice when the node list is capped.
+         */
+        GraphData: {
+            /** Nodes */
+            nodes: components["schemas"]["GraphDataNode"][];
+            /** Edges */
+            edges: components["schemas"]["GraphDataEdge"][];
+            /** Total Entities */
+            total_entities: number;
+        };
+        /** GraphDataEdge */
+        GraphDataEdge: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Relationship Type */
+            relationship_type: string;
+            /** Claim Count */
+            claim_count: number;
+        };
+        /** GraphDataNode */
+        GraphDataNode: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
+            /** Belief Count */
+            belief_count: number;
+            /** Last Claim At */
+            last_claim_at?: string | null;
+        };
         /** GraphEdge */
         GraphEdge: {
             /** Id */
@@ -747,6 +919,50 @@ export interface components {
             trigger_claims: components["schemas"]["Claim"][];
         };
         /**
+         * Schedule
+         * @description One configured pipeline schedule (a ``schedules`` row).
+         */
+        Schedule: {
+            /** Job Id */
+            job_id: string;
+            /** Interval Hours */
+            interval_hours: number;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ScheduleUpdate
+         * @description Partial update for a schedule — interval, enabled, or both.
+         */
+        ScheduleUpdate: {
+            /** Interval Hours */
+            interval_hours?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
+        /**
+         * SchedulerJobStatus
+         * @description Live APScheduler state for one job.
+         *
+         *     ``state`` is one of ``running`` | ``idle`` | ``disabled``. ``next_run_at``
+         *     is null when the job is paused (disabled) or has no future fire time.
+         */
+        SchedulerJobStatus: {
+            /** Job Id */
+            job_id: string;
+            /** Next Run At */
+            next_run_at?: string | null;
+            /** Last Run At */
+            last_run_at?: string | null;
+            /** State */
+            state: string;
+        };
+        /**
          * SkepticActivityItem
          * @description One skeptic-triggered revision joined with its belief and trigger claims.
          *
@@ -822,6 +1038,19 @@ export interface components {
             last_pipeline_run_at: string | null;
             /** Last Pipeline Run Id */
             last_pipeline_run_id: string | null;
+        };
+        /**
+         * TriggerResult
+         * @description Result of an immediate pipeline trigger.
+         */
+        TriggerResult: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * Triggered At
+             * Format: date-time
+             */
+            triggered_at: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1147,6 +1376,37 @@ export interface operations {
             };
         };
     };
+    belief_signals_batch_api_v1_beliefs_signals_get: {
+        parameters: {
+            query?: {
+                ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BeliefSignalSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     belief_detail_api_v1_beliefs__belief_id__get: {
         parameters: {
             query?: never;
@@ -1321,6 +1581,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_graph_data_api_v1_graph_data_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphData"];
+                };
+            };
+        };
+    };
+    list_schedules_endpoint_api_v1_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"][];
+                };
+            };
+        };
+    };
+    patch_schedule_api_v1_schedules__job_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_pipeline_api_v1_pipelines__job_id__trigger_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scheduler_status_api_v1_scheduler_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerJobStatus"][];
                 };
             };
         };

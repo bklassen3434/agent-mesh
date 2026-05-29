@@ -21,6 +21,14 @@ export type ClaimWithContext = Schemas['ClaimWithContext'];
 export type GraphResponse = Schemas['GraphResponse'];
 export type GraphNode = Schemas['GraphNode'];
 export type GraphEdge = Schemas['GraphEdge'];
+export type GraphData = Schemas['GraphData'];
+export type GraphDataNode = Schemas['GraphDataNode'];
+export type GraphDataEdge = Schemas['GraphDataEdge'];
+export type Schedule = Schemas['Schedule'];
+export type ScheduleUpdate = Schemas['ScheduleUpdate'];
+export type TriggerResult = Schemas['TriggerResult'];
+export type SchedulerJobStatus = Schemas['SchedulerJobStatus'];
+export type BeliefSignalSummary = Schemas['BeliefSignalSummary'];
 export type RevisionWithTriggers = Schemas['RevisionWithTriggers'];
 export type SkepticActivityItem = Schemas['SkepticActivityItem'];
 export type Briefing = Schemas['Briefing'];
@@ -77,6 +85,24 @@ export async function apiGet<T>(path: string, opts: ApiOptions = {}): Promise<T>
   return (await res.json()) as T;
 }
 
+export async function apiSend<T>(
+  method: 'POST' | 'PATCH',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const url = buildUrl(path);
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ApiError(res.status, `${method} ${path} → ${res.status} ${res.statusText} ${text}`);
+  }
+  return (await res.json()) as T;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -122,4 +148,18 @@ export const api = {
 
   graph: (q: { max_nodes?: number; max_edges?: number } = {}) =>
     apiGet<GraphResponse>('/api/v1/graph', { query: q }),
+  graphData: () => apiGet<GraphData>('/api/v1/graph/data'),
+
+  beliefSignals: (ids: string[] = []) => {
+    const qs = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
+    return apiGet<BeliefSignalSummary[]>(`/api/v1/beliefs/signals${qs ? `?${qs}` : ''}`);
+  },
+
+  // Pipelines page (Phase 9) ------------------------------------------------
+  schedules: () => apiGet<Schedule[]>('/api/v1/schedules'),
+  schedulerStatus: () => apiGet<SchedulerJobStatus[]>('/api/v1/scheduler/status'),
+  updateSchedule: (jobId: string, body: ScheduleUpdate) =>
+    apiSend<Schedule>('PATCH', `/api/v1/schedules/${encodeURIComponent(jobId)}`, body),
+  triggerPipeline: (jobId: string) =>
+    apiSend<TriggerResult>('POST', `/api/v1/pipelines/${encodeURIComponent(jobId)}/trigger`),
 };

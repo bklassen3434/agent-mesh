@@ -4,6 +4,8 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
+from mesh_llm.usage import LLMUsage
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -28,3 +30,18 @@ class LLMClient(Protocol):
         response_model: type[T] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[Any, int]: ...
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type[T] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[Any, int, LLMUsage]:
+        """Like ``complete_with_latency`` but also returns token usage.
+
+        Callers that persist per-call cost (the coordinator / skeptic sweep)
+        use this; everything else can stay on ``complete_with_latency``.
+        """
+        ...

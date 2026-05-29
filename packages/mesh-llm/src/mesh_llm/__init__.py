@@ -8,15 +8,21 @@ from mesh_llm.client import (
     OllamaNotReadyError,
 )
 from mesh_llm.factory import make_llm_client
+from mesh_llm.pricing import CostBreakdown, estimate_cost, is_priced
 from mesh_llm.protocol import LLMClient
+from mesh_llm.usage import LLMUsage
 
 __all__ = [
     "AnthropicClient",
     "AnthropicNotReadyError",
+    "CostBreakdown",
     "LLMClient",
     "LLMProviderNotReadyError",
     "LLMResponseError",
+    "LLMUsage",
     "OllamaClient",
     "OllamaNotReadyError",
+    "estimate_cost",
+    "is_priced",
     "make_llm_client",
 ]

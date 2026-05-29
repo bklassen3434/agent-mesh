@@ -53,8 +53,19 @@ def trace_generation(
     messages: list[dict[str, str]],
     output: str,
     latency_ms: int,
+    *,
+    usage: dict[str, int] | None = None,
+    cost_usd: float | None = None,
+    agent_name: str | None = None,
 ) -> None:
     """Record a completed LLM generation to Langfuse with full prompt/output/timing.
+
+    ``usage`` is a provider-agnostic token dict (keys: input_tokens,
+    output_tokens, cache_read_tokens, cache_creation_tokens). When provided it
+    is attached to the Langfuse generation so per-agent / per-skill token cost
+    is queryable; ``cost_usd`` (computed from list prices upstream) is recorded
+    as the generation's total cost, and ``agent_name`` + skill (``name``) land
+    in metadata for attribution.
 
     No-ops silently when Langfuse env vars are absent or the package is not installed.
     Never raises — tracing must not break the pipeline.
@@ -74,15 +85,50 @@ def trace_generation(
         )
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(milliseconds=latency_ms)
-        trace = lf.trace(name=name)
-        trace.generation(
-            name=name,
-            model=model,
-            input=messages,
-            output=output,
-            start_time=start_time,
-            end_time=end_time,
-        )
+        trace_name = f"{agent_name}:{name}" if agent_name else name
+        trace = lf.trace(name=trace_name)
+
+        gen_kwargs: dict[str, object] = {
+            "name": name,
+            "model": model,
+            "input": messages,
+            "output": output,
+            "start_time": start_time,
+            "end_time": end_time,
+            "metadata": {
+                "agent": agent_name,
+                "skill": name,
+                **(
+                    {
+                        "cache_read_tokens": usage.get("cache_read_tokens", 0),
+                        "cache_creation_tokens": usage.get("cache_creation_tokens", 0),
+                    }
+                    if usage
+                    else {}
+                ),
+            },
+        }
+        if usage is not None:
+            # Langfuse v2 Usage dict. "input"/"output"/"total" are token counts;
+            # cache reads/writes are billed input, folded into the input count so
+            # the cost the dashboard shows matches our list-price computation.
+            input_tokens = (
+                usage.get("input_tokens", 0)
+                + usage.get("cache_read_tokens", 0)
+                + usage.get("cache_creation_tokens", 0)
+            )
+            output_tokens = usage.get("output_tokens", 0)
+            usage_payload: dict[str, object] = {
+                "input": input_tokens,
+                "output": output_tokens,
+                "total": input_tokens + output_tokens,
+                "unit": "TOKENS",
+            }
+            if cost_usd is not None:
+                usage_payload["total_cost"] = cost_usd
+            gen_kwargs["usage"] = usage_payload
+
+        trace.generation(**gen_kwargs)
         lf.flush()
     except ImportError:
         pass

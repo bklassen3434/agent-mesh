@@ -129,3 +129,27 @@ def test_max_tokens_override(client: AnthropicClient) -> None:
         "n", "s", "u", response_model=_Item, options={"max_tokens": 4096}
     )
     assert parse.call_args.kwargs["max_tokens"] == 4096
+
+
+def test_complete_with_usage_returns_token_counts(client: AnthropicClient) -> None:
+    expected = _Item(name="A", score=0.5)
+    client._client.messages.parse = MagicMock(  # type: ignore[method-assign]
+        return_value=_stub_message(
+            expected,
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_input_tokens=10,
+            cache_creation_input_tokens=5,
+        )
+    )
+
+    parsed, _latency, usage = client.complete_with_usage(
+        name="extract", system="sys", user="usr", response_model=_Item
+    )
+
+    assert isinstance(parsed, _Item)
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 20
+    assert usage.cache_read_tokens == 10
+    assert usage.cache_creation_tokens == 5
+    assert usage.total_tokens == 135

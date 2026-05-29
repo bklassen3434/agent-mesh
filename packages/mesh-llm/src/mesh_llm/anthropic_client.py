@@ -18,6 +18,8 @@ from tenacity import (
 )
 
 from mesh_llm.client import LLMProviderNotReadyError, LLMResponseError
+from mesh_llm.pricing import estimate_cost, is_priced
+from mesh_llm.usage import LLMUsage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -59,6 +61,7 @@ class AnthropicClient:
         max_tokens: int = _DEFAULT_MAX_TOKENS,
         agent_name: str | None = None,
     ) -> None:
+        self.agent_name = agent_name
         if model is not None:
             self.model = model
         else:
@@ -119,7 +122,7 @@ class AnthropicClient:
         response_model: type[T] | None = None,
         options: dict[str, Any] | None = None,
     ) -> str | T:
-        result, _ = self.complete_with_latency(name, system, user, response_model, options)
+        result, _, _ = self._complete(name, system, user, response_model, options)
         return result
 
     def complete_with_latency(
@@ -130,6 +133,29 @@ class AnthropicClient:
         response_model: type[T] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[str | T, int]:
+        result, latency_ms, _ = self._complete(
+            name, system, user, response_model, options
+        )
+        return result, latency_ms
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type[T] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str | T, int, LLMUsage]:
+        return self._complete(name, system, user, response_model, options)
+
+    def _complete(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type[T] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str | T, int, LLMUsage]:
         max_tokens = (options or {}).get("max_tokens", self._max_tokens)
 
         # System prompt is cached on the assumption it's identical across calls
@@ -187,24 +213,31 @@ class AnthropicClient:
                 if getattr(block, "type", None) == "text"
             )
 
-        usage = getattr(message, "usage", None)
-        if usage is not None:
+        raw_usage = getattr(message, "usage", None)
+        usage = LLMUsage(
+            input_tokens=int(getattr(raw_usage, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
+            cache_read_tokens=int(
+                getattr(raw_usage, "cache_read_input_tokens", 0) or 0
+            ),
+            cache_creation_tokens=int(
+                getattr(raw_usage, "cache_creation_input_tokens", 0) or 0
+            ),
+        )
+        if raw_usage is not None:
             logger.debug(
                 "anthropic_usage",
                 extra={
                     "name": name,
                     "model": self.model,
-                    "input_tokens": getattr(usage, "input_tokens", None),
-                    "output_tokens": getattr(usage, "output_tokens", None),
-                    "cache_creation_input_tokens": getattr(
-                        usage, "cache_creation_input_tokens", None
-                    ),
-                    "cache_read_input_tokens": getattr(
-                        usage, "cache_read_input_tokens", None
-                    ),
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_creation_input_tokens": usage.cache_creation_tokens,
+                    "cache_read_input_tokens": usage.cache_read_tokens,
                 },
             )
 
+        cost = estimate_cost(self.model, usage)
         trace_generation(
             name=name,
             model=self.model,
@@ -214,11 +247,14 @@ class AnthropicClient:
             ],
             output=raw,
             latency_ms=latency_ms,
+            usage=usage.model_dump(),
+            cost_usd=cost.total_cost if is_priced(self.model) else None,
+            agent_name=self.agent_name,
         )
 
         if response_model is not None:
-            return parsed, latency_ms
-        return raw, latency_ms
+            return parsed, latency_ms, usage
+        return raw, latency_ms, usage
 
 
 @retry(

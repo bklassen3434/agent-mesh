@@ -15,6 +15,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from mesh_llm.usage import LLMUsage
+
 T = TypeVar("T", bound=BaseModel)
 
 _DEFAULT_MODEL = "qwen3:8b"
@@ -60,6 +62,7 @@ class OllamaClient:
         host: str | None = None,
         agent_name: str | None = None,
     ) -> None:
+        self.agent_name = agent_name
         if model is not None:
             self.model = model
         else:
@@ -118,7 +121,7 @@ class OllamaClient:
         options: dict[str, Any] | None = None,
     ) -> str | T:
         """Call the LLM. Returns str or parsed Pydantic model when response_model given."""
-        result, _ = self.complete_with_latency(name, system, user, response_model, options)
+        result, _, _ = self._complete(name, system, user, response_model, options)
         return result
 
     def complete_with_latency(
@@ -130,12 +133,40 @@ class OllamaClient:
         options: dict[str, Any] | None = None,
     ) -> tuple[str | T, int]:
         """Like complete(), but also returns latency in milliseconds."""
+        result, latency_ms, _ = self._complete(
+            name, system, user, response_model, options
+        )
+        return result, latency_ms
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type[T] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str | T, int, LLMUsage]:
+        """Like complete_with_latency, but also returns token usage.
+
+        Ollama reports prompt/response token counts but is locally hosted, so
+        these carry zero cost; the two cache fields stay zero (no prompt cache).
+        """
+        return self._complete(name, system, user, response_model, options)
+
+    def _complete(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: type[T] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str | T, int, LLMUsage]:
         merged_options = {**_DEFAULT_OPTIONS, **(options or {})}
         schema = response_model.model_json_schema() if response_model is not None else None
 
         start = time.monotonic()
         try:
-            raw = _chat_with_retry(
+            response = _chat_with_retry(
                 self._client, self.model, schema, merged_options, name, system, user
             )
         except RetryError as exc:
@@ -144,6 +175,11 @@ class OllamaClient:
                 "Is Ollama running? Run: ollama serve"
             ) from exc
         latency_ms = int((time.monotonic() - start) * 1000)
+        raw = response.message.content or ""
+        usage = LLMUsage(
+            input_tokens=int(getattr(response, "prompt_eval_count", 0) or 0),
+            output_tokens=int(getattr(response, "eval_count", 0) or 0),
+        )
 
         trace_generation(
             name=name,
@@ -154,13 +190,16 @@ class OllamaClient:
             ],
             output=raw,
             latency_ms=latency_ms,
+            usage=usage.model_dump(),
+            cost_usd=None,
+            agent_name=self.agent_name,
         )
 
         if response_model is None:
-            return raw, latency_ms
+            return raw, latency_ms, usage
 
         try:
-            return response_model.model_validate_json(raw), latency_ms
+            return response_model.model_validate_json(raw), latency_ms, usage
         except Exception as exc:
             raise LLMResponseError(
                 f"Failed to parse LLM response for '{name}' into "
@@ -182,7 +221,7 @@ def _chat_with_retry(
     name: str,
     system: str,
     user: str,
-) -> str:
+) -> ollama.ChatResponse:
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -193,5 +232,4 @@ def _chat_with_retry(
     }
     if schema is not None:
         kwargs["format"] = schema
-    response = client.chat(**kwargs)
-    return response.message.content  # type: ignore[no-any-return]
+    return client.chat(**kwargs)  # type: ignore[no-any-return]

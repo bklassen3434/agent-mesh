@@ -29,6 +29,54 @@ The interesting bits, written up at the end of Phase 7:
 **Status:** Phases 0–7 complete (7c DSPy deferred to a follow-up). Tagged
 [`v0.7.0-phase-7`](https://github.com/bklassen3434/agent-mesh/releases).
 
+---
+
+## Quickstart
+
+**Prerequisites:** Docker Desktop running, `uv` installed (`pip install uv`), an Anthropic API key.
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/bklassen3434/agent-mesh.git
+cd agent-mesh
+cp .env.example .env
+# → Open .env and set ANTHROPIC_API_KEY=sk-ant-...
+
+# 2. Install Python deps (needed for the CLI)
+uv sync
+
+# 3. Boot the stack (13 containers: 7 scouts + 4 worker agents + API + wiki)
+make up
+# Wait ~30s for all healthchecks to pass
+
+# 4. Run one ingestion cycle (fetches from arxiv, HN, GitHub, blogs, etc.)
+make pipeline
+# Takes 2–5 min — you'll see logs as claims are extracted
+
+# 5. Run one falsification sweep (Skeptic challenges the beliefs)
+make skeptic
+# Takes ~1 min
+
+# 6. Open the wiki
+open http://localhost:3000
+# Also: open http://localhost:8000/status  (operational status page)
+#       open http://localhost:8000/docs    (API docs)
+
+# 7. Inspect via CLI
+uv run mesh.cli pipeline-stats
+uv run mesh.cli show-sota-beliefs
+uv run mesh.cli investigations list
+
+# 8. Tear down
+make down
+```
+
+**Want it to run automatically?** Start the scheduler (runs pipeline every 6h, sweep daily):
+```bash
+docker compose --profile scheduler up scheduler -d
+uv run mesh.cli schedule status   # check next fire times
+```
+
 ## Quick start
 
 ```bash

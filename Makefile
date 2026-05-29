@@ -8,7 +8,7 @@ up:
 	@docker compose ps
 
 down:
-	docker compose down
+	docker compose --profile skeptic --profile scheduler down --remove-orphans
 
 logs:
 	docker compose logs -f

@@ -61,6 +61,7 @@ class ClaimCandidate(BaseModel):
     id: str
     predicate: str
     subject_entity_id: str
+    subject_name: str | None = None
     object: dict[str, Any] = Field(default_factory=dict)
     raw_excerpt: str
     confidence: float
@@ -98,7 +99,8 @@ def _format_revision(r: RevisionCandidate) -> str:
 
 def _format_claim(c: ClaimCandidate) -> str:
     return (
-        f"- id={c.id} predicate={c.predicate} subject_entity_id={c.subject_entity_id} "
+        f"- id={c.id} predicate={c.predicate} subject={c.subject_name or 'unknown'!r} "
+        f"subject_entity_id={c.subject_entity_id} "
         f"object={json.dumps(c.object, default=str)} confidence={c.confidence:.2f} "
         f"excerpt={c.raw_excerpt!r}"
     )

@@ -57,6 +57,27 @@ def _input(**overrides: Any) -> PersonalizeDigestSkillInput:
     return PersonalizeDigestSkillInput.model_validate(base)
 
 
+def test_claim_block_includes_subject_name() -> None:
+    """Claims must surface the resolved entity name, not just the opaque
+    subject_entity_id, so the LLM can judge relevance (regression guard)."""
+    expected = Briefing(date=date(2026, 5, 25), sections=[])
+    llm = _llm_with(expected)
+    claims = [
+        {
+            "id": "c1",
+            "predicate": "achieves_score",
+            "subject_entity_id": "e1",
+            "subject_name": "GR00T N1",
+            "object": {"benchmark": "RoboArena", "score": 78.0},
+            "raw_excerpt": "achieves 78% on RoboArena.",
+            "confidence": 0.9,
+        },
+    ]
+    _personalize_sync(llm, _input(claims=claims))
+    user_prompt = llm.complete_with_latency.call_args.kwargs["user"]
+    assert "GR00T N1" in user_prompt
+
+
 def test_personalize_sync_returns_briefing() -> None:
     expected = Briefing(
         date=date(2026, 5, 25),

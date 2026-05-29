@@ -144,13 +144,15 @@ def _gather_claims(
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT id, predicate, subject_entity_id, object, raw_excerpt, confidence
-        FROM claims
-        WHERE status = 'active'
-          AND extracted_at >= ?
-          AND extracted_at < ?
-          AND confidence >= ?
-        ORDER BY confidence DESC, extracted_at DESC
+        SELECT c.id, c.predicate, c.subject_entity_id, c.object, c.raw_excerpt,
+               c.confidence, e.canonical_name
+        FROM claims c
+        LEFT JOIN entities e ON e.id = c.subject_entity_id
+        WHERE c.status = 'active'
+          AND c.extracted_at >= ?
+          AND c.extracted_at < ?
+          AND c.confidence >= ?
+        ORDER BY c.confidence DESC, c.extracted_at DESC
         LIMIT 50
         """,
         [start, end, min_confidence],
@@ -169,6 +171,7 @@ def _gather_claims(
                 "id": r[0],
                 "predicate": r[1],
                 "subject_entity_id": r[2],
+                "subject_name": r[6],
                 "object": obj,
                 "raw_excerpt": r[4],
                 "confidence": float(r[5]),

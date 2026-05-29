@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -726,8 +727,10 @@ def schedule_status() -> None:
     Asks each configured CronTrigger directly for its next-fire-time —
     the real scheduler runs in its own container. The latest-run summary
     comes from ``pipeline_runs`` so the user sees what actually happened,
-    not just what was planned.
+    not just what was planned. The Checkpoint column reflects the latest
+    LangGraph checkpoint state per job (in-flight / interrupted / finalized).
     """
+    from mesh_a2a.checkpoint import read_run_states
     from mesh_scheduler import configured_cron_triggers
 
     now = datetime.now(UTC)
@@ -749,6 +752,13 @@ def schedule_status() -> None:
         "skeptic_sweep": recent_sweep[0] if recent_sweep else None,
     }
 
+    # Latest checkpoint state per run_type (read_run_states is newest-first;
+    # empty when no Postgres checkpoint store is configured).
+    threshold = int(os.environ.get("MESH_TASK_RESUME_THRESHOLD", "600"))
+    latest_checkpoint: dict[str, Any] = {}
+    for state in read_run_states():
+        latest_checkpoint.setdefault(state.run_type, state)
+
     table = Table(title="Mesh schedule")
     table.add_column("Job", style="cyan")
     table.add_column("Next run", style="green")
@@ -756,6 +766,7 @@ def schedule_status() -> None:
     table.add_column("Duration")
     table.add_column("Triggered by")
     table.add_column("Counts")
+    table.add_column("Checkpoint")
     for job_id in ("pipeline", "skeptic_sweep"):
         next_run = next_runs.get(job_id)
         last = last_by_job.get(job_id)
@@ -779,6 +790,15 @@ def schedule_status() -> None:
                 )
             else:
                 counts = f"beliefs ~{last.beliefs_revised}"
+        cp = latest_checkpoint.get(job_id)
+        if cp is None:
+            checkpoint = "—"
+        elif cp.finalized:
+            checkpoint = "finalized"
+        elif cp.is_interrupted(threshold_seconds=threshold):
+            checkpoint = "interrupted"
+        else:
+            checkpoint = "in flight"
         table.add_row(
             job_id,
             next_run.strftime("%Y-%m-%d %H:%M %Z") if next_run else "—",
@@ -786,6 +806,7 @@ def schedule_status() -> None:
             duration,
             trig,
             counts,
+            checkpoint,
         )
     console.print(table)
 

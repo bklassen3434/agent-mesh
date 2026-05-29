@@ -42,28 +42,13 @@ structlog.configure(
     default=os.environ.get("MESH_USE_A2A", "").lower() in ("1", "true", "yes"),
     help="Use A2A coordinator instead of in-process orchestrator",
 )
-@click.option(
-    "--legacy",
-    "use_legacy",
-    is_flag=True,
-    default=False,
-    help="(transitional) Use the pre-Phase-8 imperative A2A coordinator instead "
-    "of the LangGraph graph. Requires --a2a.",
-)
 def main(
-    categories: str,
-    max_papers: int,
-    since: str | None,
-    db_path: str | None,
-    use_a2a: bool,
-    use_legacy: bool,
+    categories: str, max_papers: int, since: str | None, db_path: str | None, use_a2a: bool
 ) -> None:
     """Run the Agent Mesh ingestion pipeline."""
     cats = [c.strip() for c in categories.split(",") if c.strip()]
 
-    if use_a2a and use_legacy:
-        from mesh_pipeline.coordinator_legacy import parse_since, run_pipeline
-    elif use_a2a:
+    if use_a2a:
         from mesh_pipeline.coordinator import parse_since, run_pipeline
     else:
         from mesh_pipeline.orchestrator import parse_since, run_pipeline  # type: ignore[assignment]

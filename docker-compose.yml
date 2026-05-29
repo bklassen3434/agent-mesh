@@ -275,12 +275,19 @@ services:
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
       API_CORS_ORIGINS: "http://localhost:3000"
+      # Status page reads orchestration run state from the LangGraph checkpoint
+      # store (Phase 8). Read-only access to the same Postgres the coordinator
+      # writes checkpoints to.
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
     env_file:
       - .env
     volumes:
       - mesh-data:/app/data
     ports:
       - "8000:8000"
+    depends_on:
+      langgraph-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 10s
@@ -376,11 +383,14 @@ services:
       MESH_USE_A2A: "true"
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
       MESH_DB_PATH: "/app/data/mesh.db"
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
     env_file:
       - .env
     volumes:
       - mesh-data:/app/data
     depends_on:
+      langgraph-db:
+        condition: service_healthy
       arxiv-scout:
         condition: service_healthy
       claim-extractor:
@@ -414,6 +424,7 @@ services:
     environment:
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
       MESH_DB_PATH: "/app/data/mesh.db"
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
       MESH_SKEPTIC_APPLY_THRESHOLD: ${MESH_SKEPTIC_APPLY_THRESHOLD:-0.7}
       MESH_CURATOR_PICK_COUNT: ${MESH_CURATOR_PICK_COUNT:-5}
       MESH_CURATOR_COOLDOWN_DAYS: ${MESH_CURATOR_COOLDOWN_DAYS:-7}
@@ -423,6 +434,8 @@ services:
     volumes:
       - mesh-data:/app/data
     depends_on:
+      langgraph-db:
+        condition: service_healthy
       curator:
         condition: service_healthy
       skeptic:
@@ -443,16 +456,40 @@ services:
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
       MESH_DB_PATH: "/app/data/mesh.db"
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
       MESH_SCHEDULE_PIPELINE_CRON: ${MESH_SCHEDULE_PIPELINE_CRON:-0 */6 * * *}
       MESH_SCHEDULE_SWEEP_CRON: ${MESH_SCHEDULE_SWEEP_CRON:-0 3 * * *}
     env_file:
       - .env
     volumes:
       - mesh-data:/app/data
+    depends_on:
+      langgraph-db:
+        condition: service_healthy
     profiles:
       - scheduler
     restart: unless-stopped
 
+  # LangGraph checkpoint store (Phase 8). Holds orchestration run state for
+  # the coordinator + skeptic-sweep graphs. Separate from DuckDB, which stays
+  # the knowledge store. Only the orchestration-aware services talk to it.
+  langgraph-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: langgraph
+      POSTGRES_USER: langgraph
+      POSTGRES_PASSWORD: ${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}
+    volumes:
+      - langgraph_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langgraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   mesh-data:
+    driver: local
+  langgraph_data:
     driver: local

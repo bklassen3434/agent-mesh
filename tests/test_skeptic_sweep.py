@@ -333,5 +333,67 @@ def test_no_held_beliefs_records_empty_run(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_contradicted_verdict_triggers_curator_second_pass(tmp_path: Path) -> None:
+    """Conditional edge: a contradicted verdict routes evaluate → trigger_curator,
+    which re-dispatches the Curator (a second select_beliefs_to_challenge call)."""
+    db = str(tmp_path / "sweep.db")
+    belief_id, entity_id = _seed(db)
+
+    responses = {
+        "select_beliefs_to_challenge": {
+            "picks": [{"belief_id": belief_id, "score": 2.5, "rationale": "x"}]
+        },
+        "challenge_belief": {
+            "verdict": "contradicted",
+            "confidence": 0.9,
+            "rationale": "Direct contradiction.",
+            "suggested_confidence_delta": -0.4,
+            "counter_claims": [
+                {
+                    "predicate": "achieves_score",
+                    "subject_entity_id": entity_id,
+                    "object": {"score": 60.0, "benchmark": "MMLU"},
+                    "raw_excerpt": "60% on MMLU.",
+                    "confidence": 0.9,
+                }
+            ],
+        },
+    }
+    fake = _run(db, responses)
+    curator_calls = [c for c in fake.calls if c[0] == "select_beliefs_to_challenge"]
+    assert len(curator_calls) == 2  # load_beliefs + trigger_curator
+
+
+def test_weakened_verdict_does_not_trigger_curator(tmp_path: Path) -> None:
+    """No contradicted verdict → evaluate routes straight to finalize, so the
+    Curator is dispatched only once (in load_beliefs)."""
+    db = str(tmp_path / "sweep.db")
+    belief_id, entity_id = _seed(db)
+
+    responses = {
+        "select_beliefs_to_challenge": {
+            "picks": [{"belief_id": belief_id, "score": 2.5, "rationale": "x"}]
+        },
+        "challenge_belief": {
+            "verdict": "weakened",
+            "confidence": 0.85,
+            "rationale": "Stale supporter.",
+            "suggested_confidence_delta": -0.2,
+            "counter_claims": [
+                {
+                    "predicate": "achieves_score",
+                    "subject_entity_id": entity_id,
+                    "object": {"score": 81.0, "benchmark": "MMLU"},
+                    "raw_excerpt": "81% on MMLU.",
+                    "confidence": 0.8,
+                }
+            ],
+        },
+    }
+    fake = _run(db, responses)
+    curator_calls = [c for c in fake.calls if c[0] == "select_beliefs_to_challenge"]
+    assert len(curator_calls) == 1
+
+
 # Local pytest import for approx
 import pytest  # noqa: E402

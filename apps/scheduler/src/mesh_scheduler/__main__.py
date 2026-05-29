@@ -1,9 +1,17 @@
-"""Entry point: ``mesh-scheduler`` — runs the blocking APScheduler loop."""
+"""Entry point: ``mesh-scheduler``.
+
+Starts the BackgroundScheduler (jobs run on their own threads) and serves
+the HTTP control surface with uvicorn on the main thread.
+"""
 from __future__ import annotations
 
-import structlog
+import os
 
-from mesh_scheduler.scheduler import build_scheduler, register_jobs
+import structlog
+import uvicorn
+
+from mesh_scheduler.app import build_app
+from mesh_scheduler.scheduler import SchedulerManager
 
 structlog.configure(
     processors=[
@@ -17,13 +25,22 @@ logger = structlog.get_logger(__name__)
 
 
 def main() -> None:
-    scheduler = build_scheduler()
-    register_jobs(scheduler)
-    logger.info("scheduler_starting")
+    manager = SchedulerManager()
+    manager.start()
+    app = build_app(manager)
+    # MESH_BIND_INTERFACE wins for Tailscale-only deployments, mirroring the
+    # API/wiki services; default 0.0.0.0 for local + docker-internal access.
+    host = (
+        os.environ.get("MESH_BIND_INTERFACE")
+        or os.environ.get("SCHEDULER_HOST")
+        or "0.0.0.0"
+    )
+    port = int(os.environ.get("SCHEDULER_PORT", "9100"))
+    logger.info("scheduler_http_starting", host=host, port=port)
     try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("scheduler_stopping")
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+    finally:
+        manager.shutdown()
 
 
 if __name__ == "__main__":

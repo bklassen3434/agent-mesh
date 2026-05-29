@@ -16,6 +16,8 @@ from mesh_api.routers import (
     graph,
     health,
     pipeline_runs,
+    pipelines,
+    schedules,
     skeptic,
     sources,
     stats,
@@ -39,8 +41,23 @@ def _ensure_schema() -> None:
         conn.close()
 
 
+def _ensure_schedules() -> None:
+    """Create the Postgres schedules table at startup when configured.
+
+    Best-effort: a missing/unreachable Postgres (local/in-memory runs) must
+    not block API startup. The schedule endpoints re-ensure idempotently.
+    """
+    try:
+        from mesh_a2a.schedules import ensure_schedules_table
+
+        ensure_schedules_table()
+    except Exception:
+        pass
+
+
 def create_app() -> FastAPI:
     _ensure_schema()
+    _ensure_schedules()
 
     app = FastAPI(
         title="Agent Mesh Read API",
@@ -72,6 +89,8 @@ def create_app() -> FastAPI:
     app.include_router(briefing.router)
     app.include_router(status_router.router)
     app.include_router(graph.router)
+    app.include_router(schedules.router)
+    app.include_router(pipelines.router)
     return app
 
 

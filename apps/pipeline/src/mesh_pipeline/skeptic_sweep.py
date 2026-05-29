@@ -536,7 +536,9 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
     conn = get_connection(db_path)
     apply_migrations(conn)
 
-    run_id = str(uuid.uuid4())
+    # A manual trigger from the API/scheduler can pin the run id (so the
+    # returned id matches this run's pipeline_runs row + checkpoint thread).
+    run_id = os.environ.get("MESH_RUN_ID") or str(uuid.uuid4())
     initial_state: SweepState = {
         "run_id": run_id,
         "triggered_by": os.environ.get("MESH_TRIGGERED_BY", "manual"),

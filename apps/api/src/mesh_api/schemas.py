@@ -91,6 +91,18 @@ class BeliefSignals(BaseModel):
     hype_substance_score: float
 
 
+class BeliefSignalSummary(BaseModel):
+    """Just the two signals the beliefs *list* surfaces inline per row.
+
+    The full BeliefSignals breakdown stays on the detail page; this keeps
+    the list's batch lookup cheap.
+    """
+
+    belief_id: str
+    hype_substance_score: float
+    reproduction_count: int
+
+
 class BeliefDetail(BaseModel):
     belief: Belief
     supporting_claims: list[ClaimWithContext]
@@ -114,6 +126,7 @@ class SkepticActivityItem(BaseModel):
 
 __all__ = [
     "BeliefDetail",
+    "BeliefSignalSummary",
     "ClaimDetail",
     "ClaimWithContext",
     "EntityDetail",

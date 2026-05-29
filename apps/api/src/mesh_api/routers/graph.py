@@ -9,8 +9,10 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from mesh_db.entities import list_entities
+from mesh_db.entities import count_entities, list_entities
+from mesh_db.graph import NODE_CAP, graph_edges, graph_nodes
 from mesh_db.relationships import list_relationships
+from mesh_models.graph import GraphData, GraphDataEdge, GraphDataNode
 from pydantic import BaseModel
 
 from mesh_api.deps import ConnDep
@@ -73,3 +75,26 @@ def get_graph(
         if r.from_entity_id in entity_ids and r.to_entity_id in entity_ids
     ]
     return GraphResponse(nodes=nodes, edges=edges)
+
+
+@router.get(
+    "/data",
+    response_model=GraphData,
+    summary="Pre-aggregated graph data for the redesigned /graph view",
+    description=(
+        "Node + edge lists with density baked in: node ``belief_count`` drives "
+        f"radius, edge ``claim_count`` drives stroke width. Capped at the top "
+        f"{NODE_CAP} entities by belief count; ``total_entities`` lets the UI "
+        "show a 'showing N of M' notice. Edges are only included when both "
+        "endpoints survive the cap."
+    ),
+)
+def get_graph_data(conn: ConnDep) -> GraphData:
+    node_rows = graph_nodes(conn, limit=NODE_CAP)
+    node_ids = {n["id"] for n in node_rows}
+    edge_rows = graph_edges(conn, node_ids)
+    return GraphData(
+        nodes=[GraphDataNode(**n) for n in node_rows],
+        edges=[GraphDataEdge(**e) for e in edge_rows],
+        total_entities=count_entities(conn),
+    )

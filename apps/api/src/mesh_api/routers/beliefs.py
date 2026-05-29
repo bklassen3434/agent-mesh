@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 import duckdb
 from fastapi import APIRouter, HTTPException, Query
 from mesh_db.beliefs import count_beliefs, get_belief_by_id, list_beliefs
@@ -14,6 +16,7 @@ from mesh_api.deps import ConnDep
 from mesh_api.schemas import (
     BeliefDetail,
     BeliefSignals,
+    BeliefSignalSummary,
     ClaimWithContext,
     Page,
     RevisionWithTriggers,
@@ -47,6 +50,41 @@ def list_beliefs_endpoint(
     )
     total = count_beliefs(conn, topic=topic, currently_held=currently_held)
     return Page[Belief](items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get(
+    "/signals",
+    response_model=list[BeliefSignalSummary],
+    summary="Batch belief signal summaries",
+    description=(
+        "hype/substance score + reproduction count for the given belief ids "
+        "(or all currently-held beliefs when none are given). Powers the "
+        "inline signal badges on the beliefs list without an N+1 fan-out. "
+        "Registered before /{belief_id} so 'signals' isn't read as an id."
+    ),
+)
+def belief_signals_batch(
+    conn: ConnDep,
+    ids: Annotated[list[str], Query()] = [],  # noqa: B006 — FastAPI query default
+) -> list[BeliefSignalSummary]:
+    sql = (
+        "SELECT belief_id, hype_substance_score, reproduction_count "
+        "FROM belief_hype_substance"
+    )
+    params: list[object] = []
+    if ids:
+        placeholders = ",".join(["?"] * len(ids))
+        sql += f" WHERE belief_id IN ({placeholders})"
+        params.extend(ids)
+    rows = conn.execute(sql, params).fetchall()
+    return [
+        BeliefSignalSummary(
+            belief_id=str(r[0]),
+            hype_substance_score=float(r[1]),
+            reproduction_count=int(r[2]),
+        )
+        for r in rows
+    ]
 
 
 def _hydrate_claims(

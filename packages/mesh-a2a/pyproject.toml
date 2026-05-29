@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2.0",
     "starlette",
     "uvicorn",
+    "langgraph-checkpoint>=2.0",
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary]>=3.1",
     "mesh-models",
     "mesh-tracing",
 ]

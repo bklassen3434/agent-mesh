@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Agent Mesh is a persistent multi-agent system for tracking AI/robotics research. The system maintains a living knowledge base built from structured **Claims** (immutable, extracted from sources) synthesized into mutable **Beliefs**.
 
-**Phase status:** Phases 0–2 complete (substrate, end-to-end pipeline, A2A protocol promotion). **Phase 3 in progress** — a read-only FastAPI service (`apps/api`, :8000) in front of DuckDB and a Next.js wiki (`apps/wiki`, :3000) that renders entities, claims, beliefs with full provenance, and the revision timeline. Both new services come up with `make up` alongside the four A2A agents.
+**Phase status:** Phases 0–7 complete — substrate, end-to-end pipeline, A2A protocol promotion, the read-only FastAPI service (`apps/api`, :8000) + Next.js wiki (`apps/wiki`, :3000), the full scout/skeptic/curator/personalizer agent fleet, the APScheduler service, Investigations activation, and derived belief-quality signals. **Phase 8 complete** — the orchestration layer is now LangGraph: `apps/pipeline/coordinator.py` and `skeptic_sweep.py` are stateful LangGraph graphs (conditional routing + `Send` fan-out) checkpointed to a dedicated Postgres container (`langgraph-db`), one thread per run (thread_id == run_id). The old `agent_tasks`/`agent_task_events` durability tables were dropped; `/status` reads orchestration state from the checkpoint store.
 
 ## Commands
 
@@ -64,7 +64,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 - **`packages/mesh-llm`** — Two interchangeable LLM clients implementing the `LLMClient` Protocol: `AnthropicClient` (default; `messages.parse()` for Pydantic-typed structured output with `cache_control` on the system prompt) and `OllamaClient` (local; structured output via `format=schema`). `make_llm_client()` picks one based on `MESH_LLM_PROVIDER`. `LLMResponseError` signals parse failure (pipeline continues); `AnthropicNotReadyError` / `OllamaNotReadyError` signal provider failure (pipeline aborts).
 - **`packages/mesh-agents`** — Four agent classes, each with `async run(input) -> output`. `ClaimExtractorAgent` calls the configured LLM via `LLMClient`; `EntityTrackerAgent` does find-or-create against DB; `SotaTrackerAgent` is rule-based (no LLM).
 - **`apps/cli`** — Click CLI (`mesh.cli`) wrapping all DB operations with `rich` table output.
-- **`apps/pipeline`** — Async orchestrator (`run_pipeline`). Bounded concurrency via `asyncio.Semaphore(MESH_PIPELINE_CONCURRENCY)`. One bad paper records an error and continues; LLM-provider failure aborts.
+- **`apps/pipeline`** — LangGraph orchestration. `coordinator.py` (`run_pipeline`) and `skeptic_sweep.py` (`run_skeptic_sweep`) build `StateGraph`s with conditional edges + `Send` fan-out, checkpointed via `mesh_a2a.checkpoint.open_checkpointer` (Postgres in docker, in-memory locally/tests). Nodes dispatch A2A skills through `mesh_a2a.node.call_skill_node`, which records failures into `state["errors"]` and never raises (one bad paper records an error and continues). Extraction concurrency is still bounded by `asyncio.Semaphore(MESH_PIPELINE_CONCURRENCY)`.
 - **`apps/api`** (Phase 3) — FastAPI read-only HTTP service on :8000. One read-only DuckDB connection per request via a FastAPI dependency. Endpoints under `/api/v1/`; OpenAPI at `/openapi.json`, Swagger UI at `/docs`. Applies migrations once at startup against a brief read-write open; all request handling is read-only.
 - **`apps/wiki`** (Phase 3) — Next.js 15 App Router wiki on :3000. Server components only (no client state libs); Tailwind + hand-written shadcn-style primitives. TypeScript types live in `apps/wiki/src/lib/api-types.ts`, generated from the API's OpenAPI spec by `openapi-typescript`. CI regenerates and diffs to detect drift.
 
@@ -101,6 +101,8 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `API_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist |
 | `INTERNAL_API_URL` | `http://api:8000` | Wiki server-component target inside docker |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Wiki browser target (baked in at build) |
+| `LANGGRAPH_POSTGRES_URL` | (empty) | LangGraph checkpoint store DSN; unset → in-memory checkpointer (local/tests) |
+| `LANGGRAPH_POSTGRES_PASSWORD` | `langgraph` | Password for the `langgraph-db` container |
 
 ## Debugging discipline
 

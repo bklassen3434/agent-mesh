@@ -13,11 +13,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import mesh_scheduler.scheduler as sched_mod
 import pytest
 from mesh_models.schedule import Schedule
 from mesh_scheduler import SchedulerManager, configured_cron_triggers
-
-import mesh_scheduler.scheduler as sched_mod
 
 
 def _schedules(

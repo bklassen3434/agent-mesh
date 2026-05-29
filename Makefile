@@ -16,6 +16,7 @@ logs:
 # Run one full pipeline cycle via the coordinator container.
 # Starts the coordinator profile (which normally stays stopped), runs once, exits.
 pipeline:
+	docker compose build coordinator
 	docker compose run --rm \
 		-e MESH_PIPELINE_CATEGORIES=$${MESH_PIPELINE_CATEGORIES:-cs.AI,cs.RO,cs.LG} \
 		-e MESH_PIPELINE_MAX_PAPERS=$${MESH_PIPELINE_MAX_PAPERS:-10} \
@@ -27,6 +28,7 @@ pipeline:
 # excluded from the default `make up`.
 skeptic:
 	docker compose --profile skeptic up -d --build curator skeptic
+	docker compose build skeptic-sweep
 	docker compose --profile skeptic run --rm skeptic-sweep
 
 # Smoke test: bring up the stack, run one pipeline cycle, check row counts.

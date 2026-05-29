@@ -12,11 +12,13 @@ from mesh_db.claims import create_claim, get_claim_by_id, list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
 from mesh_db.investigations import get_investigation_by_id, list_investigations
+from mesh_db.llm_usage import aggregate_usage_by_skill
 from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.relationships import get_relationship_by_id
 from mesh_db.revisions import create_revision, get_revision_by_id, list_revisions
 from mesh_db.sources import create_source, get_source_by_id, list_sources
+from mesh_llm import LLMUsage, estimate_cost
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus
 from mesh_models.entity import Entity, EntityType
@@ -548,6 +550,94 @@ def pipeline_stats(last: int) -> None:
             str(len(r.errors)),
         )
     console.print(table)
+
+
+@cli.group("cost")
+def cost() -> None:
+    """LLM token + cost reporting (Phase 11)."""
+
+
+def _fmt_usd(amount: float) -> str:
+    return f"${amount:,.4f}"
+
+
+@cost.command("report")
+@click.option("--run-id", default=None, help="Report a specific pipeline/sweep run id")
+@click.option(
+    "--last", default=1, type=int, show_default=True,
+    help="Report the most recent N runs (ignored when --run-id is given)",
+)
+def cost_report(run_id: str | None, last: int) -> None:
+    """Per-skill LLM token totals and estimated cost for a run.
+
+    Costs are recomputed from current list prices in mesh_llm.pricing, so
+    editing the price table re-prices historical runs.
+    """
+    conn = _get_conn()
+    try:
+        if run_id is not None:
+            runs = [r for r in list_pipeline_runs(conn, limit=1000) if r.id == run_id]
+            if not runs:
+                console.print(f"[yellow]No run found with id {run_id}.[/yellow]")
+                return
+        else:
+            runs = list_pipeline_runs(conn, limit=last)
+        if not runs:
+            console.print("[dim]No pipeline runs recorded yet.[/dim]")
+            return
+
+        grand_total = 0.0
+        for run in runs:
+            totals = aggregate_usage_by_skill(conn, run.id)
+            title = (
+                f"{run.run_type} {run.id[:8]} — "
+                f"{run.started_at.strftime('%Y-%m-%d %H:%M')} ({run.triggered_by})"
+            )
+            table = Table(title=title)
+            table.add_column("Skill", style="cyan")
+            table.add_column("Calls", justify="right")
+            table.add_column("Input", justify="right")
+            table.add_column("Output", justify="right")
+            table.add_column("Cache R/W", justify="right")
+            table.add_column("Model", style="dim")
+            table.add_column("Cost", justify="right")
+
+            run_cost = 0.0
+            for t in totals:
+                usage = LLMUsage(
+                    input_tokens=t.input_tokens,
+                    output_tokens=t.output_tokens,
+                    cache_read_tokens=t.cache_read_tokens,
+                    cache_creation_tokens=t.cache_creation_tokens,
+                )
+                skill_cost = estimate_cost(t.model or "", usage).total_cost
+                run_cost += skill_cost
+                table.add_row(
+                    t.skill_id,
+                    str(t.calls),
+                    f"{t.input_tokens:,}",
+                    f"{t.output_tokens:,}",
+                    f"{t.cache_read_tokens:,}/{t.cache_creation_tokens:,}",
+                    t.model or "—",
+                    _fmt_usd(skill_cost),
+                )
+            if not totals:
+                table.add_row("[dim]no LLM calls recorded[/dim]", "", "", "", "", "", "")
+            table.add_section()
+            table.add_row(
+                "[bold]TOTAL[/bold]", "", "", "", "", "",
+                f"[bold]{_fmt_usd(run_cost)}[/bold]",
+            )
+            console.print(table)
+            grand_total += run_cost
+
+        if len(runs) > 1:
+            console.print(
+                f"\n[bold]Grand total across {len(runs)} runs: "
+                f"{_fmt_usd(grand_total)}[/bold]"
+            )
+    finally:
+        conn.close()
 
 
 @cli.command("show-recent-claims")

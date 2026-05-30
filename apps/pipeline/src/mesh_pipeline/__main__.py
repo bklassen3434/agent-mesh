@@ -65,7 +65,11 @@ def main(
 
     click.echo(f"\nPipeline run {result.run_id}")
     click.echo(f"  Papers scouted:    {result.papers_scouted}")
-    click.echo(f"  Items skipped:     {result.items_skipped}")
+    # items_skipped (dedup-before-extraction) only exists on the A2A
+    # coordinator's result, not the in-process orchestrator's.
+    items_skipped = getattr(result, "items_skipped", None)
+    if items_skipped is not None:
+        click.echo(f"  Items skipped:     {items_skipped}")
     click.echo(f"  Sources inserted:  {result.sources_inserted}")
     click.echo(f"  Claims inserted:   {result.claims_inserted}")
     click.echo(f"  Entities created:  {result.entities_created}")

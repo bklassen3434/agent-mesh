@@ -79,6 +79,294 @@ Output:
   ]
 }
 
+=== EXAMPLE 3 (blog post) ===
+Title: "Introducing Claude 3.5 Sonnet"
+Content: "...Today Anthropic is releasing Claude 3.5 Sonnet. It scores 92.0% on HumanEval and sets a new state of the art on the GPQA graduate-level reasoning benchmark. Claude 3.5 Sonnet was built by Anthropic and outperforms Claude 3 Opus across our internal evals while running at twice the speed..."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_name": "Claude 3.5 Sonnet",
+      "object": {"score": 92.0, "benchmark": "HumanEval", "metric": "pass@1"},
+      "raw_excerpt": "It scores 92.0% on HumanEval",
+      "confidence": 0.95
+    },
+    {
+      "predicate": "evaluated_on",
+      "subject_name": "Claude 3.5 Sonnet",
+      "object": {"benchmark": "GPQA"},
+      "raw_excerpt": "sets a new state of the art on the GPQA graduate-level reasoning benchmark",
+      "confidence": 0.9
+    },
+    {
+      "predicate": "developed_by",
+      "subject_name": "Claude 3.5 Sonnet",
+      "object": {"lab": "Anthropic"},
+      "raw_excerpt": "Claude 3.5 Sonnet was built by Anthropic",
+      "confidence": 0.99
+    },
+    {
+      "predicate": "outperforms",
+      "subject_name": "Claude 3.5 Sonnet",
+      "object": {"compared_to": "Claude 3 Opus", "on": "internal evals"},
+      "raw_excerpt": "outperforms Claude 3 Opus across our internal evals",
+      "confidence": 0.85
+    }
+  ]
+}
+
+=== EXAMPLE 4 (leaderboard snapshot) ===
+Title: "Open LLM Leaderboard — Top entries this week"
+Content: "1. Qwen2.5-72B — 86.1 average\n2. Llama-3.1-70B — 84.3 average\nQwen2.5-72B leads the leaderboard, edging out Llama-3.1-70B on the MMLU-Pro column with 71.1 vs 66.4."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_name": "Qwen2.5-72B",
+      "object": {"score": 71.1, "benchmark": "MMLU-Pro", "metric": "accuracy"},
+      "raw_excerpt": "Qwen2.5-72B leads the leaderboard, edging out Llama-3.1-70B on the MMLU-Pro column with 71.1",
+      "confidence": 0.9
+    },
+    {
+      "predicate": "outperforms",
+      "subject_name": "Qwen2.5-72B",
+      "object": {"compared_to": "Llama-3.1-70B", "on": "MMLU-Pro"},
+      "raw_excerpt": "edging out Llama-3.1-70B on the MMLU-Pro column with 71.1 vs 66.4",
+      "confidence": 0.9
+    }
+  ]
+}
+
+=== EXAMPLE 5 (forum discussion) ===
+Title: "Anyone benchmarked the new Mistral model?"
+Content: "I ran Mistral-Large-2 on GSM8K myself and got around 93% on the test split, which is a bit higher than what the paper for DeepSeek-V2 reported. Both were evaluated on GSM8K. Honestly the gap is small and might be prompt-dependent."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_name": "Mistral-Large-2",
+      "object": {"score": 93.0, "benchmark": "GSM8K", "metric": "accuracy"},
+      "raw_excerpt": "I ran Mistral-Large-2 on GSM8K myself and got around 93% on the test split",
+      "confidence": 0.7
+    },
+    {
+      "predicate": "evaluated_on",
+      "subject_name": "Mistral-Large-2",
+      "object": {"benchmark": "GSM8K"},
+      "raw_excerpt": "Both were evaluated on GSM8K",
+      "confidence": 0.85
+    }
+  ]
+}
+
+=== EXAMPLE 6 (repository description) ===
+Title: "openvla/openvla: An open-source vision-language-action model"
+Content: "OpenVLA is a 7B open-source vision-language-action model trained on 970k robot demonstrations from the Open X-Embodiment dataset. Developed by researchers at Stanford. OpenVLA outperforms RT-2-X on the WidowX manipulation suite despite being 7x smaller."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "developed_by",
+      "subject_name": "OpenVLA",
+      "object": {"lab": "Stanford"},
+      "raw_excerpt": "Developed by researchers at Stanford",
+      "confidence": 0.9
+    },
+    {
+      "predicate": "outperforms",
+      "subject_name": "OpenVLA",
+      "object": {"compared_to": "RT-2-X", "on": "WidowX manipulation suite"},
+      "raw_excerpt": "OpenVLA outperforms RT-2-X on the WidowX manipulation suite despite being 7x smaller",
+      "confidence": 0.88
+    },
+    {
+      "predicate": "evaluated_on",
+      "subject_name": "OpenVLA",
+      "object": {"benchmark": "WidowX manipulation suite"},
+      "raw_excerpt": "outperforms RT-2-X on the WidowX manipulation suite",
+      "confidence": 0.8
+    }
+  ]
+}
+
+=== EXAMPLE 7 (no qualifying claims) ===
+Title: "Reflections on scaling our research team"
+Content: "This post discusses how we restructured our org, the importance of mentorship, and our hiring philosophy for the coming year. We believe culture compounds. No benchmarks or models are discussed."
+
+Output:
+{
+  "claims": []
+}
+
+=== EXAMPLE 8 (multiple models, comparison + dataset) ===
+Title: "Gemini 1.5 Pro Technical Report"
+Content: "Gemini 1.5 Pro achieves 81.9% on the MMLU benchmark and was evaluated on the long-context Needle-in-a-Haystack task up to 1M tokens. It was developed by Google DeepMind. On MATH, Gemini 1.5 Pro outperforms GPT-4 Turbo."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_name": "Gemini 1.5 Pro",
+      "object": {"score": 81.9, "benchmark": "MMLU", "metric": "accuracy"},
+      "raw_excerpt": "Gemini 1.5 Pro achieves 81.9% on the MMLU benchmark",
+      "confidence": 0.95
+    },
+    {
+      "predicate": "evaluated_on",
+      "subject_name": "Gemini 1.5 Pro",
+      "object": {"benchmark": "Needle-in-a-Haystack"},
+      "raw_excerpt": "evaluated on the long-context Needle-in-a-Haystack task up to 1M tokens",
+      "confidence": 0.9
+    },
+    {
+      "predicate": "developed_by",
+      "subject_name": "Gemini 1.5 Pro",
+      "object": {"lab": "Google DeepMind"},
+      "raw_excerpt": "It was developed by Google DeepMind",
+      "confidence": 0.99
+    },
+    {
+      "predicate": "outperforms",
+      "subject_name": "Gemini 1.5 Pro",
+      "object": {"compared_to": "GPT-4 Turbo", "on": "MATH"},
+      "raw_excerpt": "On MATH, Gemini 1.5 Pro outperforms GPT-4 Turbo",
+      "confidence": 0.88
+    }
+  ]
+}
+
+=== EXAMPLE 9 (robotics paper, no numeric score) ===
+Title: "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control"
+Content: "RT-2 was developed by Google DeepMind and evaluated on a suite of real-world robot manipulation tasks. The authors report strong emergent generalization but, in this abstract, give no single headline success-rate number."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "developed_by",
+      "subject_name": "RT-2",
+      "object": {"lab": "Google DeepMind"},
+      "raw_excerpt": "RT-2 was developed by Google DeepMind",
+      "confidence": 0.97
+    },
+    {
+      "predicate": "evaluated_on",
+      "subject_name": "RT-2",
+      "object": {"benchmark": "real-world robot manipulation tasks"},
+      "raw_excerpt": "evaluated on a suite of real-world robot manipulation tasks",
+      "confidence": 0.85
+    }
+  ]
+}
+
+=== EXAMPLE 10 (paper abstract, multiple benchmarks) ===
+Title: "DeepSeek-V3 Technical Report"
+Content: "We present DeepSeek-V3, a Mixture-of-Experts language model with 671B total parameters. DeepSeek-V3 achieves 88.5% on MMLU and 90.2% on the HumanEval coding benchmark, and was evaluated on MATH-500 where it reaches 90.2% as well. DeepSeek-V3 was developed by DeepSeek-AI and outperforms Llama-3.1-405B on most reasoning benchmarks while using far fewer activated parameters."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_name": "DeepSeek-V3",
+      "object": {"score": 88.5, "benchmark": "MMLU", "metric": "accuracy"},
+      "raw_excerpt": "DeepSeek-V3 achieves 88.5% on MMLU",
+      "confidence": 0.95
+    },
+    {
+      "predicate": "achieves_score",
+      "subject_name": "DeepSeek-V3",
+      "object": {"score": 90.2, "benchmark": "HumanEval", "metric": "pass@1"},
+      "raw_excerpt": "90.2% on the HumanEval coding benchmark",
+      "confidence": 0.95
+    },
+    {
+      "predicate": "evaluated_on",
+      "subject_name": "DeepSeek-V3",
+      "object": {"benchmark": "MATH-500"},
+      "raw_excerpt": "was evaluated on MATH-500 where it reaches 90.2% as well",
+      "confidence": 0.92
+    },
+    {
+      "predicate": "developed_by",
+      "subject_name": "DeepSeek-V3",
+      "object": {"lab": "DeepSeek-AI"},
+      "raw_excerpt": "DeepSeek-V3 was developed by DeepSeek-AI",
+      "confidence": 0.99
+    },
+    {
+      "predicate": "outperforms",
+      "subject_name": "DeepSeek-V3",
+      "object": {"compared_to": "Llama-3.1-405B", "on": "reasoning benchmarks"},
+      "raw_excerpt": "outperforms Llama-3.1-405B on most reasoning benchmarks",
+      "confidence": 0.85
+    }
+  ]
+}
+
+=== EXAMPLE 11 (announcement with only vague marketing — extract only the concrete claim) ===
+Title: "Our most capable model yet"
+Content: "We're thrilled to unveil our newest model, Aurora. It's faster, friendlier, and more helpful than ever before. Aurora was developed by Lumina Labs. We can't wait for you to try it!"
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "developed_by",
+      "subject_name": "Aurora",
+      "object": {"lab": "Lumina Labs"},
+      "raw_excerpt": "Aurora was developed by Lumina Labs",
+      "confidence": 0.95
+    }
+  ]
+}
+
+=== EXAMPLE 12 (paper abstract, score + comparison + lab) ===
+Title: "Phi-3: A Highly Capable Language Model Locally on Your Phone"
+Content: "Phi-3-mini, a 3.8B parameter model, achieves 69% on MMLU and 8.38 on MT-bench despite being small enough to run on a phone. Phi-3 was developed by Microsoft Research. On MMLU it outperforms Mixtral 8x7B and rivals GPT-3.5 despite being an order of magnitude smaller."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "achieves_score",
+      "subject_name": "Phi-3-mini",
+      "object": {"score": 69.0, "benchmark": "MMLU", "metric": "accuracy"},
+      "raw_excerpt": "Phi-3-mini, a 3.8B parameter model, achieves 69% on MMLU",
+      "confidence": 0.95
+    },
+    {
+      "predicate": "achieves_score",
+      "subject_name": "Phi-3-mini",
+      "object": {"score": 8.38, "benchmark": "MT-bench", "metric": "score"},
+      "raw_excerpt": "8.38 on MT-bench",
+      "confidence": 0.9
+    },
+    {
+      "predicate": "developed_by",
+      "subject_name": "Phi-3",
+      "object": {"lab": "Microsoft Research"},
+      "raw_excerpt": "Phi-3 was developed by Microsoft Research",
+      "confidence": 0.99
+    },
+    {
+      "predicate": "outperforms",
+      "subject_name": "Phi-3-mini",
+      "object": {"compared_to": "Mixtral 8x7B", "on": "MMLU"},
+      "raw_excerpt": "On MMLU it outperforms Mixtral 8x7B",
+      "confidence": 0.85
+    }
+  ]
+}
+
 Now extract claims from the following source. Return only valid JSON matching the schema.
 """
 

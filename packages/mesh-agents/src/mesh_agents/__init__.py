@@ -9,6 +9,14 @@ from mesh_agents.claim_extractor import (
     ClaimExtractorOutput,
     ExtractedClaim,
 )
+from mesh_agents.entity_resolution import (
+    EntityForMatch,
+    EntityMatchDecision,
+    ResolutionConfig,
+    adjudicate_same_entity,
+    build_adjudication_batch_items,
+    classify_pair,
+)
 from mesh_agents.entity_tracker import EntityTrackerAgent, EntityTrackerInput, EntityTrackerOutput
 from mesh_agents.sota_tracker import (
     BeliefUpdate,
@@ -28,13 +36,19 @@ __all__ = [
     "ClaimExtractorAgent",
     "ClaimExtractorInput",
     "ClaimExtractorOutput",
+    "EntityForMatch",
+    "EntityMatchDecision",
     "EntityTrackerAgent",
     "EntityTrackerInput",
     "EntityTrackerOutput",
     "ExtractedClaim",
+    "ResolutionConfig",
     "ResolvedClaim",
     "ScoutedPaper",
     "SotaTrackerAgent",
     "SotaTrackerInput",
     "SotaTrackerOutput",
+    "adjudicate_same_entity",
+    "build_adjudication_batch_items",
+    "classify_pair",
 ]

@@ -210,3 +210,157 @@ def update_entity(
     if entity is None:
         raise ValueError(f"Entity {id} not found after update")
     return entity
+
+
+# ---------------------------------------------------------------------------
+# Entity merge (Phase 13b) — consolidate a duplicate onto a canonical node.
+# ---------------------------------------------------------------------------
+
+
+def choose_canonical(conn: MeshConnection, id_a: str, id_b: str) -> tuple[str, str]:
+    """Pick which of two entities is canonical. Returns ``(canonical, duplicate)``.
+
+    Rule (documented, deterministic): the **most-claimed** entity wins (it
+    carries the most provenance); ties break to the **earliest ``created_at``**,
+    then to the **lexicographically smaller id**.
+    """
+    rows = conn.execute(
+        "SELECT subject_entity_id, count(*) FROM claims "
+        "WHERE subject_entity_id IN (%s, %s) GROUP BY subject_entity_id",
+        [id_a, id_b],
+    ).fetchall()
+    counts = {str(r[0]): int(r[1]) for r in rows}
+    ent_a = get_entity_by_id(conn, id_a)
+    ent_b = get_entity_by_id(conn, id_b)
+    if ent_a is None or ent_b is None:
+        raise ValueError(f"Cannot choose canonical: {id_a} or {id_b} not found")
+
+    # (claim_count desc, created_at asc, id asc) — first is canonical.
+    def key(eid: str, ent: Entity) -> tuple[int, datetime, str]:
+        return (-counts.get(eid, 0), ent.created_at, eid)
+
+    ordered = sorted([(id_a, ent_a), (id_b, ent_b)], key=lambda t: key(t[0], t[1]))
+    return ordered[0][0], ordered[1][0]
+
+
+def _merge_aliases(canonical: Entity, duplicate: Entity) -> list[str]:
+    """Union of canonical.aliases, duplicate.canonical_name, and
+    duplicate.aliases; case-insensitive dedup, excluding the canonical's own
+    name."""
+    merged: list[str] = []
+    seen: set[str] = {canonical.canonical_name.lower()}
+    for alias in [
+        *canonical.aliases,
+        duplicate.canonical_name,
+        *duplicate.aliases,
+    ]:
+        key = alias.lower()
+        if key not in seen:
+            seen.add(key)
+            merged.append(alias)
+    return merged
+
+
+def _aggregate_duplicate_edges(conn: MeshConnection, canonical_id: str) -> None:
+    """After re-pointing, collapse relationships that now collide on
+    (from, to, type): keep the lowest-id row, union ``evidence_claim_ids``, take
+    the max ``confidence``, delete the rest. Also drops canonical self-loops the
+    merge created (an entity related to itself carries no signal here)."""
+    conn.execute(
+        "DELETE FROM relationships "
+        "WHERE from_entity_id = %s AND to_entity_id = %s",
+        [canonical_id, canonical_id],
+    )
+    rows = conn.execute(
+        "SELECT id, from_entity_id, to_entity_id, type, evidence_claim_ids, confidence "
+        "FROM relationships WHERE from_entity_id = %s OR to_entity_id = %s "
+        "ORDER BY id",
+        [canonical_id, canonical_id],
+    ).fetchall()
+
+    groups: dict[tuple[str, str, str], list[tuple[Any, ...]]] = {}
+    for r in rows:
+        groups.setdefault((str(r[1]), str(r[2]), str(r[3])), []).append(r)
+
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        keeper = members[0]
+        evidence: list[str] = []
+        seen: set[str] = set()
+        max_conf = 0.0
+        for m in members:
+            for cid in (m[4] or []):
+                if cid not in seen:
+                    seen.add(cid)
+                    evidence.append(str(cid))
+            max_conf = max(max_conf, float(m[5]))
+        conn.execute(
+            "UPDATE relationships SET evidence_claim_ids = %s, confidence = %s "
+            "WHERE id = %s",
+            [evidence, max_conf, keeper[0]],
+        )
+        dup_ids = [m[0] for m in members[1:]]
+        placeholders = ",".join(["%s"] * len(dup_ids))
+        conn.execute(
+            f"DELETE FROM relationships WHERE id IN ({placeholders})", dup_ids
+        )
+
+
+def merge_entities(conn: MeshConnection, canonical_id: str, duplicate_id: str) -> None:
+    """Consolidate ``duplicate_id`` into ``canonical_id`` in a single transaction.
+
+    Re-points every reference to the duplicate — claim ``subject_entity_id``
+    (the FK only; claim *content* is never touched), relationship edges,
+    investigation ``target_entity_id`` / ``related_entity_ids`` — aggregates any
+    edges that become duplicates, folds the duplicate's name + aliases into the
+    canonical's ``aliases``, and finally deletes the duplicate row. Coordinator/
+    writer-owned. Idempotent-friendly: a no-op if the duplicate no longer exists.
+    """
+    if canonical_id == duplicate_id:
+        return
+    canonical = get_entity_by_id(conn, canonical_id)
+    duplicate = get_entity_by_id(conn, duplicate_id)
+    if duplicate is None:
+        return  # already merged / gone
+    if canonical is None:
+        raise ValueError(f"Canonical entity {canonical_id} not found")
+
+    merged_aliases = _merge_aliases(canonical, duplicate)
+    last_seen = max(canonical.last_seen_at, duplicate.last_seen_at)
+
+    with conn.raw.transaction():
+        # 1. Re-point claims (FK reference only — predicate/object/excerpt untouched).
+        conn.execute(
+            "UPDATE claims SET subject_entity_id = %s WHERE subject_entity_id = %s",
+            [canonical_id, duplicate_id],
+        )
+        # 2. Re-point relationship endpoints.
+        conn.execute(
+            "UPDATE relationships SET from_entity_id = %s WHERE from_entity_id = %s",
+            [canonical_id, duplicate_id],
+        )
+        conn.execute(
+            "UPDATE relationships SET to_entity_id = %s WHERE to_entity_id = %s",
+            [canonical_id, duplicate_id],
+        )
+        # 3. Re-point investigation references.
+        conn.execute(
+            "UPDATE investigations SET target_entity_id = %s WHERE target_entity_id = %s",
+            [canonical_id, duplicate_id],
+        )
+        conn.execute(
+            "UPDATE investigations "
+            "SET related_entity_ids = array_replace(related_entity_ids, %s, %s) "
+            "WHERE %s = ANY(related_entity_ids)",
+            [duplicate_id, canonical_id, duplicate_id],
+        )
+        # 4. Aggregate edges that now collide; drop self-loops.
+        _aggregate_duplicate_edges(conn, canonical_id)
+        # 5. Fold aliases + refresh last_seen on the canonical.
+        conn.execute(
+            "UPDATE entities SET aliases = %s, last_seen_at = %s WHERE id = %s",
+            [merged_aliases, last_seen, canonical_id],
+        )
+        # 6. Remove the now-unreferenced duplicate.
+        conn.execute("DELETE FROM entities WHERE id = %s", [duplicate_id])

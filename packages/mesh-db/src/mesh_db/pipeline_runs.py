@@ -59,6 +59,19 @@ def create_pipeline_run(conn: duckdb.DuckDBPyConnection, model: PipelineRun) -> 
     return model
 
 
+def pipeline_run_exists(conn: duckdb.DuckDBPyConnection, run_id: str) -> bool:
+    """True if a pipeline_runs row with this id already exists.
+
+    Used by the LangGraph finalize nodes to stay idempotent: a checkpointed
+    graph can re-tick the final superstep, and the run-row write (plus the
+    llm_usage ledger writes) must not be duplicated on replay.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM pipeline_runs WHERE id = ? LIMIT 1", [run_id]
+    ).fetchone()
+    return row is not None
+
+
 def list_pipeline_runs(
     conn: duckdb.DuckDBPyConnection,
     limit: int = 10,

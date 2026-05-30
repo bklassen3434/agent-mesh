@@ -20,3 +20,13 @@ def test_triggered_by_defaults_to_manual(tmp_db: duckdb.DuckDBPyConnection) -> N
     create_pipeline_run(tmp_db, run)
     fetched = list_pipeline_runs(tmp_db, limit=1)
     assert fetched[0].triggered_by == "manual"
+
+
+def test_pipeline_run_exists(tmp_db: duckdb.DuckDBPyConnection) -> None:
+    from mesh_db.pipeline_runs import pipeline_run_exists
+
+    run = PipelineRun()
+    assert not pipeline_run_exists(tmp_db, run.id)
+    create_pipeline_run(tmp_db, run)
+    assert pipeline_run_exists(tmp_db, run.id)
+    assert not pipeline_run_exists(tmp_db, "nonexistent-id")

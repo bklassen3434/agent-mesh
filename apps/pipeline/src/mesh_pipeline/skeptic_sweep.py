@@ -52,7 +52,11 @@ from mesh_db.connection import get_connection
 from mesh_db.entities import get_entity_by_id
 from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.migrations import apply_migrations
-from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
+from mesh_db.pipeline_runs import (
+    PipelineRun,
+    create_pipeline_run,
+    pipeline_run_exists,
+)
 from mesh_db.revisions import create_revision, list_revisions
 from mesh_db.sources import create_source, get_source_by_id
 from mesh_llm.pricing import estimate_cost
@@ -480,6 +484,11 @@ def build_sweep_graph(
         return patch
 
     async def finalize(state: SweepState) -> dict[str, Any]:
+        # Idempotency guard: a checkpointed graph can re-tick the final
+        # superstep. If this run's row already exists, finalize already ran.
+        if pipeline_run_exists(conn, state["run_id"]):
+            log.info("finalize_already_done", run_id=state["run_id"])
+            return {"finalized": True}
         verdicts = state["verdicts"]
         for v in verdicts:
             usage = LLMUsage(**(v.get("usage") or {}))

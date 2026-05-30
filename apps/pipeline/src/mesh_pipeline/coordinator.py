@@ -55,7 +55,12 @@ from mesh_db.investigations import (
 )
 from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.migrations import apply_migrations
-from mesh_db.pipeline_runs import PipelineError, PipelineRun, create_pipeline_run
+from mesh_db.pipeline_runs import (
+    PipelineError,
+    PipelineRun,
+    create_pipeline_run,
+    pipeline_run_exists,
+)
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
 from mesh_llm.pricing import estimate_cost
@@ -731,6 +736,12 @@ def build_coordinator_graph(
 
     async def finalize(state: CoordinatorState) -> dict[str, Any]:
         avg = _avg_latency(state["extractions"])
+        # Idempotency guard: a checkpointed graph can re-tick the final
+        # superstep. If this run's row already exists, finalize already ran —
+        # skip re-writing the run row and the llm_usage ledger.
+        if pipeline_run_exists(conn, state["run_id"]):
+            log.info("finalize_already_done", run_id=state["run_id"])
+            return {"finalized": True, "avg_extraction_latency_ms": avg}
         # Persist per-call token usage for every extraction (main fan-out path).
         # Investigation re-extraction usage is recorded in dispatch_investigations.
         for e in state["extractions"]:

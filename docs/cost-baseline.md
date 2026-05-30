@@ -24,6 +24,9 @@ skeptic-sweep and read via `mesh.cli cost report --run-id <id>`.
 - **Capture:** one full pipeline cycle and one full skeptic sweep, both run as
   one-shot containers (`docker compose --profile pipeline run --rm coordinator`
   / `--profile skeptic run --rm skeptic-sweep`).
+- **Cost source:** `mesh.cli cost report` reports the `estimated_cost_usd`
+  recorded in the ledger at run time, which already accounts for cache reads
+  (11c) and the batch discount (11d).
 
 ---
 
@@ -176,19 +179,88 @@ no variable content sits in the cached prefix.
 
 ---
 
+## 11d — Batch the skeptic sweep
+
+Captured **2026-05-30** on `claude-haiku-4-5`.
+
+The sweep's belief evaluation now runs on the **Anthropic Message Batches API**
+(flat 50% discount, async) behind `MESH_SKEPTIC_BATCH` (default true, anthropic
+only). New LangGraph nodes: `submit_batch` → `poll_batch` → `collect_results`.
+The synchronous A2A path is unchanged and used when the flag is off / provider
+isn't anthropic. Batch facts (docs.claude.com): ≤100k requests or 256 MB per
+batch, most finish <1h (24h hard cap), results retained 29 days, 50% off.
+
+### Batch run vs synchronous
+
+| Run | Mode | calls | input / output | cost |
+|---|---|---|---|---|
+| `cb5f1567-…` | **batch** | 5 | 14,729 / 2,913 | **$0.0146** |
+| (same tokens at list price) | sync-equiv | 5 | 14,729 / 2,913 | $0.0293 |
+| `1ea707bf-…` | sync (flag off) | 5 | full price | unchanged path |
+
+The batch run costs **exactly 50%** of the synchronous equivalent. Langfuse
+confirms it: the batch generations' `calculated_total_cost` is half the list
+price per call (e.g. $0.003281 vs $0.006562), while sync-run generations show
+full price.
+
+**Verified:**
+- `MESH_SKEPTIC_BATCH=true` submits one batch (`msgbatch_…`), polls to `ended`,
+  collects 5 results matched by `custom_id`, and produces the same verdict
+  shape the sync path does (5 assessments → 5 revisions). Structured output is
+  enforced per request via a forced tool.
+- `MESH_SKEPTIC_BATCH=false` runs the original synchronous A2A path unchanged.
+- **Crash-resume (by design):** `submit_batch` returns the `batch_id`, which
+  LangGraph checkpoints before `poll_batch` runs. A crash during polling
+  resumes at `poll_batch` with the same `batch_id` — it re-polls the existing
+  batch rather than resubmitting. (Structural guarantee from the
+  checkpoint-after-submit node boundary; not force-crashed live.)
+- Unit test covers `custom_id` result-matching, schema-validation failure, and
+  errored/expired items.
+
+> Caching note: the skeptic prompt (~839 tok) is below Haiku 4.5's 4,096 cache
+> threshold, so it isn't cached (a deliberate 11c choice). The 50% batch
+> discount applies regardless; caching would stack on top if the prompt grew.
+
+---
+
+## 11e — Model routing audit
+
+Captured **2026-05-30**. Mostly config + docs — see the finalized routing table
+in [`docs/llm-setup.md`](llm-setup.md).
+
+**Finding:** only three skills call an LLM (`extract_claims`, `challenge_belief`,
+`personalize_digest`); the rest of the fleet is rule-based. Every LLM agent
+already runs the cheapest current-gen tier, `claude-haiku-4-5` — **nothing was
+over-provisioned**, so there were no downgrades to make (and thus no quality
+regressions to validate). The cost wins in this phase came from dedup (11b),
+caching (11c), and batching (11d), not from tier changes. The skeptic→Sonnet
+upgrade is documented as an *optional quality* lever (batching keeps it cheap),
+and the personalizer is left on its recommended Sonnet 4.6 (once/day, tiny
+volume, user-facing).
+
+---
+
 ## Progression
 
-Estimated cost per workload, to be filled in as each sub-phase lands.
+Estimated cost per workload across the phase.
 
 | Stage | Pipeline run | Skeptic sweep | Notes |
 |---|---|---|---|
 | 11a baseline | **$0.1476** (72 calls) | **$0.0201** (5 calls) | Haiku 4.5, no cache, no dedup |
 | 11b post-dedup | **$0.00** on re-run (0 calls) | n/a (sweep has no scouting) | unchanged items skipped; only new/changed extracted |
 | 11c post-caching | **$0.0013/call** (was $0.00205, 54/57 cache reads) | unchanged (skeptic not cached) | 4.8k cached prefix at 0.1x; cheaper/call + better extraction |
-| 11d post-batch sweep | _TBD_ | _TBD_ | Batch API (~50% off) for sweep |
-| 11e final routing | _TBD_ | _TBD_ | per-agent model tier audit |
+| 11d post-batch sweep | unchanged (batch unfit for 6h cadence) | **$0.0146** (was $0.0293 sync, −50%) | Batch API 50% off; sync fallback retained |
+| 11e final routing | unchanged (already cheapest tier) | unchanged | no over-provisioning found; Haiku 4.5 across the board |
 
-> Note: per-run pipeline cost scales with the number of *newly extracted*
-> papers. The 11b dedup lever is measured by re-running the pipeline twice and
-> showing near-zero `extract_claims` calls on the second run, not by comparing a
-> single run's absolute cost.
+### Baseline → final summary
+
+| Workload | Baseline (11a) | After Phase 11 | Lever |
+|---|---|---|---|
+| **Pipeline run** | ~$0.00205 / extracted paper, **re-runs re-extract everything** | ~$0.0013 / extracted paper, **re-runs cost ~$0** | dedup skips seen items; caching halves per-call input on a richer (better) prompt |
+| **Skeptic sweep** | $0.0201 / 5 beliefs (sync, full price) | **$0.0146 / 5 beliefs** (batch, −50%) | Batch API flat 50%; synchronous fallback retained |
+
+> Notes: per-run pipeline cost scales with the number of *newly extracted*
+> papers, so the headline pipeline win is the **dedup** (a re-run costs ~$0),
+> compounded by **caching** lowering per-call cost while improving extraction
+> recall. The skeptic win is the flat **50% batch** discount. All figures are
+> the ledger-recorded `estimated_cost_usd` on `claude-haiku-4-5`.

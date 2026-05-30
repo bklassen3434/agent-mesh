@@ -67,6 +67,19 @@ def init_pg_db() -> None:
         console.print("[green]Postgres knowledge schema already up to date.[/green]")
 
 
+@cli.command("migrate-duckdb-to-pg")
+def migrate_duckdb_to_pg() -> None:
+    """One-time DuckDB -> Postgres knowledge data migration (Phase 12c).
+
+    Reads MESH_DB_PATH (DuckDB) and writes into the knowledge schema at
+    MESH_PG_URL / LANGGRAPH_POSTGRES_URL. Idempotent (truncate-and-reload).
+    Run init-pg-db first.
+    """
+    from mesh_db.duckdb_to_pg import run
+
+    run()
+
+
 _ENTITY_CHOICES = click.Choice([e.value for e in EntityType])
 _SOURCE_CHOICES = click.Choice([s.value for s in SourceType])
 _CLAIM_STATUS_CHOICES = click.Choice([c.value for c in ClaimStatus])

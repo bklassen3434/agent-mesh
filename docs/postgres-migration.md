@@ -299,6 +299,28 @@ Proceed to **12b — Postgres schema + migrations.**
   DuckDB formula); `mesh_writer` can INSERT but **not** DELETE, `mesh_reader` is
   SELECT-only. Full offline suite (383 tests), mypy strict, ruff all pass.
 
+### 12c — data migration (done)
+- `mesh_db.duckdb_to_pg`: one-time, idempotent (truncate-and-reload) DuckDB →
+  Postgres copy. Reads every row, preserves PKs/FKs. Insert order is FK-safe;
+  `claims.superseded_by_claim_id` (self-ref) is filled in a second pass so claim
+  order is irrelevant. JSON columns are read `::VARCHAR` from DuckDB and written
+  `::jsonb`; `VARCHAR[]` → `text[]` via psycopg list adaptation; `FLOAT[384]` →
+  `'[..]'::vector`. Exposed as `mesh.cli migrate-duckdb-to-pg` /
+  `python -m mesh_db.duckdb_to_pg`.
+- Built-in `verify()`: per-table row-count parity, no orphaned claims, belief +
+  relationship claim-id arrays all resolve to real claims, skeptic source rows
+  preserved. The runner exits non-zero if any check fails.
+- **Verified** on the real dev DB (25 entities / 40 sources / 45 claims / 1
+  investigation / 3 runs — counts match, idempotent across two runs) **and** on a
+  rich synthetic fixture exercising the paths the thin dev data can't: a
+  superseded self-ref (`c_old→c1` survived), belief claim-id arrays
+  (`['c1','c2']` / `['c_sk']` survived), a skeptic counter-claim with failure
+  mode (`belief_signals` → diversity=2, skeptic=1, severe=1), and a populated
+  384-dim embedding migrated into pgvector with a working cosine k-NN.
+- Offline regression tests for the pure helpers in `tests/test_duckdb_to_pg.py`
+  (live migration needs both stores, so it's covered by the verification
+  harness, mirroring 12b).
+
 ### Open items carried into later sub-phases
 - Confirm `pipeline_runs`/`llm_usage`/`processed_items` schema placement against the
   `/status` reader and cost CLI when wiring 12e.

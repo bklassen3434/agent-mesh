@@ -94,6 +94,37 @@ trace named `<agent>:<skill>` — e.g. `extraction:extract_claims`,
 
 ---
 
+## 11b — Deduplication before extraction
+
+Captured **2026-05-30**. The coordinator now consults the `processed_items`
+ledger (migration 018) before the extract fan-out. The ledger was backfilled
+from the existing `sources` table on migration, so already-ingested items count
+as processed from day one.
+
+This lever is measured by a **double run**, not a single run's absolute cost —
+per-run cost scales with how many *new* papers a scout happens to return.
+
+| Run | Items seen | Items skipped | Extracted (`extract_claims` calls) | Cost |
+|---|---|---|---|---|
+| #1 `fbba00fa-6c21-44e0-90c7-b187895d4e49` | 57 | 56 | 1 | $0.0016 |
+| #2 `2ae885e4-60e4-4973-8534-7c04f4f69c07` | 57 | 57 | **0** | **$0.0000** |
+
+The second consecutive run made **zero** LLM extraction calls — every scouted
+item was already in the ledger with an unchanged content hash. Skip counts are
+visible in the `ingest` log line (`items_seen` / `items_skipped` /
+`items_to_extract`) and in the run summary (`Items skipped`).
+
+**Savings:** before dedup, a re-scout of the same ~57 items would re-extract all
+of them (~$0.117 at the 11a per-paper rate). After dedup, that re-run costs
+**$0**. In steady state the pipeline only pays to extract genuinely new or
+content-changed items.
+
+> Scope: exact + content-hash dedup keyed on `(source_type, url)`. Semantic
+> near-duplicate detection (reworded titles, cross-posts) via `duckdb-vss` is a
+> deliberate follow-on, not built here.
+
+---
+
 ## Progression
 
 Estimated cost per workload, to be filled in as each sub-phase lands.
@@ -101,7 +132,7 @@ Estimated cost per workload, to be filled in as each sub-phase lands.
 | Stage | Pipeline run | Skeptic sweep | Notes |
 |---|---|---|---|
 | 11a baseline | **$0.1476** (72 calls) | **$0.0201** (5 calls) | Haiku 4.5, no cache, no dedup |
-| 11b post-dedup | _TBD_ | _TBD_ | skip already-processed items |
+| 11b post-dedup | **$0.00** on re-run (0 calls) | n/a (sweep has no scouting) | unchanged items skipped; only new/changed extracted |
 | 11c post-caching | _TBD_ | _TBD_ | cache stable prompt prefix |
 | 11d post-batch sweep | _TBD_ | _TBD_ | Batch API (~50% off) for sweep |
 | 11e final routing | _TBD_ | _TBD_ | per-agent model tier audit |

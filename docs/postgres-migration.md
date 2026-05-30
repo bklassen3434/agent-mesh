@@ -348,9 +348,42 @@ Proceed to **12b — Postgres schema + migrations.**
   rewritten to assert the real `mesh_reader` role rejects writes. Full suite
   (393), mypy strict, ruff all green against Postgres.
 
-### Open items carried into later sub-phases
-- Confirm `pipeline_runs`/`llm_usage`/`processed_items` schema placement against the
-  `/status` reader and cost CLI when wiring 12e.
-- Decide `work_mem` for the API connection if the full-scan signals endpoint stays
-  un-paginated (or paginate it).
-- Build the HNSW index only once entity-resolution populates embeddings.
+### 12e — wire apps, remove DuckDB (done)
+- `docker-compose.yml`: `langgraph-db` → **`mesh-postgres`** (`pgvector/pgvector:pg16`),
+  holding the `knowledge` schema + the operational tables (checkpoints + `schedules`
+  in `public`). DuckDB `mesh-data` volume dropped; volume renamed `mesh_pg_data`;
+  `MESH_DB_PATH` removed everywhere. Role-scoped DSNs wired: coordinator /
+  skeptic-sweep / scheduler use `MESH_PG_WRITER_URL` (`mesh_writer`), the API uses
+  `MESH_PG_READER_URL` (`mesh_reader`); all carry the owner `MESH_PG_URL` +
+  writer/reader passwords so `init_pg` provisions the roles. `docker compose config`
+  validates.
+- DuckDB fully removed: the DuckDB migration runner, the `duckdb_to_pg` tool, the
+  DuckDB `migrations/` dir and their tests are deleted; the `duckdb` dependency is
+  gone from the workspace (verified: no `duckdb` import or dep remains). The
+  one-time data migration is run from the `v0.12.0-phase-12c` tag before cutover.
+- CLI `init-db` now applies the Postgres schema; transitional `init-pg-db` /
+  `migrate-duckdb-to-pg` commands dropped. API schema-ensure is best-effort
+  `init_pg()`, decoupled from the read-only request connection.
+- Docs updated to single-Postgres (CLAUDE.md, README, schema/architecture/
+  deployment/development/wiki + data-store lines in a2a/personalization/
+  derived-signals/cost-baseline). Historical posts/baselines left as written.
+- **Green gate:** full Python suite (383, Postgres via testcontainers), mypy
+  strict (165 files), ruff, and the Phase 10 Playwright suite (25/25) all pass.
+  Behavioral equivalence is exercised by the coordinator-graph + skeptic-sweep
+  tests running the real graphs against Postgres, plus the 12c rich-fixture
+  migration checks.
+
+## 10. Final state (as executed)
+
+Single Postgres (`mesh-postgres`, pgvector) holds knowledge (`knowledge` schema)
++ operational data (`public`). `mesh-db` is a pooled psycopg3 client behind the
+original interface. Coordinator-owned writes are unchanged and now also enforced
+by `mesh_writer`/`mesh_reader` grants. Plain derived-signal views (matviews held
+in reserve). DuckDB and `duckdb-vss` are fully removed. Migrations are numbered
+SQL in `migrations_pg/`, applied by `mesh_db.pg_migrations`.
+
+Resolved open items: `pipeline_runs`/`llm_usage`/`processed_items` placed in
+`knowledge` (the `/status` reader + cost CLI work against it via the same
+connection). Deferred (not needed now): API `work_mem` tuning / paginating the
+all-beliefs signals endpoint; building the HNSW index (only once entity
+resolution populates `name_embedding`) — both belong to the next phases.

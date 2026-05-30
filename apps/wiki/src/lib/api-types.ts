@@ -534,8 +534,8 @@ export interface components {
          * BeliefSignals
          * @description Phase 7b derived signals over a belief.
          *
-         *     Pulled from the belief_hype_substance + belief_reproduction views in
-         *     DuckDB; recomputed on read. Informational only — does not drive any
+         *     Pulled from the belief_hype_substance + belief_reproduction Postgres
+         *     views; recomputed on read. Informational only — does not drive any
          *     mesh behavior in 7b.
          */
         BeliefSignals: {

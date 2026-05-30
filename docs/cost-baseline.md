@@ -125,6 +125,57 @@ content-changed items.
 
 ---
 
+## 11c — Prompt caching
+
+Captured **2026-05-30** on `claude-haiku-4-5`.
+
+**Finding (verified at docs.claude.com):** Claude Haiku 4.5's minimum cacheable
+prefix is **4,096 tokens** (vs 1,024 for Sonnet 4.6). Cache write = 1.25x,
+read = 0.1x, 5-min TTL, max 4 breakpoints. The `AnthropicClient` already marks
+the system prompt with `cache_control`; the prompts were simply below the
+threshold (extractor ~1,062 tok, skeptic ~839 tok), so caching never fired —
+the 11a 0/0 cache columns.
+
+**Change:** the claim-extractor system prompt was expanded to **~4,767 tokens**
+with diverse, correct few-shot examples (all four predicates; blog / leaderboard
+/ forum / repo / robotics sources; empty-list and marketing-only cases). This
+crosses the threshold so caching fires, and — bonus — markedly improves
+extraction (see below). The prompt stays fully prefix-stable; the variable
+abstract remains in the user message. The skeptic was intentionally left alone
+(~5 calls/sweep doesn't amortize a forced 4k prefix).
+
+### Verification run (fresh DB, 57 papers extracted)
+
+run_id `b50d8d2d-df28-4c40-a92e-2a0cafabea38`:
+
+| Metric | Value |
+|---|---|
+| `extract_claims` calls | 57 |
+| calls with a **cache read** | **54 / 57** |
+| cache-read tokens (billed 0.1x) | 283,986 |
+| cache-write tokens (billed 1.25x) | 15,777 |
+| uncached input tokens (abstracts) | 12,035 |
+| output tokens | 2,783 |
+| **cost** | **$0.0741** |
+| claims extracted | **35** (vs ~0 on most baseline papers) |
+
+Langfuse generations show `cache_read` tokens (~5,259/call — system + tool
+schema) consistent across consecutive calls, confirming the cache hits and that
+no variable content sits in the cached prefix.
+
+**Effect:**
+- **Per-call cost:** $0.0741 / 57 = **$0.0013/call**, down ~37% from the 11a
+  baseline's **$0.00205/call** — *despite* the prompt being 4.7x larger,
+  because the prefix is cached at 0.1x.
+- **Without caching**, sending the same 4.8k prompt uncached would cost
+  ~$0.33 for this run; caching brought it to **$0.074 (~77% less)**.
+- **Quality:** the richer few-shot prompt lifted extraction from ~0 claims on
+  most papers to 35 claims across 20 entities in this run.
+- `OllamaClient` is unaffected — it never emits cache markers; the larger
+  system prompt is just more text, and its tests pass.
+
+---
+
 ## Progression
 
 Estimated cost per workload, to be filled in as each sub-phase lands.
@@ -133,7 +184,7 @@ Estimated cost per workload, to be filled in as each sub-phase lands.
 |---|---|---|---|
 | 11a baseline | **$0.1476** (72 calls) | **$0.0201** (5 calls) | Haiku 4.5, no cache, no dedup |
 | 11b post-dedup | **$0.00** on re-run (0 calls) | n/a (sweep has no scouting) | unchanged items skipped; only new/changed extracted |
-| 11c post-caching | _TBD_ | _TBD_ | cache stable prompt prefix |
+| 11c post-caching | **$0.0013/call** (was $0.00205, 54/57 cache reads) | unchanged (skeptic not cached) | 4.8k cached prefix at 0.1x; cheaper/call + better extraction |
 | 11d post-batch sweep | _TBD_ | _TBD_ | Batch API (~50% off) for sweep |
 | 11e final routing | _TBD_ | _TBD_ | per-agent model tier audit |
 

@@ -266,7 +266,14 @@ services:
       context: .
       dockerfile: Dockerfile.api
     environment:
-      MESH_DB_PATH: "/app/data/mesh.db"
+      # Phase 12: single Postgres knowledge + operational store (mesh-postgres).
+      # Owner DSN, used once at startup to apply the schema + roles (best-effort;
+      # CREATE EXTENSION/ROLE need owner privileges). Request handling uses the
+      # read-only role.
+      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
+      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
+      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
       # Phase 6b: MESH_BIND_INTERFACE wins over API_HOST when set. For
       # Tailscale-only access, set MESH_BIND_INTERFACE in .env to the
       # host's tailnet IP (100.x.x.x) and run this service in host
@@ -275,22 +282,18 @@ services:
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
       API_CORS_ORIGINS: "http://localhost:3000"
-      # Status page reads orchestration run state from the LangGraph checkpoint
-      # store (Phase 8). Read-only access to the same Postgres the coordinator
-      # writes checkpoints to. Phase 9 also reads/writes the `schedules` table
-      # here for the Pipelines page.
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
+      # LangGraph checkpoints + the `schedules` table live in the same Postgres
+      # (the `public` schema); the status/Pipelines pages read them here.
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
       # Phase 9: where to reach the scheduler's HTTP control surface. The API
       # proxies trigger/status/reload here; degrades gracefully if it's down.
       SCHEDULER_URL: "http://scheduler:9100"
     env_file:
       - .env
-    volumes:
-      - mesh-data:/app/data
     ports:
       - "8000:8000"
     depends_on:
-      langgraph-db:
+      mesh-postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
@@ -386,14 +389,17 @@ services:
     environment:
       MESH_USE_A2A: "true"
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
-      MESH_DB_PATH: "/app/data/mesh.db"
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
+      # Phase 12: owner DSN applies the schema + roles on startup; the
+      # coordinator's knowledge writes go through the writer role.
+      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
+      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
+      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
     env_file:
       - .env
-    volumes:
-      - mesh-data:/app/data
     depends_on:
-      langgraph-db:
+      mesh-postgres:
         condition: service_healthy
       arxiv-scout:
         condition: service_healthy
@@ -427,18 +433,19 @@ services:
     entrypoint: ["uv", "run", "mesh-skeptic-sweep"]
     environment:
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
-      MESH_DB_PATH: "/app/data/mesh.db"
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
+      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
+      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
+      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
       MESH_SKEPTIC_APPLY_THRESHOLD: ${MESH_SKEPTIC_APPLY_THRESHOLD:-0.7}
       MESH_CURATOR_PICK_COUNT: ${MESH_CURATOR_PICK_COUNT:-5}
       MESH_CURATOR_COOLDOWN_DAYS: ${MESH_CURATOR_COOLDOWN_DAYS:-7}
       MESH_SKEPTIC_SOURCE_RELIABILITY: ${MESH_SKEPTIC_SOURCE_RELIABILITY:-0.4}
     env_file:
       - .env
-    volumes:
-      - mesh-data:/app/data
     depends_on:
-      langgraph-db:
+      mesh-postgres:
         condition: service_healthy
       curator:
         condition: service_healthy
@@ -459,10 +466,16 @@ services:
       MESH_USE_A2A: "true"
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
-      MESH_DB_PATH: "/app/data/mesh.db"
-      # Phase 9: schedule config (interval + enabled) is read from this
-      # Postgres `schedules` table, not the legacy crons below.
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@langgraph-db:5432/langgraph"
+      # Phase 12: the scheduler shells out to mesh-pipeline / mesh-skeptic-sweep,
+      # which inherit this env — owner DSN to apply schema, writer role for the
+      # knowledge writes.
+      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
+      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
+      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
+      # Phase 9: schedule config (interval + enabled) is read from the Postgres
+      # `schedules` table, not the legacy crons below.
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
       # HTTP control surface the API proxies to (status / reload / run).
       SCHEDULER_HOST: "0.0.0.0"
       SCHEDULER_PORT: "9100"
@@ -472,12 +485,10 @@ services:
       MESH_SCHEDULE_SWEEP_CRON: ${MESH_SCHEDULE_SWEEP_CRON:-0 3 * * *}
     env_file:
       - .env
-    volumes:
-      - mesh-data:/app/data
     ports:
       - "9100:9100"
     depends_on:
-      langgraph-db:
+      mesh-postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/healthz')"]
@@ -489,17 +500,18 @@ services:
       - scheduler
     restart: unless-stopped
 
-  # LangGraph checkpoint store (Phase 8). Holds orchestration run state for
-  # the coordinator + skeptic-sweep graphs. Separate from DuckDB, which stays
-  # the knowledge store. Only the orchestration-aware services talk to it.
-  langgraph-db:
-    image: postgres:16-alpine
+  # Phase 12: single Postgres for the whole stack — the knowledge store
+  # (`knowledge` schema, pgvector) plus the operational tables (LangGraph
+  # checkpoints + the `schedules` table in `public`). pgvector replaces the
+  # former embedded DuckDB knowledge store.
+  mesh-postgres:
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: langgraph
       POSTGRES_USER: langgraph
       POSTGRES_PASSWORD: ${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}
     volumes:
-      - langgraph_data:/var/lib/postgresql/data
+      - mesh_pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U langgraph"]
       interval: 5s
@@ -508,7 +520,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  mesh-data:
-    driver: local
-  langgraph_data:
+  mesh_pg_data:
     driver: local

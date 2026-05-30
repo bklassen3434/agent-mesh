@@ -37,13 +37,15 @@ Pricing per million tokens: **$1.00 input, $5.00 output**.
 
 A typical `make pipeline` run (20 arxiv papers, ~500 input + ~500 output tokens each) costs **roughly $0.01–$0.05**. Set a low monthly cap in the console for peace of mind.
 
-### Prompt caching
+### Prompt caching (Phase 11c)
 
-The claim-extractor system prompt is sent with `cache_control: {"type": "ephemeral"}`, so it would normally be reused across calls within a 5-minute window at ~10× discount.
+The claim-extractor system prompt is sent with `cache_control: {"type": "ephemeral"}`, so the stable prefix is reused across calls within a 5-minute window at a 0.1× read rate (write is 1.25×).
 
-**Caveat:** Haiku 4.5 has a 4096-token minimum cacheable prefix. The current claim-extraction system prompt is ~400 tokens, so the cache won't fire on Haiku — the marker is a no-op. It will start working automatically if the prompt grows past 4K, or if you switch to a model with a lower minimum.
+Haiku 4.5 has a **4,096-token minimum cacheable prefix**. As of Phase 11c the claim-extraction system prompt is expanded to ~4.8k tokens (a richer few-shot set), so the cache **fires**: within a pipeline run, the 2nd+ `extract_claims` calls read the prefix from cache. In a representative 57-paper run, 54/57 calls hit the cache and per-call cost fell from ~$0.00205 (11a) to ~$0.0013 despite the larger prompt — see `docs/cost-baseline.md`.
 
-Verify cache activity by inspecting `usage.cache_read_input_tokens` in the AnthropicClient debug logs (`logger.debug("anthropic_usage", ...)`).
+The skeptic prompt (~840 tokens) is intentionally **not** padded to the cache threshold (only ~5 calls per sweep — caching wouldn't amortize); the skeptic gets its 50% savings from the Batch API instead (Phase 11d).
+
+Verify cache activity via `usage.cache_read_input_tokens` in the AnthropicClient debug logs, the `llm_usage` ledger's `cache_read_tokens` column, or `mesh.cli cost report` (Cache R/W column).
 
 ### Troubleshooting
 
@@ -154,7 +156,7 @@ No code changes needed; both clients conform to the same `LLMClient` Protocol.
 
 Different agents can use different models. `make_llm_client(agent_name=...)` resolves the model via this precedence chain (highest wins):
 
-1. **`MESH_LLM_MODEL_<AGENT>`** — per-agent override. E.g. `MESH_LLM_MODEL_SKEPTIC=claude-opus-4-7`, `MESH_LLM_MODEL_EXTRACTION=claude-haiku-4-5`. Agent names today: `extraction`, `skeptic`. (More as new LLM-backed agents land.)
+1. **`MESH_LLM_MODEL_<AGENT>`** — per-agent override. E.g. `MESH_LLM_MODEL_SKEPTIC=claude-sonnet-4-6`, `MESH_LLM_MODEL_EXTRACTION=claude-haiku-4-5`. Agent names today: `extraction`, `skeptic`, `personalizer`. (More as new LLM-backed agents land.)
 2. **`MESH_LLM_MODEL_DEFAULT`** — workspace-wide override applied to any agent without a per-agent var.
 3. **`MESH_LLM_MODEL`** — legacy single-model env from Phase 3. Still honored for back-compat.
 4. **Provider hard-coded fallback** — `claude-haiku-4-5` for Anthropic, `qwen3:8b` for Ollama.
@@ -169,3 +171,27 @@ make skeptic    # skeptic uses Opus, all other agents use Haiku
 ```
 
 Verify by grepping the model string in container logs after a run.
+
+### Finalized routing (Phase 11e)
+
+Only **three** skills call an LLM; everything else in the fleet (the 7 scouts,
+entity-tracker, sota-tracker, curator) is rule-based and uses **no model**, so
+there is nothing to route for them. The audit found nothing over-provisioned —
+the cost-optimal tier for every LLM agent is already the cheapest current-gen
+model, `claude-haiku-4-5`.
+
+| Agent (`agent_name`) | Task | Model | Rationale |
+|---|---|---|---|
+| Claim extractor (`extraction`) | Structured extraction from one abstract | **`claude-haiku-4-5`** | Cheapest current tier; the 4.8k few-shot prompt is cached (11c) so it's cheap and high-recall. A larger model isn't justified for span-level extraction. |
+| Skeptic (`skeptic`) | Falsification reasoning over a belief + its claims | **`claude-haiku-4-5`** (default) | Reasoning task — the principle allows a larger tier. Haiku produced sound verdicts in testing, and the sweep is now batched (11d, −50%). If falsification quality proves thin, `MESH_LLM_MODEL_SKEPTIC=claude-sonnet-4-6` is the recommended upgrade; batching keeps it affordable. |
+| Personalizer (`personalizer`) | Rank/curate the user-facing daily brief | **`claude-sonnet-4-6`** (recommended) | User-facing synthesis where quality is visible, and it runs **once per day** over a small candidate set — negligible cost impact. `.env.example` ships this default. Drop to Haiku if cost-sensitive. |
+| Scouts, entity/sota tracker, curator | Feed parsing, find-or-create, rule-based selection | **none** | No LLM call — pure Python. |
+
+**Why no downgrades:** the phase targets cost reduction by removing
+over-provisioning, but every LLM agent already sits on the cheapest 4.x tier
+(Haiku 4.5). Haiku 3.5 is nominally cheaper (~$0.80/Mtok in) but lower quality;
+extraction recall matters (11c), so we keep Haiku 4.5. The remaining levers were
+dedup (11b), caching (11c), and batching (11d), not downgrades.
+
+Verify the model in use by grepping the model string in container logs, or via
+`mesh.cli cost report` (Model column).

@@ -446,3 +446,124 @@ def test_reconcile_middle_band_llm_no_does_not_merge(tmp_db: MeshConnection) -> 
     assert report.merges == 0
     assert get_entity_by_id(tmp_db, a.id) is not None
     assert get_entity_by_id(tmp_db, b.id) is not None
+
+
+# --------------------------------------------------------------------------
+# 13d — live path (resolve before create)
+# --------------------------------------------------------------------------
+
+
+class _RaisingEmbedder:
+    """Fails if embed() is called — proves the alias/exact fast-path skips it."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        raise AssertionError("embedder should not be called on the fast-path")
+
+
+def _count(conn: MeshConnection) -> int:
+    row = conn.execute("SELECT count(*) FROM entities").fetchone()
+    return int(row[0]) if row else 0
+
+
+def test_live_create_new_when_no_candidate(tmp_db: MeshConnection) -> None:
+    from mesh_agents.entity_resolution import resolve_entity_semantic
+
+    embedder = _VecEmbedder({"Mamba": _unit(0)})
+    info = resolve_entity_semantic(
+        tmp_db, embedder, None, "Mamba", type_hint=EntityType.model
+    )
+    assert info.is_new is True
+    assert info.entity_type == "model"
+    # created with an embedding → discoverable by blocking
+    hits = find_candidate_duplicates(tmp_db, _unit(0), entity_type=EntityType.model)
+    assert info.entity_id in [r[0] for r in hits]
+
+
+def test_live_alias_fast_path_skips_embed_and_llm(tmp_db: MeshConnection) -> None:
+    from mesh_agents.entity_resolution import resolve_entity_semantic
+
+    ent = Entity(canonical_name="Mamba", type=EntityType.model, aliases=["MMB"])
+    create_entity(tmp_db, ent)
+
+    # Variant matches an alias → resolves with no embed (RaisingEmbedder) / no LLM.
+    info = resolve_entity_semantic(tmp_db, _RaisingEmbedder(), None, "mmb")
+    assert info.is_new is False
+    assert info.entity_id == ent.id
+
+
+def test_live_high_band_attaches_and_records_alias(tmp_db: MeshConnection) -> None:
+    from mesh_agents.entity_resolution import resolve_entity_semantic
+
+    ent = Entity(canonical_name="Mamba", type=EntityType.model)
+    create_entity(tmp_db, ent)
+    set_entity_embedding(tmp_db, ent.id, _unit(0))
+
+    embedder = _VecEmbedder({"Mamba SSM": _unit(0)})  # identical vector → high band
+    info = resolve_entity_semantic(
+        tmp_db, embedder, None, "Mamba SSM", type_hint=EntityType.model
+    )
+    assert info.is_new is False
+    assert info.entity_id == ent.id
+    refreshed = get_entity_by_id(tmp_db, ent.id)
+    assert refreshed is not None
+    assert "mamba ssm" in {a.lower() for a in refreshed.aliases}
+    assert _count(tmp_db) == 1  # no duplicate created
+
+
+def test_live_middle_band_merges_on_llm_yes(tmp_db: MeshConnection) -> None:
+    from mesh_agents.entity_resolution import resolve_entity_semantic
+
+    ent = Entity(canonical_name="Mamba", type=EntityType.model)
+    create_entity(tmp_db, ent)
+    set_entity_embedding(tmp_db, ent.id, _unit(0))
+
+    embedder = _VecEmbedder({"Gamba": _blend(0, 1, 0.85)})  # middle band
+    yes = _FakeLLM(EntityMatchDecision(same_entity=True, reason="same"))
+    info = resolve_entity_semantic(
+        tmp_db, embedder, yes, "Gamba", type_hint=EntityType.model  # type: ignore[arg-type]
+    )
+    assert info.is_new is False
+    assert info.entity_id == ent.id
+
+
+def test_live_middle_band_creates_on_llm_no_or_absent(tmp_db: MeshConnection) -> None:
+    from mesh_agents.entity_resolution import resolve_entity_semantic
+
+    ent = Entity(canonical_name="Mamba", type=EntityType.model)
+    create_entity(tmp_db, ent)
+    set_entity_embedding(tmp_db, ent.id, _unit(0))
+    embedder = _VecEmbedder({"Gamba": _blend(0, 1, 0.85)})
+
+    no = _FakeLLM(EntityMatchDecision(same_entity=False, reason="diff"))
+    info_no = resolve_entity_semantic(
+        tmp_db, embedder, no, "Gamba", type_hint=EntityType.model  # type: ignore[arg-type]
+    )
+    assert info_no.is_new is True  # LLM said different → new entity
+
+    # llm absent → conservative create (no merge without adjudication).
+    # Use a different off-axis (index 2) so Gomba is middle-band to Mamba but
+    # not a high-band twin of the Gamba created just above.
+    embedder2 = _VecEmbedder({"Gomba": _blend(0, 2, 0.85)})
+    info_none = resolve_entity_semantic(
+        tmp_db, embedder2, None, "Gomba", type_hint=EntityType.model
+    )
+    assert info_none.is_new is True
+
+
+def test_live_repeat_variant_does_not_grow_entity_count(tmp_db: MeshConnection) -> None:
+    from mesh_agents.entity_resolution import resolve_entity_semantic
+
+    embedder = _VecEmbedder({"Mamba": _unit(0)})
+    first = resolve_entity_semantic(
+        tmp_db, embedder, None, "Mamba", type_hint=EntityType.model
+    )
+    assert first.is_new is True
+    assert _count(tmp_db) == 1
+
+    # Re-encountering the exact name resolves via the fast-path — no new entity.
+    second = resolve_entity_semantic(
+        tmp_db, _RaisingEmbedder(), None, "Mamba", type_hint=EntityType.model
+    )
+    assert second.is_new is False
+    assert second.entity_id == first.entity_id
+    assert _count(tmp_db) == 1

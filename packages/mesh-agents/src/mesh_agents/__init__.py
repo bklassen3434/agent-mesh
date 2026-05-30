@@ -16,6 +16,7 @@ from mesh_agents.entity_resolution import (
     adjudicate_same_entity,
     build_adjudication_batch_items,
     classify_pair,
+    resolve_entity_semantic,
 )
 from mesh_agents.entity_tracker import EntityTrackerAgent, EntityTrackerInput, EntityTrackerOutput
 from mesh_agents.sota_tracker import (
@@ -51,4 +52,5 @@ __all__ = [
     "adjudicate_same_entity",
     "build_adjudication_batch_items",
     "classify_pair",
+    "resolve_entity_semantic",
 ]

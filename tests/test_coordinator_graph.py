@@ -8,6 +8,8 @@ shape the imperative coordinator produced.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import math
 import uuid
 from pathlib import Path
 from typing import Any
@@ -70,11 +72,33 @@ class _FakeA2AClient:
         return out
 
 
+class _HashEmbedder:
+    """Deterministic, model-free embedder for tests: distinct texts map to
+    near-orthogonal unit vectors (so unrelated entities don't falsely dedup),
+    identical texts to identical vectors. Keeps CI from downloading a model."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for t in texts:
+            digest = hashlib.sha256(t.encode()).digest()
+            raw = (digest * (384 // len(digest) + 1))[:384]
+            vals = [b / 255.0 - 0.5 for b in raw]
+            norm = math.sqrt(sum(v * v for v in vals)) or 1.0
+            out.append([v / norm for v in vals])
+        return out
+
+
 def _run(db: str, responses: dict[str, Any]) -> _FakeA2AClient:
     from mesh_pipeline.coordinator import run_pipeline
 
     fake = _FakeA2AClient(responses)
-    with patch("mesh_pipeline.coordinator.MeshA2AClient", return_value=fake):
+    with (
+        patch("mesh_pipeline.coordinator.MeshA2AClient", return_value=fake),
+        patch(
+            "mesh_pipeline.coordinator._make_resolution_deps",
+            return_value=(_HashEmbedder(), None),
+        ),
+    ):
         asyncio.run(
             run_pipeline(categories=["cs.AI"], max_papers=5, since=None, db_path=db)
         )

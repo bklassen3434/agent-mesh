@@ -16,10 +16,23 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from mesh_db.claims import list_claims
+from mesh_db.connection import MeshConnection
+from mesh_db.entities import (
+    create_entity,
+    find_candidate_duplicates,
+    get_entity_by_id,
+    set_entity_embedding,
+    update_entity,
+)
 from mesh_llm.batch import BatchRequestItem
 from mesh_llm.client import LLMResponseError
+from mesh_llm.embeddings import Embedder, entity_embed_text
 from mesh_llm.protocol import LLMClient
+from mesh_models.entity import Entity, EntityType
 from pydantic import BaseModel, Field
+
+from mesh_agents.entity_tracker import ResolvedEntityInfo
 
 MatchDecision = Literal["merge", "reject", "adjudicate"]
 
@@ -173,4 +186,106 @@ def entity_for_match_from_claims(
         entity_type=entity_type,
         aliases=tuple(aliases or ()),
         sample_claims=tuple(samples),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Live path (Phase 13d) — resolve a candidate name before creating an entity.
+# ---------------------------------------------------------------------------
+
+
+def _find_by_name_or_alias(
+    conn: MeshConnection, name: str
+) -> tuple[str, str, str] | None:
+    """Exact/alias string fast-path. Returns (id, canonical_name, type) or None.
+    Resolves the vast majority of repeat references with no embed and no LLM."""
+    row = conn.execute(
+        """
+        SELECT id, canonical_name, type FROM entities
+        WHERE lower(canonical_name) = lower(%s)
+           OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE lower(a) = lower(%s))
+        LIMIT 1
+        """,
+        [name, name],
+    ).fetchone()
+    return (str(row[0]), str(row[1]), str(row[2])) if row else None
+
+
+def _record_alias(conn: MeshConnection, entity_id: str, surface: str) -> None:
+    """Append a novel surface form to an entity's aliases (case-insensitive),
+    so the string fast-path resolves it next time without blocking."""
+    ent = get_entity_by_id(conn, entity_id)
+    if ent is None:
+        return
+    known = {ent.canonical_name.lower(), *(a.lower() for a in ent.aliases)}
+    if surface.lower() in known:
+        return
+    update_entity(conn, entity_id, aliases=[*ent.aliases, surface])
+
+
+def resolve_entity_semantic(
+    conn: MeshConnection,
+    embedder: Embedder,
+    llm: LLMClient | None,
+    name: str,
+    *,
+    type_hint: EntityType | str | None = None,
+    config: ResolutionConfig | None = None,
+    k: int = 10,
+) -> ResolvedEntityInfo:
+    """Resolve one candidate name to a canonical entity, creating one if needed.
+
+    Order: (1) alias/exact string fast-path — no embed, no LLM; (2) embed + block
+    (type-filtered) + classify the nearest candidate; high → attach, low → create
+    new, middle → LLM adjudicate (attach iff same; create new when the LLM is
+    absent — conservative). Attaching records a novel surface form as an alias.
+    New entities are created with their embedding. Coordinator/writer-owned."""
+    cfg = config or ResolutionConfig.from_env()
+
+    fast = _find_by_name_or_alias(conn, name)
+    if fast is not None:
+        eid, cname, ctype = fast
+        return ResolvedEntityInfo(
+            name=name, entity_id=eid, canonical_name=cname,
+            entity_type=ctype, is_new=False,
+        )
+
+    etype = (
+        type_hint if isinstance(type_hint, EntityType)
+        else (EntityType(type_hint) if type_hint else EntityType.concept)
+    )
+    etype_val = etype.value
+    vec = embedder.embed([entity_embed_text(name, etype_val)])[0]
+
+    attach: tuple[str, str, str] | None = None
+    candidates = find_candidate_duplicates(conn, vec, entity_type=etype_val, k=k)
+    if candidates:
+        cid, cname, ctype, distance = candidates[0]
+        decision = classify_pair(1.0 - distance, cfg)
+        if decision == "merge":
+            attach = (cid, cname, ctype)
+        elif decision == "adjudicate" and llm is not None:
+            cand = get_entity_by_id(conn, cid)
+            b = entity_for_match_from_claims(
+                cname, ctype,
+                aliases=cand.aliases if cand else None,
+                claims=list_claims(conn, entity_id=cid, limit=3),
+            )
+            if adjudicate_same_entity(llm, EntityForMatch(name, etype_val), b).same_entity:
+                attach = (cid, cname, ctype)
+
+    if attach is not None:
+        cid, cname, ctype = attach
+        _record_alias(conn, cid, name)
+        return ResolvedEntityInfo(
+            name=name, entity_id=cid, canonical_name=cname,
+            entity_type=ctype, is_new=False,
+        )
+
+    ent = Entity(canonical_name=name, type=etype)
+    create_entity(conn, ent)
+    set_entity_embedding(conn, ent.id, vec)
+    return ResolvedEntityInfo(
+        name=name, entity_id=ent.id, canonical_name=name,
+        entity_type=etype_val, is_new=True,
     )

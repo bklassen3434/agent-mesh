@@ -42,6 +42,7 @@ from mesh_a2a.node import call_skill_node
 from mesh_a2a.tracing import new_traceparent
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.claim_extractor import ExtractedClaim
+from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
 from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, update_belief
@@ -69,7 +70,9 @@ from mesh_db.processed_items import (
 )
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
+from mesh_llm import Embedder
 from mesh_llm.pricing import estimate_cost
+from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
@@ -273,6 +276,50 @@ def _persist_entities(
             except Exception:
                 pass  # already exists — concurrent insert / hash collision
     return entity_map, created
+
+
+async def _resolve_and_persist(
+    conn: Any,
+    client: MeshA2AClient,
+    embedder: Embedder | None,
+    llm: LLMClient | None,
+    names: list[str],
+    traceparent: str,
+    config: ResolutionConfig | None = None,
+) -> tuple[dict[str, str], int, list[ResolvedEntityInfo]]:
+    """Resolve + persist candidate names, returning (name→id, created, infos).
+
+    With an embedder (the live pipeline) this is the Phase 13 semantic path:
+    alias fast-path → block → match, creating entities with embeddings. Without
+    one (tests / no-embedder setups) it falls back to the exact-match A2A skill.
+    """
+    resolved = await _resolve_entities(conn, client, names, traceparent)
+    if embedder is None:
+        # No embedder → exact-match only (tests / minimal setups).
+        entity_map, created = _persist_entities(conn, resolved)
+        return entity_map, created, resolved
+
+    # Semantic path: keep the skill's exact-match + type assignment, but for
+    # every name it would *create*, run a block→match guard first. On a semantic
+    # match, attach to the canonical (with the skill-provided type as a hint);
+    # otherwise create the new entity with its embedding. Existing exact matches
+    # pass through untouched.
+    emap: dict[str, str] = {}
+    created = 0
+    infos: list[ResolvedEntityInfo] = []
+    for info in resolved:
+        if info.is_new:
+            final = resolve_entity_semantic(
+                conn, embedder, llm, info.name,
+                type_hint=info.entity_type, config=config,
+            )
+        else:
+            final = info
+        infos.append(final)
+        emap[final.name] = final.entity_id
+        if final.is_new:
+            created += 1
+    return emap, created, infos
 
 
 def _insert_claims(
@@ -559,10 +606,18 @@ def _avg_latency(extractions: list[dict[str, Any]]) -> int:
 
 
 def build_coordinator_graph(
-    client: MeshA2AClient, conn: Any, semaphore: asyncio.Semaphore
+    client: MeshA2AClient,
+    conn: Any,
+    semaphore: asyncio.Semaphore,
+    embedder: Embedder | None = None,
+    llm: LLMClient | None = None,
 ) -> StateGraph[CoordinatorState, Any, Any, Any]:
     """Build the coordinator graph. Nodes close over the live A2A client +
-    Postgres connection (non-serializable, so kept out of checkpointed state)."""
+    Postgres connection (non-serializable, so kept out of checkpointed state).
+
+    ``embedder`` (+ optional ``llm`` for adjudication) enables Phase 13 semantic
+    entity resolution; when absent, resolution falls back to exact-match."""
+    resolution_config = ResolutionConfig.from_env()
 
     async def scout(state: CoordinatorState) -> dict[str, Any]:
         discovered = await client.discover(_agent_urls())
@@ -668,8 +723,10 @@ def build_coordinator_graph(
             claims = [ExtractedClaim.model_validate(c) for c in e["claims"]]
             pairs.append((paper, claims))
             names.update(ec.subject_name for ec in claims)
-        resolved = await _resolve_entities(conn, client, list(names), state["traceparent"])
-        entity_map, created = _persist_entities(conn, resolved)
+        entity_map, created, resolved = await _resolve_and_persist(
+            conn, client, embedder, llm, list(names),
+            state["traceparent"], resolution_config,
+        )
         resolved_claims, inserted = _insert_claims(conn, pairs, entity_map, {})
         has_mb = any(r.entity_type in _MODEL_LIKE_TYPES for r in resolved)
         log.info("entities_resolved", total=len(entity_map), created=created, claims=inserted)
@@ -767,8 +824,9 @@ def build_coordinator_graph(
             )
 
         names = {ec.subject_name for _, claims in pairs for ec in claims}
-        resolved = await _resolve_entities(conn, client, list(names), tp)
-        entity_map, created = _persist_entities(conn, resolved)
+        entity_map, created, _resolved = await _resolve_and_persist(
+            conn, client, embedder, llm, list(names), tp, resolution_config,
+        )
         url_to_inv = {
             url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
         }
@@ -879,6 +937,23 @@ def build_coordinator_graph(
     return g
 
 
+def _make_resolution_deps() -> tuple[Embedder | None, LLMClient | None]:
+    """Build the entity-resolution embedder + (best-effort) adjudication LLM for
+    the live pipeline. A missing/unready LLM degrades to high-band/exact-only
+    resolution (no middle-band adjudication) rather than aborting the run."""
+    from mesh_llm import make_embedder, make_llm_client
+
+    embedder = make_embedder()
+    llm: LLMClient | None
+    try:
+        llm = make_llm_client(agent_name="entity_resolution")
+        llm.health_check()
+    except Exception as exc:
+        log.warning("entity_resolution_llm_unavailable", error=str(exc))
+        llm = None
+    return embedder, llm
+
+
 def _result_from_state(state: CoordinatorState) -> PipelineResult:
     errors = [
         {
@@ -955,8 +1030,9 @@ async def run_pipeline(
     }
 
     semaphore = asyncio.Semaphore(_get_concurrency())
+    embedder, llm = _make_resolution_deps()
     async with MeshA2AClient() as client:
-        graph = build_coordinator_graph(client, conn, semaphore)
+        graph = build_coordinator_graph(client, conn, semaphore, embedder, llm)
         async with open_checkpointer() as saver:
             app = graph.compile(checkpointer=saver)
             final = await app.ainvoke(initial_state, config=thread_config(run_id))

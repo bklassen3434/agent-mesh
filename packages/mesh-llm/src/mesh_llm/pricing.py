@@ -67,14 +67,22 @@ def is_priced(model: str) -> bool:
     return _rates_for(model) is not None
 
 
-def estimate_cost(model: str, usage: LLMUsage) -> CostBreakdown:
-    """Estimate USD cost for one call. Unknown/unpriced models cost 0.0."""
+_BATCH_DISCOUNT = 0.5  # Message Batches API: all usage at 50% of standard price
+
+
+def estimate_cost(model: str, usage: LLMUsage, *, batch: bool = False) -> CostBreakdown:
+    """Estimate USD cost for one call. Unknown/unpriced models cost 0.0.
+
+    ``batch=True`` applies the Message Batches API's flat 50% discount across
+    all token kinds.
+    """
     rates = _rates_for(model)
     if rates is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
     input_rate, output_rate = rates
-    per_token_in = input_rate / 1_000_000
-    per_token_out = output_rate / 1_000_000
+    discount = _BATCH_DISCOUNT if batch else 1.0
+    per_token_in = input_rate / 1_000_000 * discount
+    per_token_out = output_rate / 1_000_000 * discount
     return CostBreakdown(
         input_cost=usage.input_tokens * per_token_in,
         output_cost=usage.output_tokens * per_token_out,

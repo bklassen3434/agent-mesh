@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mesh_llm.anthropic_client import AnthropicClient, AnthropicNotReadyError
+from mesh_llm.batch import BatchItemResult, BatchRequestItem
 from mesh_llm.client import (
     LLMProviderNotReadyError,
     LLMResponseError,
@@ -15,6 +16,8 @@ from mesh_llm.usage import LLMUsage
 __all__ = [
     "AnthropicClient",
     "AnthropicNotReadyError",
+    "BatchItemResult",
+    "BatchRequestItem",
     "CostBreakdown",
     "LLMClient",
     "LLMProviderNotReadyError",

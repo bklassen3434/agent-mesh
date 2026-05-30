@@ -6,7 +6,7 @@ import time
 from typing import Any, TypeVar, overload
 
 import anthropic
-from anthropic.types import MessageParam, TextBlockParam
+from anthropic.types import MessageParam, TextBlockParam, ToolUseBlock
 from mesh_tracing.tracing import trace_generation
 from pydantic import BaseModel
 from tenacity import (
@@ -17,6 +17,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from mesh_llm.batch import BatchItemResult, BatchRequestItem
 from mesh_llm.client import LLMProviderNotReadyError, LLMResponseError
 from mesh_llm.pricing import estimate_cost, is_priced
 from mesh_llm.usage import LLMUsage
@@ -255,6 +256,95 @@ class AnthropicClient:
         if response_model is not None:
             return parsed, latency_ms, usage
         return raw, latency_ms, usage
+
+    # ── Message Batches (Phase 11d) ────────────────────────────────────────
+
+    def submit_batch(
+        self, items: list[BatchRequestItem], response_model: type[T]
+    ) -> str:
+        """Submit one Message Batch and return its id. Structured output is
+        enforced per request via a forced tool built from ``response_model``."""
+        tool = _tool_for(response_model)
+        requests: list[dict[str, Any]] = [
+            {
+                "custom_id": item.custom_id,
+                "params": {
+                    "model": self.model,
+                    "max_tokens": item.max_tokens,
+                    "system": [
+                        {
+                            "type": "text",
+                            "text": item.system,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    "messages": [{"role": "user", "content": item.user}],
+                    "tools": [tool],
+                    "tool_choice": {"type": "tool", "name": tool["name"]},
+                },
+            }
+            for item in items
+        ]
+        batch = self._client.messages.batches.create(requests=requests)  # type: ignore[arg-type]
+        return batch.id
+
+    def batch_status(self, batch_id: str) -> str:
+        """Return the batch processing_status: in_progress | ended | canceling."""
+        return self._client.messages.batches.retrieve(batch_id).processing_status
+
+    def collect_batch(
+        self, batch_id: str, response_model: type[T]
+    ) -> dict[str, BatchItemResult]:
+        """Download results and validate each against ``response_model``,
+        keyed by custom_id. Failed/errored/expired items get parsed=None."""
+        out: dict[str, BatchItemResult] = {}
+        tool_name = _tool_name(response_model)
+        for resp in self._client.messages.batches.results(batch_id):
+            cid = resp.custom_id
+            result = resp.result
+            if result.type != "succeeded":
+                out[cid] = BatchItemResult(
+                    custom_id=cid, parsed=None, model=self.model,
+                    error=f"batch result type={result.type}",
+                )
+                continue
+            msg = result.message
+            raw_usage = msg.usage
+            usage = LLMUsage(
+                input_tokens=int(getattr(raw_usage, "input_tokens", 0) or 0),
+                output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
+                cache_read_tokens=int(getattr(raw_usage, "cache_read_input_tokens", 0) or 0),
+                cache_creation_tokens=int(
+                    getattr(raw_usage, "cache_creation_input_tokens", 0) or 0
+                ),
+            )
+            parsed: Any | None = None
+            error: str | None = None
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock) and block.name == tool_name:
+                    try:
+                        parsed = response_model.model_validate(block.input)
+                    except Exception as exc:  # schema drift — record, don't raise
+                        error = f"schema validation failed: {exc}"
+                    break
+            if parsed is None and error is None:
+                error = "no matching tool_use block in batch response"
+            out[cid] = BatchItemResult(
+                custom_id=cid, parsed=parsed, usage=usage, model=self.model, error=error
+            )
+        return out
+
+
+def _tool_name(response_model: type[BaseModel]) -> str:
+    return f"emit_{response_model.__name__.lower()}"
+
+
+def _tool_for(response_model: type[BaseModel]) -> dict[str, Any]:
+    return {
+        "name": _tool_name(response_model),
+        "description": f"Emit a single {response_model.__name__} object.",
+        "input_schema": response_model.model_json_schema(),
+    }
 
 
 @retry(

@@ -1,7 +1,7 @@
 """Phase 11a: llm_usage ledger DB layer."""
 from __future__ import annotations
 
-import duckdb
+from mesh_db.connection import MeshConnection
 from mesh_db.llm_usage import (
     LLMUsageRecord,
     aggregate_usage_by_skill,
@@ -28,7 +28,7 @@ def _rec(
     )
 
 
-def test_create_and_list_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_create_and_list_round_trip(tmp_db: MeshConnection) -> None:
     rec = LLMUsageRecord(
         run_id="run-1",
         agent_name="claim_extractor",
@@ -49,7 +49,7 @@ def test_create_and_list_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert rows[0].estimated_cost_usd == 0.0012
 
 
-def test_aggregate_sums_per_skill(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_aggregate_sums_per_skill(tmp_db: MeshConnection) -> None:
     create_llm_usage(
         tmp_db, _rec("run-1", "extract_claims", input_tokens=100, output_tokens=20,
                      estimated_cost_usd=0.001)
@@ -74,7 +74,7 @@ def test_aggregate_sums_per_skill(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert totals[0].skill_id == "challenge_belief"
 
 
-def test_aggregate_scopes_to_run(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_aggregate_scopes_to_run(tmp_db: MeshConnection) -> None:
     create_llm_usage(tmp_db, _rec("run-1", "extract_claims", input_tokens=100))
     create_llm_usage(tmp_db, _rec("run-2", "extract_claims", input_tokens=999))
     totals = aggregate_usage_by_skill(tmp_db, "run-1")
@@ -82,6 +82,6 @@ def test_aggregate_scopes_to_run(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert totals[0].input_tokens == 100
 
 
-def test_empty_run_returns_no_rows(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_empty_run_returns_no_rows(tmp_db: MeshConnection) -> None:
     assert aggregate_usage_by_skill(tmp_db, "nope") == []
     assert list_llm_usage(tmp_db, "nope") == []

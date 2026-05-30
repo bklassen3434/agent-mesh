@@ -1,21 +1,18 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from typing import Annotated
 
-import duckdb
 from fastapi import Depends
-from mesh_db.connection import get_connection
+from mesh_db.connection import MeshConnection, get_connection
 
 
-def get_conn() -> Iterator[duckdb.DuckDBPyConnection]:
-    """Per-request read-only DuckDB connection.
+def get_conn() -> Iterator[MeshConnection]:
+    """Per-request read-only Postgres connection (from the reader pool).
 
-    Why open-per-request: the coordinator is a short batch writer; opening fresh
-    on each request means we always see committed writes without reconnect
-    bookkeeping, and we never collide with the writer (DuckDB allows multiple
-    concurrent readers in read-only mode).
+    Why open-per-request: the coordinator is the single batch writer; drawing a
+    fresh pooled connection per request means we always see committed writes,
+    and the read-only role (mesh_reader) enforces that the API never writes.
     """
     conn = get_connection(read_only=True)
     try:
@@ -24,14 +21,22 @@ def get_conn() -> Iterator[duckdb.DuckDBPyConnection]:
         conn.close()
 
 
-ConnDep = Annotated[duckdb.DuckDBPyConnection, Depends(get_conn)]
+ConnDep = Annotated[MeshConnection, Depends(get_conn)]
 
 
 def db_exists() -> bool:
-    """True if the configured DB path is present on disk.
+    """True if the knowledge store is reachable and migrated.
 
-    Used by /healthz to fail fast when the volume isn't mounted yet — important
-    on a freshly cloned repo where no pipeline run has been kicked off.
+    Used by /healthz to fail fast when Postgres isn't up or the schema hasn't
+    been applied yet — the Postgres equivalent of the old "is the DuckDB volume
+    mounted?" check. Best-effort: never raises.
     """
-    raw = os.environ.get("MESH_DB_PATH", "./data/mesh.db")
-    return os.path.exists(raw)
+    try:
+        conn = get_connection(read_only=True)
+        try:
+            conn.execute("SELECT 1 FROM knowledge.beliefs LIMIT 1").fetchone()
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        return False

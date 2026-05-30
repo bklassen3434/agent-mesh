@@ -10,7 +10,6 @@ from mesh_db.beliefs import create_belief, get_belief_by_id
 from mesh_db.claims import create_claim, list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity
-from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.revisions import list_revisions
 from mesh_db.sources import create_source, list_sources
@@ -23,7 +22,6 @@ from mesh_models.source import Source, SourceType
 def _seed(db_path: str) -> tuple[str, str]:
     """Seed one belief + supporting claim + entity. Returns (belief_id, entity_id)."""
     conn = get_connection(db_path)
-    apply_migrations(conn)
 
     entity = Entity(canonical_name="TestModel-7B", type=EntityType.model)
     create_entity(conn, entity)
@@ -321,7 +319,6 @@ def test_curator_payload_includes_last_challenged_at(tmp_path: Path) -> None:
 def test_no_held_beliefs_records_empty_run(tmp_path: Path) -> None:
     db = str(tmp_path / "sweep.db")
     conn = get_connection(db)
-    apply_migrations(conn)
     conn.close()
 
     _run(db, {})  # discovery never called because we short-circuit

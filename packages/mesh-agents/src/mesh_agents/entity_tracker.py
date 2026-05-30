@@ -3,9 +3,9 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-import duckdb
 from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
 from mesh_models.entity import Entity, EntityType
 from pydantic import BaseModel
@@ -28,13 +28,13 @@ class EntityTrackerOutput(BaseModel):
     created_count: int = 0
 
 
-def _find_entity_by_name(conn: duckdb.DuckDBPyConnection, name: str) -> str | None:
+def _find_entity_by_name(conn: MeshConnection, name: str) -> str | None:
     """Return entity_id if found by canonical_name or alias (case-insensitive)."""
     row = conn.execute(
         """
         SELECT id FROM entities
-        WHERE lower(canonical_name) = lower(?)
-           OR len(list_filter(aliases, x -> lower(x) = lower(?))) > 0
+        WHERE lower(canonical_name) = lower(%s)
+           OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE lower(a) = lower(%s))
         LIMIT 1
         """,
         [name, name],
@@ -154,7 +154,7 @@ class EntityTrackerAgent(BaseAgent):
     async def run(self, input: BaseModel) -> EntityTrackerOutput:
         """Phase 1 path: requires db_conn. Queries and writes directly."""
         assert isinstance(input, EntityTrackerInput)
-        assert isinstance(self.db_conn, duckdb.DuckDBPyConnection)
+        assert isinstance(self.db_conn, MeshConnection)
 
         resolved: dict[str, str] = {}
         created_count = 0

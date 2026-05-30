@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import asyncio
 
-import duckdb
 from mesh_agents.entity_tracker import EntityTrackerAgent, EntityTrackerInput
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity, get_entity_by_id
 from mesh_models.entity import Entity, EntityType
 
 
 class TestEntityTrackerAgent:
-    def test_creates_new_entity_when_not_found(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_creates_new_entity_when_not_found(self, tmp_db: MeshConnection) -> None:
         agent = EntityTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(agent.run(EntityTrackerInput(names=["GPT-4"])))
         assert "GPT-4" in output.resolved
         assert output.created_count == 1
 
-    def test_finds_existing_by_canonical_name(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_finds_existing_by_canonical_name(self, tmp_db: MeshConnection) -> None:
         entity = Entity(canonical_name="BERT", type=EntityType.model)
         create_entity(tmp_db, entity)
 
@@ -24,7 +24,7 @@ class TestEntityTrackerAgent:
         assert output.resolved["BERT"] == entity.id
         assert output.created_count == 0
 
-    def test_finds_existing_by_alias(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_finds_existing_by_alias(self, tmp_db: MeshConnection) -> None:
         entity = Entity(
             canonical_name="BERT",
             type=EntityType.model,
@@ -37,7 +37,7 @@ class TestEntityTrackerAgent:
         assert output.resolved["bert-base"] == entity.id
         assert output.created_count == 0
 
-    def test_case_insensitive_canonical_match(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_case_insensitive_canonical_match(self, tmp_db: MeshConnection) -> None:
         entity = Entity(canonical_name="GPT-4", type=EntityType.model)
         create_entity(tmp_db, entity)
 
@@ -46,7 +46,7 @@ class TestEntityTrackerAgent:
         assert output.resolved["gpt-4"] == entity.id
         assert output.created_count == 0
 
-    def test_case_insensitive_alias_match(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_case_insensitive_alias_match(self, tmp_db: MeshConnection) -> None:
         entity = Entity(
             canonical_name="LLaMA",
             type=EntityType.model,
@@ -58,7 +58,7 @@ class TestEntityTrackerAgent:
         output = asyncio.run(agent.run(EntityTrackerInput(names=["LLAMA"])))
         assert output.resolved["LLAMA"] == entity.id
 
-    def test_type_hint_applied_to_new_entity(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_type_hint_applied_to_new_entity(self, tmp_db: MeshConnection) -> None:
         agent = EntityTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(
             agent.run(
@@ -72,20 +72,20 @@ class TestEntityTrackerAgent:
         assert entity is not None
         assert entity.type == EntityType.benchmark
 
-    def test_default_type_concept(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_default_type_concept(self, tmp_db: MeshConnection) -> None:
         agent = EntityTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(agent.run(EntityTrackerInput(names=["SomeNewThing"])))
         entity = get_entity_by_id(tmp_db, output.resolved["SomeNewThing"])
         assert entity is not None
         assert entity.type == EntityType.concept
 
-    def test_multiple_names_batch(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_multiple_names_batch(self, tmp_db: MeshConnection) -> None:
         agent = EntityTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(agent.run(EntityTrackerInput(names=["Alpha", "Beta", "Gamma"])))
         assert len(output.resolved) == 3
         assert output.created_count == 3
 
-    def test_no_duplicates_on_second_run(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_no_duplicates_on_second_run(self, tmp_db: MeshConnection) -> None:
         agent = EntityTrackerAgent(db_conn=tmp_db)
         out1 = asyncio.run(agent.run(EntityTrackerInput(names=["GPT-4"])))
         out2 = asyncio.run(agent.run(EntityTrackerInput(names=["GPT-4"])))

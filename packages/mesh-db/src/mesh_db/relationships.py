@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import duckdb
 from mesh_models.relationship import Relationship
+
+from mesh_db.connection import MeshConnection
 
 
 def _row_to_relationship(row: tuple[Any, ...]) -> Relationship:
@@ -24,12 +25,12 @@ _SELECT = (
 )
 
 
-def create_relationship(conn: duckdb.DuckDBPyConnection, model: Relationship) -> Relationship:
+def create_relationship(conn: MeshConnection, model: Relationship) -> Relationship:
     conn.execute(
         """
         INSERT INTO relationships
             (id, from_entity_id, to_entity_id, type, evidence_claim_ids, confidence)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -43,13 +44,13 @@ def create_relationship(conn: duckdb.DuckDBPyConnection, model: Relationship) ->
     return model
 
 
-def get_relationship_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Relationship | None:
-    row = conn.execute(f"{_SELECT} WHERE id = ?", [id]).fetchone()
+def get_relationship_by_id(conn: MeshConnection, id: str) -> Relationship | None:
+    row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_relationship(row) if row else None
 
 
 def list_relationships(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     from_entity_id: str | None = None,
     to_entity_id: str | None = None,
     limit: int = 100,
@@ -57,19 +58,19 @@ def list_relationships(
     conditions: list[str] = []
     params: list[Any] = []
     if from_entity_id is not None:
-        conditions.append("from_entity_id = ?")
+        conditions.append("from_entity_id = %s")
         params.append(from_entity_id)
     if to_entity_id is not None:
-        conditions.append("to_entity_id = ?")
+        conditions.append("to_entity_id = %s")
         params.append(to_entity_id)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
-    rows = conn.execute(f"{_SELECT}{where} LIMIT ?", params).fetchall()
+    rows = conn.execute(f"{_SELECT}{where} LIMIT %s", params).fetchall()
     return [_row_to_relationship(r) for r in rows]
 
 
 def update_relationship(
-    conn: duckdb.DuckDBPyConnection, id: str, **fields: Any
+    conn: MeshConnection, id: str, **fields: Any
 ) -> Relationship:
     allowed = {"type", "evidence_claim_ids", "confidence"}
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -79,11 +80,11 @@ def update_relationship(
             raise ValueError(f"Relationship {id} not found")
         return rel
 
-    set_clauses = [f"{k} = ?" for k in updates]
+    set_clauses = [f"{k} = %s" for k in updates]
     params: list[Any] = list(updates.values())
     params.append(id)
     conn.execute(
-        f"UPDATE relationships SET {', '.join(set_clauses)} WHERE id = ?", params
+        f"UPDATE relationships SET {', '.join(set_clauses)} WHERE id = %s", params
     )
     rel = get_relationship_by_id(conn, id)
     if rel is None:

@@ -14,8 +14,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 
-import duckdb
 from pydantic import BaseModel
+
+from mesh_db.connection import MeshConnection
 
 
 class ProcessedItem(BaseModel):
@@ -35,13 +36,13 @@ class ProcessedDecision(StrEnum):
 
 
 def get_processed_item(
-    conn: duckdb.DuckDBPyConnection, source_type: str, external_id: str
+    conn: MeshConnection, source_type: str, external_id: str
 ) -> ProcessedItem | None:
     row = conn.execute(
         """
         SELECT source_type, external_id, content_hash, first_seen_at, last_seen_at
         FROM processed_items
-        WHERE source_type = ? AND external_id = ?
+        WHERE source_type = %s AND external_id = %s
         """,
         [source_type, external_id],
     ).fetchone()
@@ -57,7 +58,7 @@ def get_processed_item(
 
 
 def decide(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     source_type: str,
     external_id: str,
     content_hash: str,
@@ -71,7 +72,7 @@ def decide(
 
 
 def record_processed_item(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     source_type: str,
     external_id: str,
     content_hash: str,
@@ -84,7 +85,7 @@ def record_processed_item(
         """
         INSERT INTO processed_items
             (source_type, external_id, content_hash, first_seen_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (source_type, external_id) DO UPDATE SET
             content_hash = excluded.content_hash,
             last_seen_at = excluded.last_seen_at
@@ -94,7 +95,7 @@ def record_processed_item(
 
 
 def touch_processed_item(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     source_type: str,
     external_id: str,
     now: datetime | None = None,
@@ -104,8 +105,8 @@ def touch_processed_item(
     ts = now or datetime.now(UTC)
     conn.execute(
         """
-        UPDATE processed_items SET last_seen_at = ?
-        WHERE source_type = ? AND external_id = ?
+        UPDATE processed_items SET last_seen_at = %s
+        WHERE source_type = %s AND external_id = %s
         """,
         [ts, source_type, external_id],
     )

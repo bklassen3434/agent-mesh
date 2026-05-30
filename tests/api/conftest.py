@@ -10,7 +10,6 @@ from mesh_db.beliefs import create_belief
 from mesh_db.claims import create_claim
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity
-from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source
@@ -22,16 +21,15 @@ from mesh_models.source import Source, SourceType
 
 
 @pytest.fixture
-def empty_db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A migrated but empty DB; MESH_DB_PATH points to it for the test."""
-    db_path = tmp_path / "api.db"
-    monkeypatch.setenv("MESH_DB_PATH", str(db_path))
-    conn = get_connection(read_only=False)
-    try:
-        apply_migrations(conn)
-    finally:
-        conn.close()
-    return db_path
+def empty_db_path(tmp_path: Path) -> Path:
+    """An empty knowledge store.
+
+    The schema lives in the session Postgres container (applied once) and is
+    truncated before every test by the autouse fixture, so "empty" needs no
+    work here. The returned path is vestigial (MESH_DB_PATH no longer drives
+    the store) but kept so dependent fixtures' signatures are unchanged.
+    """
+    return tmp_path / "api.db"
 
 
 @pytest.fixture

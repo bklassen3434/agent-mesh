@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import duckdb
 from mesh_db.beliefs import create_belief
 from mesh_db.claims import create_claim
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
 from mesh_db.sources import create_source
 from mesh_models.belief import Belief
@@ -18,13 +18,13 @@ from mesh_models.entity import Entity, EntityType
 from mesh_models.source import Source, SourceType
 
 
-def _seed_entity(conn: duckdb.DuckDBPyConnection) -> str:
+def _seed_entity(conn: MeshConnection) -> str:
     e = create_entity(conn, Entity(canonical_name="Model X", type=EntityType.model))
     return e.id
 
 
 def _seed_source(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     *,
     source_type: SourceType = SourceType.arxiv,
     url_suffix: str = "1",
@@ -44,7 +44,7 @@ def _seed_source(
 
 
 def _seed_claim(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     *,
     entity_id: str,
     source_id: str,
@@ -70,21 +70,21 @@ def _seed_claim(
 
 
 def test_reproduction_count_zero_for_belief_with_no_claims(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     b = create_belief(
         tmp_db,
         Belief(topic="t", statement="orphan", confidence=0.5, revision_count=0),
     )
     rows = tmp_db.execute(
-        "SELECT reproduction_count FROM belief_reproduction WHERE belief_id = ?",
+        "SELECT reproduction_count FROM belief_reproduction WHERE belief_id = %s",
         [b.id],
     ).fetchall()
     assert rows == [(0,)]
 
 
 def test_reproduction_count_matches_distinct_source_types_per_canonical(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     eid = _seed_entity(tmp_db)
     # Same canonical claim reported by three source types — counts as 3.
@@ -106,14 +106,14 @@ def test_reproduction_count_matches_distinct_source_types_per_canonical(
         ),
     )
     rows = tmp_db.execute(
-        "SELECT reproduction_count FROM belief_reproduction WHERE belief_id = ?",
+        "SELECT reproduction_count FROM belief_reproduction WHERE belief_id = %s",
         [b.id],
     ).fetchall()
     assert rows == [(3,)]
 
 
 def test_reproduction_canonicalizes_close_scores(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     # 78.42 and 78.38 both round to 78.4 → same canonical, two source types.
     eid = _seed_entity(tmp_db)
@@ -135,21 +135,21 @@ def test_reproduction_canonicalizes_close_scores(
         ),
     )
     rows = tmp_db.execute(
-        "SELECT reproduction_count FROM belief_reproduction WHERE belief_id = ?",
+        "SELECT reproduction_count FROM belief_reproduction WHERE belief_id = %s",
         [b.id],
     ).fetchall()
     assert rows == [(2,)]
 
 
 def test_hype_substance_anchors_at_half_for_empty(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     b = create_belief(
         tmp_db,
         Belief(topic="t", statement="empty", confidence=0.5, revision_count=0),
     )
     rows = tmp_db.execute(
-        "SELECT hype_substance_score FROM belief_hype_substance WHERE belief_id = ?",
+        "SELECT hype_substance_score FROM belief_hype_substance WHERE belief_id = %s",
         [b.id],
     ).fetchall()
     score = rows[0][0]
@@ -157,7 +157,7 @@ def test_hype_substance_anchors_at_half_for_empty(
 
 
 def test_hype_substance_rewards_diverse_sources_and_reproduction(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     eid = _seed_entity(tmp_db)
     obj = {"benchmark": "MMLU", "score": 78.4}
@@ -175,7 +175,7 @@ def test_hype_substance_rewards_diverse_sources_and_reproduction(
         ),
     )
     row = tmp_db.execute(
-        "SELECT hype_substance_score FROM belief_hype_substance WHERE belief_id = ?",
+        "SELECT hype_substance_score FROM belief_hype_substance WHERE belief_id = %s",
         [b.id],
     ).fetchone()
     assert row is not None
@@ -186,7 +186,7 @@ def test_hype_substance_rewards_diverse_sources_and_reproduction(
 
 
 def test_hype_substance_penalizes_severe_skeptic_attacks(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     eid = _seed_entity(tmp_db)
     # One supporting claim from arxiv to give the belief some baseline
@@ -215,7 +215,7 @@ def test_hype_substance_penalizes_severe_skeptic_attacks(
         ),
     )
     row = tmp_db.execute(
-        "SELECT hype_substance_score FROM belief_hype_substance WHERE belief_id = ?",
+        "SELECT hype_substance_score FROM belief_hype_substance WHERE belief_id = %s",
         [b.id],
     ).fetchone()
     assert row is not None
@@ -225,7 +225,7 @@ def test_hype_substance_penalizes_severe_skeptic_attacks(
 
 
 def test_signal_columns_exposed_on_belief_hype_substance(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     b = create_belief(
         tmp_db,
@@ -236,7 +236,7 @@ def test_signal_columns_exposed_on_belief_hype_substance(
         SELECT source_type_diversity, reproduction_count,
                skeptic_counter_claim_count, severe_failure_mode_count,
                claims_last_30d, hype_substance_score
-        FROM belief_hype_substance WHERE belief_id = ?
+        FROM belief_hype_substance WHERE belief_id = %s
         """,
         [b.id],
     ).fetchone()

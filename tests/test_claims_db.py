@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import duckdb
+import psycopg
 import pytest
 from mesh_db.claims import create_claim, get_claim_by_id, list_claims, update_claim_status
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
 from mesh_db.sources import create_source
 from mesh_models.claim import Claim, ClaimStatus
@@ -12,7 +13,7 @@ from mesh_models.entity import Entity, EntityType
 from mesh_models.source import Source, SourceType
 
 
-def _setup(conn: duckdb.DuckDBPyConnection) -> tuple[str, str]:
+def _setup(conn: MeshConnection) -> tuple[str, str]:
     e = Entity(canonical_name="GPT-4", type=EntityType.model)
     s = Source(
         type=SourceType.arxiv,
@@ -38,7 +39,7 @@ def _make_claim(entity_id: str, source_id: str, **kwargs: object) -> Claim:
     return Claim(**defaults)  # type: ignore[arg-type]
 
 
-def test_create_and_get(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_create_and_get(tmp_db: MeshConnection) -> None:
     eid, sid = _setup(tmp_db)
     c = _make_claim(eid, sid)
     create_claim(tmp_db, c)
@@ -47,7 +48,7 @@ def test_create_and_get(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert fetched.predicate == "has_parameter_count"
 
 
-def test_object_json_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_object_json_round_trip(tmp_db: MeshConnection) -> None:
     eid, sid = _setup(tmp_db)
     c = _make_claim(eid, sid, object={"value": "175B", "unit": "params"})
     create_claim(tmp_db, c)
@@ -56,7 +57,7 @@ def test_object_json_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert fetched.object["unit"] == "params"
 
 
-def test_list_by_entity(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_list_by_entity(tmp_db: MeshConnection) -> None:
     eid, sid = _setup(tmp_db)
     create_claim(tmp_db, _make_claim(eid, sid, predicate="p1"))
     create_claim(tmp_db, _make_claim(eid, sid, predicate="p2"))
@@ -64,7 +65,7 @@ def test_list_by_entity(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert len(result) == 2
 
 
-def test_list_by_status(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_list_by_status(tmp_db: MeshConnection) -> None:
     eid, sid = _setup(tmp_db)
     c = _make_claim(eid, sid)
     create_claim(tmp_db, c)
@@ -73,7 +74,7 @@ def test_list_by_status(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert any(r.id == c.id for r in retracted)
 
 
-def test_update_claim_status(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_update_claim_status(tmp_db: MeshConnection) -> None:
     eid, sid = _setup(tmp_db)
     c1 = _make_claim(eid, sid, predicate="original")
     c2 = _make_claim(eid, sid, predicate="replacement")
@@ -84,13 +85,13 @@ def test_update_claim_status(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert updated.superseded_by_claim_id == c2.id
 
 
-def test_content_fields_not_mutable(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_content_fields_not_mutable(tmp_db: MeshConnection) -> None:
     """No general update_claim function exists — only update_claim_status."""
     from mesh_db import claims as claims_module
     assert not hasattr(claims_module, "update_claim")
 
 
-def test_fk_constraint_missing_entity(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_fk_constraint_missing_entity(tmp_db: MeshConnection) -> None:
     s = Source(
         type=SourceType.arxiv,
         url="u",
@@ -103,5 +104,5 @@ def test_fk_constraint_missing_entity(tmp_db: duckdb.DuckDBPyConnection) -> None
         object={}, source_id=s.id,
         extracted_by_agent="a", raw_excerpt="",
     )
-    with pytest.raises(duckdb.Error):
+    with pytest.raises(psycopg.errors.Error):
         create_claim(tmp_db, c)

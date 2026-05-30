@@ -12,6 +12,7 @@ dev-dependencies = [
     "httpx>=0.27",
     "mypy>=1.8",
     "ruff>=0.3",
+    "testcontainers>=4.0",
     "mesh-cli",
     "mesh-db",
     "mesh-models",
@@ -96,5 +97,7 @@ module = [
     "apscheduler.*",
     "langfuse",
     "langfuse.*",
+    "testcontainers",
+    "testcontainers.*",
 ]
 ignore_missing_imports = true

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-import duckdb
 from mesh_agents.sota_tracker import ResolvedClaim, SotaTrackerAgent, SotaTrackerInput
 from mesh_db.beliefs import create_belief
+from mesh_db.connection import MeshConnection
 from mesh_models.belief import Belief
 
 
@@ -27,7 +27,7 @@ def _rc(
 
 
 class TestSotaTrackerAgent:
-    def test_new_benchmark_creates_belief(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_new_benchmark_creates_belief(self, tmp_db: MeshConnection) -> None:
         agent = SotaTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(
             agent.run(SotaTrackerInput(claims_with_resolved_entities=[
@@ -38,7 +38,7 @@ class TestSotaTrackerAgent:
         assert output.belief_updates[0].is_new_belief is True
         assert output.belief_updates[0].topic == "sota:MMLU"
 
-    def test_better_score_creates_revision(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_better_score_creates_revision(self, tmp_db: MeshConnection) -> None:
         # Pre-existing belief with score 80
         belief = Belief(
             topic="sota:MMLU",
@@ -58,7 +58,7 @@ class TestSotaTrackerAgent:
         assert update.is_new_belief is False
         assert update.existing_belief_id == belief.id
 
-    def test_worse_score_no_update(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_worse_score_no_update(self, tmp_db: MeshConnection) -> None:
         belief = Belief(
             topic="sota:MMLU",
             statement="SomeModel achieves 95.0 accuracy on MMLU (as of 2024-01-01)",
@@ -74,7 +74,7 @@ class TestSotaTrackerAgent:
         )
         assert output.belief_updates == []
 
-    def test_non_score_claims_ignored(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_non_score_claims_ignored(self, tmp_db: MeshConnection) -> None:
         agent = SotaTrackerAgent(db_conn=tmp_db)
         non_score = _rc("c4", "entity-4", "MMLU", 90.0, predicate="outperforms")
         output = asyncio.run(
@@ -82,7 +82,7 @@ class TestSotaTrackerAgent:
         )
         assert output.belief_updates == []
 
-    def test_multiple_benchmarks_in_one_batch(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_multiple_benchmarks_in_one_batch(self, tmp_db: MeshConnection) -> None:
         agent = SotaTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(
             agent.run(SotaTrackerInput(claims_with_resolved_entities=[
@@ -95,7 +95,7 @@ class TestSotaTrackerAgent:
         assert "sota:HumanEval" in topics
 
     def test_multiple_claims_same_benchmark_picks_best(
-        self, tmp_db: duckdb.DuckDBPyConnection
+        self, tmp_db: MeshConnection
     ) -> None:
         agent = SotaTrackerAgent(db_conn=tmp_db)
         output = asyncio.run(
@@ -109,7 +109,7 @@ class TestSotaTrackerAgent:
         update = output.belief_updates[0]
         assert "92.5" in update.new_statement
 
-    def test_claim_without_benchmark_skipped(self, tmp_db: duckdb.DuckDBPyConnection) -> None:
+    def test_claim_without_benchmark_skipped(self, tmp_db: MeshConnection) -> None:
         agent = SotaTrackerAgent(db_conn=tmp_db)
         claim = ResolvedClaim(
             claim_id="c10",

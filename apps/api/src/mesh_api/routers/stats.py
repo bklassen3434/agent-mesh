@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import duckdb
 from fastapi import APIRouter
 from mesh_db.beliefs import count_beliefs
 from mesh_db.claims import count_claims
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import count_entities
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.sources import count_sources
@@ -14,7 +14,7 @@ from mesh_api.schemas import StatsResponse
 router = APIRouter(prefix="/api/v1", tags=["stats"])
 
 
-def _scalar_count(conn: duckdb.DuckDBPyConnection, sql: str) -> int:
+def _scalar_count(conn: MeshConnection, sql: str) -> int:
     row = conn.execute(sql).fetchone()
     return int(row[0]) if row else 0
 

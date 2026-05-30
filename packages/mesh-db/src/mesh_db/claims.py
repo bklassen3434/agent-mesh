@@ -4,8 +4,10 @@ import json
 from datetime import datetime
 from typing import Any
 
-import duckdb
 from mesh_models.claim import Claim, ClaimStatus, FailureMode
+from psycopg.types.json import Jsonb
+
+from mesh_db.connection import MeshConnection
 
 
 def _row_to_claim(row: tuple[Any, ...]) -> Claim:
@@ -41,20 +43,20 @@ _SELECT = (
 )
 
 
-def create_claim(conn: duckdb.DuckDBPyConnection, model: Claim) -> Claim:
+def create_claim(conn: MeshConnection, model: Claim) -> Claim:
     conn.execute(
         """
         INSERT INTO claims
             (id, predicate, subject_entity_id, object, source_id,
             extracted_at, extracted_by_agent, raw_excerpt, status, confidence,
             superseded_by_claim_id, failure_mode)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
             model.predicate,
             model.subject_entity_id,
-            json.dumps(model.object),
+            Jsonb(model.object),
             model.source_id,
             model.extracted_at,
             model.extracted_by_agent,
@@ -68,8 +70,8 @@ def create_claim(conn: duckdb.DuckDBPyConnection, model: Claim) -> Claim:
     return model
 
 
-def get_claim_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Claim | None:
-    row = conn.execute(f"{_SELECT} WHERE id = ?", [id]).fetchone()
+def get_claim_by_id(conn: MeshConnection, id: str) -> Claim | None:
+    row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_claim(row) if row else None
 
 
@@ -85,23 +87,23 @@ def _claim_filters(
     conditions: list[str] = []
     params: list[Any] = []
     if entity_id is not None:
-        conditions.append("subject_entity_id = ?")
+        conditions.append("subject_entity_id = %s")
         params.append(entity_id)
     if source_id is not None:
-        conditions.append("source_id = ?")
+        conditions.append("source_id = %s")
         params.append(source_id)
     if status is not None:
-        conditions.append("status = ?")
+        conditions.append("status = %s")
         params.append(status.value)
     if predicate is not None:
-        conditions.append("predicate = ?")
+        conditions.append("predicate = %s")
         params.append(predicate)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return where, params
 
 
 def list_claims(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     entity_id: str | None = None,
     source_id: str | None = None,
     status: ClaimStatus | None = None,
@@ -114,13 +116,13 @@ def list_claims(
     where, params = _claim_filters(entity_id, source_id, status, predicate)
     params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT ? OFFSET ?", params
+        f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT %s OFFSET %s", params
     ).fetchall()
     return [_row_to_claim(r) for r in rows]
 
 
 def count_claims(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     entity_id: str | None = None,
     source_id: str | None = None,
     status: ClaimStatus | None = None,
@@ -132,11 +134,11 @@ def count_claims(
 
 
 def get_claims_by_ids(
-    conn: duckdb.DuckDBPyConnection, ids: list[str]
+    conn: MeshConnection, ids: list[str]
 ) -> list[Claim]:
     if not ids:
         return []
-    placeholders = ",".join(["?"] * len(ids))
+    placeholders = ",".join(["%s"] * len(ids))
     rows = conn.execute(
         f"{_SELECT} WHERE id IN ({placeholders})", ids
     ).fetchall()
@@ -144,13 +146,13 @@ def get_claims_by_ids(
 
 
 def update_claim_status(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     id: str,
     status: ClaimStatus,
     superseded_by: str | None = None,
 ) -> Claim:
     conn.execute(
-        "UPDATE claims SET status = ?, superseded_by_claim_id = ? WHERE id = ?",
+        "UPDATE claims SET status = %s, superseded_by_claim_id = %s WHERE id = %s",
         [status.value, superseded_by, id],
     )
     claim = get_claim_by_id(conn, id)

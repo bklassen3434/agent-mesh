@@ -16,10 +16,11 @@ The schema (``knowledge.*``) must already exist (see ``mesh_db.pg_migrations``).
 """
 from __future__ import annotations
 
+import os
+
 import duckdb
 import psycopg
 
-from mesh_db.connection import get_connection
 from mesh_db.pg_connection import get_pg_connection
 
 # Tables in FK-safe insert order. `claims` is loaded with a NULL
@@ -210,7 +211,10 @@ def verify(*, duck: duckdb.DuckDBPyConnection, pg: psycopg.Connection) -> list[s
 
 
 def run() -> None:
-    duck = get_connection(read_only=True)
+    # Read the *source* DuckDB file directly — get_connection now returns the
+    # Postgres (destination) store, not DuckDB.
+    duck_path = os.environ.get("MESH_DB_PATH", "./data/mesh.db")
+    duck = duckdb.connect(duck_path, read_only=True)
     try:
         with get_pg_connection() as pg:
             counts = migrate(duck=duck, pg=pg)

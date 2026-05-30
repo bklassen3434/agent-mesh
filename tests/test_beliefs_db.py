@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import duckdb
+import psycopg
 import pytest
 from mesh_db.beliefs import (
     create_belief,
@@ -12,6 +12,7 @@ from mesh_db.beliefs import (
     update_belief,
 )
 from mesh_db.claims import create_claim
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
 from mesh_db.revisions import create_revision, get_revision_by_id, list_revisions
 from mesh_db.sources import create_source
@@ -31,7 +32,7 @@ def _make_belief(**kwargs: object) -> Belief:
     return Belief(**defaults)  # type: ignore[arg-type]
 
 
-def test_create_and_get_belief(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_create_and_get_belief(tmp_db: MeshConnection) -> None:
     b = _make_belief()
     create_belief(tmp_db, b)
     fetched = get_belief_by_id(tmp_db, b.id)
@@ -40,7 +41,7 @@ def test_create_and_get_belief(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert fetched.is_currently_held is True
 
 
-def test_supporting_claims_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_supporting_claims_round_trip(tmp_db: MeshConnection) -> None:
     b = _make_belief(supporting_claim_ids=["c1", "c2"])
     create_belief(tmp_db, b)
     fetched = get_belief_by_id(tmp_db, b.id)
@@ -48,7 +49,7 @@ def test_supporting_claims_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None
     assert set(fetched.supporting_claim_ids) == {"c1", "c2"}
 
 
-def test_contradicting_claims_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_contradicting_claims_round_trip(tmp_db: MeshConnection) -> None:
     b = _make_belief(contradicting_claim_ids=["d1"])
     create_belief(tmp_db, b)
     fetched = get_belief_by_id(tmp_db, b.id)
@@ -56,28 +57,28 @@ def test_contradicting_claims_round_trip(tmp_db: duckdb.DuckDBPyConnection) -> N
     assert "d1" in fetched.contradicting_claim_ids
 
 
-def test_list_by_topic(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_list_by_topic(tmp_db: MeshConnection) -> None:
     create_belief(tmp_db, _make_belief(topic="robotics"))
     create_belief(tmp_db, _make_belief(topic="llm-scaling"))
     robotics = list_beliefs(tmp_db, topic="robotics")
     assert all("robotics" in b.topic for b in robotics)
 
 
-def test_list_currently_held(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_list_currently_held(tmp_db: MeshConnection) -> None:
     create_belief(tmp_db, _make_belief(is_currently_held=True))
     create_belief(tmp_db, _make_belief(is_currently_held=False))
     held = list_beliefs(tmp_db, currently_held=True)
     assert all(b.is_currently_held for b in held)
 
 
-def test_update_belief_statement(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_update_belief_statement(tmp_db: MeshConnection) -> None:
     b = _make_belief()
     create_belief(tmp_db, b)
     updated = update_belief(tmp_db, b.id, statement="Scaling laws hold up to ~1T params.")
     assert "1T" in updated.statement
 
 
-def test_revision_create_and_get(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_revision_create_and_get(tmp_db: MeshConnection) -> None:
     b = _make_belief()
     create_belief(tmp_db, b)
     rev = BeliefRevision(
@@ -95,7 +96,7 @@ def test_revision_create_and_get(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert fetched.rationale == "new paper"
 
 
-def test_list_revisions_by_belief(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_list_revisions_by_belief(tmp_db: MeshConnection) -> None:
     b = _make_belief()
     create_belief(tmp_db, b)
     for i in range(3):
@@ -116,7 +117,7 @@ def test_list_revisions_by_belief(tmp_db: duckdb.DuckDBPyConnection) -> None:
 
 
 def _seed_claim(
-    conn: duckdb.DuckDBPyConnection, extracted_at: datetime
+    conn: MeshConnection, extracted_at: datetime
 ) -> str:
     """Insert a claim with the given timestamp and return its id."""
     now = datetime.now(UTC)
@@ -148,7 +149,7 @@ def _seed_claim(
 
 
 def test_find_stale_beliefs_orders_no_claims_then_oldest(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     now = datetime.now(UTC)
     old_claim_id = _seed_claim(tmp_db, now - timedelta(days=60))
@@ -173,7 +174,7 @@ def test_find_stale_beliefs_orders_no_claims_then_oldest(
 
 
 def test_find_stale_beliefs_uses_max_across_supporting_and_contradicting(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     now = datetime.now(UTC)
     old_claim_id = _seed_claim(tmp_db, now - timedelta(days=60))
@@ -193,7 +194,7 @@ def test_find_stale_beliefs_uses_max_across_supporting_and_contradicting(
 
 
 def test_find_stale_beliefs_skips_superseded(
-    tmp_db: duckdb.DuckDBPyConnection,
+    tmp_db: MeshConnection,
 ) -> None:
     now = datetime.now(UTC)
     old_claim_id = _seed_claim(tmp_db, now - timedelta(days=60))
@@ -209,7 +210,7 @@ def test_find_stale_beliefs_skips_superseded(
     assert all(b.topic != "dropped" for b in stale)
 
 
-def test_revision_fk_constraint(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_revision_fk_constraint(tmp_db: MeshConnection) -> None:
     rev = BeliefRevision(
         belief_id="nonexistent-belief",
         previous_statement="old",
@@ -219,5 +220,5 @@ def test_revision_fk_constraint(tmp_db: duckdb.DuckDBPyConnection) -> None:
         revised_by_agent="synth",
         rationale="test",
     )
-    with pytest.raises(duckdb.Error):
+    with pytest.raises(psycopg.errors.Error):
         create_revision(tmp_db, rev)

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-import duckdb
 from fastapi import APIRouter, HTTPException, Query
 from mesh_db.beliefs import count_beliefs, get_belief_by_id, list_beliefs
 from mesh_db.claims import get_claims_by_ids
+from mesh_db.connection import MeshConnection
 from mesh_db.entities import get_entities_by_ids
 from mesh_db.revisions import list_revisions
 from mesh_db.sources import get_sources_by_ids
@@ -73,7 +73,7 @@ def belief_signals_batch(
     )
     params: list[object] = []
     if ids:
-        placeholders = ",".join(["?"] * len(ids))
+        placeholders = ",".join(["%s"] * len(ids))
         sql += f" WHERE belief_id IN ({placeholders})"
         params.extend(ids)
     rows = conn.execute(sql, params).fetchall()
@@ -88,7 +88,7 @@ def belief_signals_batch(
 
 
 def _hydrate_claims(
-    conn: duckdb.DuckDBPyConnection, claim_ids: list[str]
+    conn: MeshConnection, claim_ids: list[str]
 ) -> list[ClaimWithContext]:
     if not claim_ids:
         return []
@@ -110,7 +110,7 @@ def _hydrate_claims(
 
 
 def hydrate_revisions(
-    conn: duckdb.DuckDBPyConnection, revisions: list[BeliefRevision]
+    conn: MeshConnection, revisions: list[BeliefRevision]
 ) -> list[RevisionWithTriggers]:
     """Join a list of revisions with their trigger claims, preserving order."""
     trigger_ids = {cid for r in revisions for cid in r.trigger_claim_ids}
@@ -163,7 +163,7 @@ def belief_detail(belief_id: str, conn: ConnDep) -> BeliefDetail:
 
 
 def _read_signals(
-    conn: duckdb.DuckDBPyConnection, belief_id: str
+    conn: MeshConnection, belief_id: str
 ) -> BeliefSignals | None:
     row = conn.execute(
         """
@@ -171,7 +171,7 @@ def _read_signals(
                skeptic_counter_claim_count, severe_failure_mode_count,
                claims_last_30d, hype_substance_score
         FROM belief_hype_substance
-        WHERE belief_id = ?
+        WHERE belief_id = %s
         """,
         [belief_id],
     ).fetchone()

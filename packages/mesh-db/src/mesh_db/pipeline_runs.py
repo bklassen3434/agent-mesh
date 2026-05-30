@@ -5,8 +5,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import duckdb
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
+
+from mesh_db.connection import MeshConnection
 
 
 class PipelineError(BaseModel):
@@ -31,14 +33,14 @@ class PipelineRun(BaseModel):
     errors: list[PipelineError] = Field(default_factory=list)
 
 
-def create_pipeline_run(conn: duckdb.DuckDBPyConnection, model: PipelineRun) -> PipelineRun:
+def create_pipeline_run(conn: MeshConnection, model: PipelineRun) -> PipelineRun:
     conn.execute(
         """
         INSERT INTO pipeline_runs
             (id, started_at, finished_at, run_type, triggered_by, papers_scouted,
              sources_inserted, claims_inserted, entities_created, beliefs_created,
              beliefs_revised, avg_extraction_latency_ms, errors)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -53,13 +55,13 @@ def create_pipeline_run(conn: duckdb.DuckDBPyConnection, model: PipelineRun) -> 
             model.beliefs_created,
             model.beliefs_revised,
             model.avg_extraction_latency_ms,
-            json.dumps([e.model_dump() for e in model.errors]),
+            Jsonb([e.model_dump() for e in model.errors]),
         ],
     )
     return model
 
 
-def pipeline_run_exists(conn: duckdb.DuckDBPyConnection, run_id: str) -> bool:
+def pipeline_run_exists(conn: MeshConnection, run_id: str) -> bool:
     """True if a pipeline_runs row with this id already exists.
 
     Used by the LangGraph finalize nodes to stay idempotent: a checkpointed
@@ -67,20 +69,20 @@ def pipeline_run_exists(conn: duckdb.DuckDBPyConnection, run_id: str) -> bool:
     llm_usage ledger writes) must not be duplicated on replay.
     """
     row = conn.execute(
-        "SELECT 1 FROM pipeline_runs WHERE id = ? LIMIT 1", [run_id]
+        "SELECT 1 FROM pipeline_runs WHERE id = %s LIMIT 1", [run_id]
     ).fetchone()
     return row is not None
 
 
 def list_pipeline_runs(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     limit: int = 10,
     run_type: str | None = None,
 ) -> list[PipelineRun]:
     where = ""
     params: list[Any] = []
     if run_type is not None:
-        where = " WHERE run_type = ?"
+        where = " WHERE run_type = %s"
         params.append(run_type)
     params.append(limit)
     rows = conn.execute(
@@ -89,7 +91,7 @@ def list_pipeline_runs(
                sources_inserted, claims_inserted, entities_created, beliefs_created,
                beliefs_revised, avg_extraction_latency_ms, errors
         FROM pipeline_runs{where}
-        ORDER BY started_at DESC LIMIT ?
+        ORDER BY started_at DESC LIMIT %s
         """,
         params,
     ).fetchall()

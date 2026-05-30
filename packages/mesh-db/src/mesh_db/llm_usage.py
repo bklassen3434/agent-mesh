@@ -11,8 +11,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import duckdb
 from pydantic import BaseModel, Field
+
+from mesh_db.connection import MeshConnection
 
 
 class LLMUsageRecord(BaseModel):
@@ -42,14 +43,14 @@ class SkillUsageTotals(BaseModel):
 
 
 def create_llm_usage(
-    conn: duckdb.DuckDBPyConnection, record: LLMUsageRecord
+    conn: MeshConnection, record: LLMUsageRecord
 ) -> LLMUsageRecord:
     conn.execute(
         """
         INSERT INTO llm_usage
             (id, run_id, agent_name, skill_id, model, input_tokens, output_tokens,
              cache_read_tokens, cache_creation_tokens, estimated_cost_usd, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             record.id,
@@ -69,7 +70,7 @@ def create_llm_usage(
 
 
 def aggregate_usage_by_skill(
-    conn: duckdb.DuckDBPyConnection, run_id: str
+    conn: MeshConnection, run_id: str
 ) -> list[SkillUsageTotals]:
     """Per-skill token + cost totals for a run, ordered by cost descending."""
     rows = conn.execute(
@@ -84,7 +85,7 @@ def aggregate_usage_by_skill(
                SUM(cache_creation_tokens) AS cache_creation_tokens,
                SUM(estimated_cost_usd) AS estimated_cost_usd
         FROM llm_usage
-        WHERE run_id = ?
+        WHERE run_id = %s
         GROUP BY skill_id
         ORDER BY estimated_cost_usd DESC
         """,
@@ -107,14 +108,14 @@ def aggregate_usage_by_skill(
 
 
 def list_llm_usage(
-    conn: duckdb.DuckDBPyConnection, run_id: str
+    conn: MeshConnection, run_id: str
 ) -> list[LLMUsageRecord]:
     rows = conn.execute(
         """
         SELECT id, run_id, agent_name, skill_id, model, input_tokens, output_tokens,
                cache_read_tokens, cache_creation_tokens, estimated_cost_usd, created_at
         FROM llm_usage
-        WHERE run_id = ?
+        WHERE run_id = %s
         ORDER BY created_at
         """,
         [run_id],

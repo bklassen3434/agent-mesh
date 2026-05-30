@@ -19,9 +19,9 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
-import duckdb
 from fastapi import APIRouter, HTTPException, Query
 from mesh_a2a.client import MeshA2AClient, SkillCallError, TaskTimeoutError
+from mesh_db.connection import MeshConnection
 from mesh_models.briefing import Briefing, BriefingSection
 
 from mesh_api.deps import ConnDep
@@ -70,7 +70,7 @@ def _window(target: date) -> tuple[datetime, datetime]:
 
 
 def _gather_new_beliefs(
-    conn: duckdb.DuckDBPyConnection, start: datetime, end: datetime
+    conn: MeshConnection, start: datetime, end: datetime
 ) -> list[dict[str, Any]]:
     """Beliefs whose first appearance falls in the window.
 
@@ -84,8 +84,8 @@ def _gather_new_beliefs(
         FROM beliefs
         WHERE revision_count = 0
           AND is_currently_held = TRUE
-          AND last_revised_at >= ?
-          AND last_revised_at < ?
+          AND last_revised_at >= %s
+          AND last_revised_at < %s
         ORDER BY last_revised_at DESC
         LIMIT 50
         """,
@@ -104,7 +104,7 @@ def _gather_new_beliefs(
 
 
 def _gather_revisions(
-    conn: duckdb.DuckDBPyConnection, start: datetime, end: datetime
+    conn: MeshConnection, start: datetime, end: datetime
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -113,7 +113,7 @@ def _gather_revisions(
                r.rationale, r.revised_at, b.topic
         FROM belief_revisions r
         LEFT JOIN beliefs b ON r.belief_id = b.id
-        WHERE r.revised_at >= ? AND r.revised_at < ?
+        WHERE r.revised_at >= %s AND r.revised_at < %s
         ORDER BY r.revised_at DESC
         LIMIT 50
         """,
@@ -137,7 +137,7 @@ def _gather_revisions(
 
 
 def _gather_claims(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     start: datetime,
     end: datetime,
     min_confidence: float = 0.8,
@@ -149,9 +149,9 @@ def _gather_claims(
         FROM claims c
         LEFT JOIN entities e ON e.id = c.subject_entity_id
         WHERE c.status = 'active'
-          AND c.extracted_at >= ?
-          AND c.extracted_at < ?
-          AND c.confidence >= ?
+          AND c.extracted_at >= %s
+          AND c.extracted_at < %s
+          AND c.confidence >= %s
         ORDER BY c.confidence DESC, c.extracted_at DESC
         LIMIT 50
         """,

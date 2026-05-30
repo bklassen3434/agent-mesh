@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import duckdb
 from mesh_models.belief import Belief
+
+from mesh_db.connection import MeshConnection
 
 
 def _row_to_belief(row: tuple[Any, ...]) -> Belief:
@@ -34,12 +35,12 @@ _SELECT = (
 )
 
 
-def create_belief(conn: duckdb.DuckDBPyConnection, model: Belief) -> Belief:
+def create_belief(conn: MeshConnection, model: Belief) -> Belief:
     conn.execute(
         """
         INSERT INTO beliefs (id, topic, statement, supporting_claim_ids, contradicting_claim_ids,
             confidence, last_revised_at, revision_count, is_currently_held)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -56,8 +57,8 @@ def create_belief(conn: duckdb.DuckDBPyConnection, model: Belief) -> Belief:
     return model
 
 
-def get_belief_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Belief | None:
-    row = conn.execute(f"{_SELECT} WHERE id = ?", [id]).fetchone()
+def get_belief_by_id(conn: MeshConnection, id: str) -> Belief | None:
+    row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_belief(row) if row else None
 
 
@@ -70,17 +71,17 @@ def _belief_filters(
     conditions: list[str] = []
     params: list[Any] = []
     if topic is not None:
-        conditions.append("topic ILIKE ?")
+        conditions.append("topic ILIKE %s")
         params.append(f"%{topic}%")
     if currently_held is not None:
-        conditions.append("is_currently_held = ?")
+        conditions.append("is_currently_held = %s")
         params.append(currently_held)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return where, params
 
 
 def list_beliefs(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     topic: str | None = None,
     currently_held: bool | None = None,
     limit: int = 100,
@@ -91,13 +92,13 @@ def list_beliefs(
     where, params = _belief_filters(topic, currently_held)
     params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY last_revised_at DESC LIMIT ? OFFSET ?", params
+        f"{_SELECT}{where} ORDER BY last_revised_at DESC LIMIT %s OFFSET %s", params
     ).fetchall()
     return [_row_to_belief(r) for r in rows]
 
 
 def count_beliefs(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     topic: str | None = None,
     currently_held: bool | None = None,
 ) -> int:
@@ -107,7 +108,7 @@ def count_beliefs(
 
 
 def find_stale_beliefs(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     threshold_days: int,
     limit: int = 100,
 ) -> list[Belief]:
@@ -148,9 +149,9 @@ def find_stale_beliefs(
                b.revision_count, b.is_currently_held
         FROM beliefs b
         JOIN belief_evidence be ON be.belief_id = b.id
-        WHERE COALESCE(be.last_claim_at, TIMESTAMPTZ '1970-01-01') < ?
+        WHERE COALESCE(be.last_claim_at, TIMESTAMPTZ '1970-01-01') < %s
         ORDER BY be.last_claim_at ASC NULLS FIRST
-        LIMIT ?
+        LIMIT %s
         """,
         [cutoff, limit],
     ).fetchall()
@@ -158,7 +159,7 @@ def find_stale_beliefs(
 
 
 def update_belief(
-    conn: duckdb.DuckDBPyConnection, id: str, **fields: Any
+    conn: MeshConnection, id: str, **fields: Any
 ) -> Belief:
     allowed = {
         "statement", "supporting_claim_ids", "contradicting_claim_ids",
@@ -171,11 +172,11 @@ def update_belief(
             raise ValueError(f"Belief {id} not found")
         return belief
 
-    set_clauses = [f"{k} = ?" for k in updates]
+    set_clauses = [f"{k} = %s" for k in updates]
     params: list[Any] = list(updates.values())
     params.append(id)
     conn.execute(
-        f"UPDATE beliefs SET {', '.join(set_clauses)} WHERE id = ?", params
+        f"UPDATE beliefs SET {', '.join(set_clauses)} WHERE id = %s", params
     )
     belief = get_belief_by_id(conn, id)
     if belief is None:

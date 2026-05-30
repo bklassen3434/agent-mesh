@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import duckdb
 from mesh_agents.curator import (
     BeliefForCuration,
     CuratorInput,
     InvestigationSuggestion,
     select_beliefs_to_challenge_pure,
 )
+from mesh_db.connection import MeshConnection
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     create_investigation,
@@ -38,7 +38,7 @@ def _investigation() -> Investigation:
     )
 
 
-def test_attach_claim_appends_no_duplicates(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_attach_claim_appends_no_duplicates(tmp_db: MeshConnection) -> None:
     inv = create_investigation(tmp_db, _investigation())
     inv = attach_claim_to_investigation(tmp_db, inv.id, "claim-a")
     inv = attach_claim_to_investigation(tmp_db, inv.id, "claim-b")
@@ -47,7 +47,7 @@ def test_attach_claim_appends_no_duplicates(tmp_db: duckdb.DuckDBPyConnection) -
     assert inv.collected_claim_ids == ["claim-a", "claim-b"]
 
 
-def test_lifecycle_resolve_after_threshold(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_lifecycle_resolve_after_threshold(tmp_db: MeshConnection) -> None:
     inv = create_investigation(tmp_db, _investigation())
     for cid in ("c1", "c2", "c3"):
         attach_claim_to_investigation(tmp_db, inv.id, cid)
@@ -64,7 +64,7 @@ def test_lifecycle_resolve_after_threshold(tmp_db: duckdb.DuckDBPyConnection) ->
     assert len(fetched.collected_claim_ids) == 3
 
 
-def test_lifecycle_abandon_after_max_runs(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_lifecycle_abandon_after_max_runs(tmp_db: MeshConnection) -> None:
     inv = create_investigation(tmp_db, _investigation())
     update_investigation(
         tmp_db,
@@ -79,7 +79,7 @@ def test_lifecycle_abandon_after_max_runs(tmp_db: duckdb.DuckDBPyConnection) -> 
     assert fetched.pipeline_runs_attempted == 5
 
 
-def test_list_filtered_by_status(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_list_filtered_by_status(tmp_db: MeshConnection) -> None:
     a = create_investigation(tmp_db, _investigation())
     b = create_investigation(tmp_db, _investigation())
     update_investigation(tmp_db, a.id, status=InvestigationStatus.resolved)

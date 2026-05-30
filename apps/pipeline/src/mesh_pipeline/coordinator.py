@@ -54,7 +54,7 @@ from mesh_db.investigations import (
     update_investigation,
 )
 from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
-from mesh_db.migrations import apply_migrations
+from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import (
     PipelineError,
     PipelineRun,
@@ -917,7 +917,7 @@ async def run_pipeline(
     log.info("coordinator_starting", categories=categories, max_papers=max_papers)
 
     conn = get_connection(db_path)
-    apply_migrations(conn)
+    init_pg()
 
     # A manual trigger from the API/scheduler can pin the run id (so the
     # returned id matches this run's pipeline_runs row + checkpoint thread).

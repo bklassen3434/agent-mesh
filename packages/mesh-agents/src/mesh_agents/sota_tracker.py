@@ -5,10 +5,10 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-import duckdb
 from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
 from mesh_db.beliefs import list_beliefs
+from mesh_db.connection import MeshConnection
 from pydantic import BaseModel
 from starlette.applications import Starlette
 
@@ -234,7 +234,7 @@ class SotaTrackerAgent(BaseAgent):
 # ---------------------------------------------------------------------------
 
 
-def _get_sota_belief(conn: duckdb.DuckDBPyConnection, topic: str) -> Any:
+def _get_sota_belief(conn: MeshConnection, topic: str) -> Any:
     beliefs = list_beliefs(conn, topic=topic, currently_held=True, limit=1)
     for b in beliefs:
         if b.topic == topic:
@@ -243,7 +243,7 @@ def _get_sota_belief(conn: duckdb.DuckDBPyConnection, topic: str) -> Any:
 
 
 def _get_sota_belief_as_summary(
-    conn: duckdb.DuckDBPyConnection, topic: str
+    conn: MeshConnection, topic: str
 ) -> BeliefSummary | None:
     belief = _get_sota_belief(conn, topic)
     if belief is None:

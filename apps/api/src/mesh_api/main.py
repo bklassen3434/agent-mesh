@@ -6,7 +6,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mesh_db.connection import get_connection
-from mesh_db.migrations import apply_migrations
+from mesh_db.pg_migrations import init_pg
 
 from mesh_api.routers import (
     beliefs,
@@ -36,7 +36,7 @@ def _ensure_schema() -> None:
     """
     conn = get_connection(read_only=False)
     try:
-        apply_migrations(conn)
+        init_pg()
     finally:
         conn.close()
 

@@ -55,7 +55,7 @@ from mesh_db.claims import create_claim, get_claims_by_ids
 from mesh_db.connection import get_connection
 from mesh_db.entities import get_entity_by_id
 from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
-from mesh_db.migrations import apply_migrations
+from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import (
     PipelineRun,
     create_pipeline_run,
@@ -752,7 +752,7 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
     log.info("skeptic_sweep_starting")
 
     conn = get_connection(db_path)
-    apply_migrations(conn)
+    init_pg()
 
     # A manual trigger from the API/scheduler can pin the run id (so the
     # returned id matches this run's pipeline_runs row + checkpoint thread).

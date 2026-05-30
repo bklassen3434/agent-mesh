@@ -12,7 +12,7 @@ from mesh_agents.sota_tracker import ResolvedClaim, SotaTrackerAgent, SotaTracke
 from mesh_db.beliefs import create_belief, get_belief_by_id, update_belief
 from mesh_db.claims import create_claim
 from mesh_db.connection import get_connection
-from mesh_db.migrations import apply_migrations
+from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import PipelineError, PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
@@ -58,7 +58,7 @@ async def run_pipeline(
         raise SystemExit(f"LLM provider not ready: {exc}") from exc
 
     conn = get_connection(db_path)
-    apply_migrations(conn)
+    init_pg()
 
     run = PipelineRun(
         started_at=datetime.now(UTC),

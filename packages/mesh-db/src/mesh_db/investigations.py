@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-import duckdb
 from mesh_models.investigation import Investigation, InvestigationStatus
+
+from mesh_db.connection import MeshConnection
 
 
 def _row_to_investigation(row: tuple[Any, ...]) -> Investigation:
@@ -51,7 +52,7 @@ _SELECT = (
 
 
 def create_investigation(
-    conn: duckdb.DuckDBPyConnection, model: Investigation
+    conn: MeshConnection, model: Investigation
 ) -> Investigation:
     conn.execute(
         """
@@ -59,7 +60,7 @@ def create_investigation(
             created_at, resolved_at, resolution_belief_id, assigned_scout_agents,
             target_entity_id, hypothesis, suggested_source_types,
             opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -82,30 +83,30 @@ def create_investigation(
     return model
 
 
-def get_investigation_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Investigation | None:
-    row = conn.execute(f"{_SELECT} WHERE id = ?", [id]).fetchone()
+def get_investigation_by_id(conn: MeshConnection, id: str) -> Investigation | None:
+    row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_investigation(row) if row else None
 
 
 def list_investigations(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     status: InvestigationStatus | None = None,
     limit: int = 100,
 ) -> list[Investigation]:
     params: list[Any] = []
     where = ""
     if status is not None:
-        where = " WHERE status = ?"
+        where = " WHERE status = %s"
         params.append(status.value)
     params.append(limit)
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY created_at DESC LIMIT ?", params
+        f"{_SELECT}{where} ORDER BY created_at DESC LIMIT %s", params
     ).fetchall()
     return [_row_to_investigation(r) for r in rows]
 
 
 def update_investigation(
-    conn: duckdb.DuckDBPyConnection, id: str, **fields: Any
+    conn: MeshConnection, id: str, **fields: Any
 ) -> Investigation:
     allowed = {
         "status", "priority", "resolved_at", "resolution_belief_id",
@@ -122,7 +123,7 @@ def update_investigation(
     set_clauses = []
     params: list[Any] = []
     for key, value in updates.items():
-        set_clauses.append(f"{key} = ?")
+        set_clauses.append(f"{key} = %s")
         if key == "status" and isinstance(value, InvestigationStatus):
             params.append(value.value)
         else:
@@ -130,7 +131,7 @@ def update_investigation(
 
     params.append(id)
     conn.execute(
-        f"UPDATE investigations SET {', '.join(set_clauses)} WHERE id = ?", params
+        f"UPDATE investigations SET {', '.join(set_clauses)} WHERE id = %s", params
     )
     inv = get_investigation_by_id(conn, id)
     if inv is None:
@@ -139,7 +140,7 @@ def update_investigation(
 
 
 def attach_claim_to_investigation(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     investigation_id: str,
     claim_id: str,
 ) -> Investigation:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import duckdb
+from mesh_db.connection import MeshConnection
 from mesh_db.processed_items import (
     ProcessedDecision,
     decide,
@@ -13,21 +13,21 @@ from mesh_db.processed_items import (
 )
 
 
-def test_unseen_item(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_unseen_item(tmp_db: MeshConnection) -> None:
     assert decide(tmp_db, "arxiv", "https://x/1", "hashA") is ProcessedDecision.unseen
 
 
-def test_unchanged_item(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_unchanged_item(tmp_db: MeshConnection) -> None:
     record_processed_item(tmp_db, "arxiv", "https://x/1", "hashA")
     assert decide(tmp_db, "arxiv", "https://x/1", "hashA") is ProcessedDecision.unchanged
 
 
-def test_changed_item(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_changed_item(tmp_db: MeshConnection) -> None:
     record_processed_item(tmp_db, "arxiv", "https://x/1", "hashA")
     assert decide(tmp_db, "arxiv", "https://x/1", "hashB") is ProcessedDecision.changed
 
 
-def test_record_is_upsert_preserving_first_seen(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_record_is_upsert_preserving_first_seen(tmp_db: MeshConnection) -> None:
     t0 = datetime(2026, 1, 1, tzinfo=UTC)
     t1 = t0 + timedelta(days=3)
     record_processed_item(tmp_db, "arxiv", "https://x/1", "hashA", now=t0)
@@ -40,7 +40,7 @@ def test_record_is_upsert_preserving_first_seen(tmp_db: duckdb.DuckDBPyConnectio
     assert item.last_seen_at == t1
 
 
-def test_touch_bumps_last_seen_only(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_touch_bumps_last_seen_only(tmp_db: MeshConnection) -> None:
     t0 = datetime(2026, 1, 1, tzinfo=UTC)
     t1 = t0 + timedelta(days=1)
     record_processed_item(tmp_db, "hn", "https://y/2", "hashA", now=t0)
@@ -53,7 +53,7 @@ def test_touch_bumps_last_seen_only(tmp_db: duckdb.DuckDBPyConnection) -> None:
     assert item.last_seen_at == t1
 
 
-def test_distinct_external_ids_are_independent(tmp_db: duckdb.DuckDBPyConnection) -> None:
+def test_distinct_external_ids_are_independent(tmp_db: MeshConnection) -> None:
     record_processed_item(tmp_db, "arxiv", "https://x/1", "hashA")
     assert decide(tmp_db, "arxiv", "https://x/2", "hashA") is ProcessedDecision.unseen
     # same external_id under a different source_type is also independent

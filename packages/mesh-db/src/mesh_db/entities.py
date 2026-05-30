@@ -4,8 +4,10 @@ import json
 from datetime import datetime
 from typing import Any
 
-import duckdb
 from mesh_models.entity import Entity, EntityType
+from psycopg.types.json import Jsonb
+
+from mesh_db.connection import MeshConnection
 
 
 def _row_to_entity(row: tuple[Any, ...]) -> Entity:
@@ -27,19 +29,19 @@ def _row_to_entity(row: tuple[Any, ...]) -> Entity:
     )
 
 
-def create_entity(conn: duckdb.DuckDBPyConnection, model: Entity) -> Entity:
+def create_entity(conn: MeshConnection, model: Entity) -> Entity:
     conn.execute(
         """
         INSERT INTO entities
             (id, canonical_name, aliases, type, attributes, created_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
             model.canonical_name,
             model.aliases,
             model.type.value,
-            json.dumps(model.attributes),
+            Jsonb(model.attributes),
             model.created_at,
             model.last_seen_at,
         ],
@@ -47,10 +49,10 @@ def create_entity(conn: duckdb.DuckDBPyConnection, model: Entity) -> Entity:
     return model
 
 
-def get_entity_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> Entity | None:
+def get_entity_by_id(conn: MeshConnection, id: str) -> Entity | None:
     row = conn.execute(
         "SELECT id, canonical_name, aliases, type, attributes, created_at, last_seen_at "
-        "FROM entities WHERE id = ?",
+        "FROM entities WHERE id = %s",
         [id],
     ).fetchone()
     return _row_to_entity(row) if row else None
@@ -60,7 +62,7 @@ MAX_LIMIT = 200
 
 
 def list_entities(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     type: EntityType | None = None,
     q: str | None = None,
     limit: int = 100,
@@ -75,21 +77,21 @@ def list_entities(
     conditions: list[str] = []
     params: list[Any] = []
     if type is not None:
-        conditions.append("type = ?")
+        conditions.append("type = %s")
         params.append(type.value)
     if q:
-        conditions.append("canonical_name ILIKE ?")
+        conditions.append("canonical_name ILIKE %s")
         params.append(f"%{q}%")
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
-    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
     rows = conn.execute(query, params).fetchall()
     return [_row_to_entity(r) for r in rows]
 
 
 def count_entities(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     type: EntityType | None = None,
     q: str | None = None,
 ) -> int:
@@ -97,10 +99,10 @@ def count_entities(
     conditions: list[str] = []
     params: list[Any] = []
     if type is not None:
-        conditions.append("type = ?")
+        conditions.append("type = %s")
         params.append(type.value)
     if q:
-        conditions.append("canonical_name ILIKE ?")
+        conditions.append("canonical_name ILIKE %s")
         params.append(f"%{q}%")
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
@@ -109,11 +111,11 @@ def count_entities(
 
 
 def get_entities_by_ids(
-    conn: duckdb.DuckDBPyConnection, ids: list[str]
+    conn: MeshConnection, ids: list[str]
 ) -> list[Entity]:
     if not ids:
         return []
-    placeholders = ",".join(["?"] * len(ids))
+    placeholders = ",".join(["%s"] * len(ids))
     rows = conn.execute(
         "SELECT id, canonical_name, aliases, type, attributes, created_at, last_seen_at "
         f"FROM entities WHERE id IN ({placeholders})",
@@ -123,7 +125,7 @@ def get_entities_by_ids(
 
 
 def update_entity(
-    conn: duckdb.DuckDBPyConnection, id: str, **fields: Any
+    conn: MeshConnection, id: str, **fields: Any
 ) -> Entity:
     allowed = {"canonical_name", "aliases", "type", "attributes", "last_seen_at"}
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -136,9 +138,9 @@ def update_entity(
     set_clauses = []
     params: list[Any] = []
     for key, value in updates.items():
-        set_clauses.append(f"{key} = ?")
+        set_clauses.append(f"{key} = %s")
         if key == "attributes":
-            params.append(json.dumps(value))
+            params.append(Jsonb(value))
         elif key == "type" and isinstance(value, EntityType):
             params.append(value.value)
         else:
@@ -146,7 +148,7 @@ def update_entity(
 
     params.append(id)
     conn.execute(
-        f"UPDATE entities SET {', '.join(set_clauses)} WHERE id = ?", params
+        f"UPDATE entities SET {', '.join(set_clauses)} WHERE id = %s", params
     )
     entity = get_entity_by_id(conn, id)
     if entity is None:

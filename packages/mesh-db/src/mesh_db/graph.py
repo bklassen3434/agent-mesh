@@ -11,14 +11,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-import duckdb
+from mesh_db.connection import MeshConnection
 
 # Hard cap on rendered nodes — top-N by belief count. Not configurable.
 NODE_CAP = 200
 
 
 def graph_nodes(
-    conn: duckdb.DuckDBPyConnection, limit: int = NODE_CAP
+    conn: MeshConnection, limit: int = NODE_CAP
 ) -> list[dict[str, Any]]:
     """Top entities by belief count, with last-claim recency.
 
@@ -53,7 +53,7 @@ def graph_nodes(
         LEFT JOIN entity_beliefs eb ON eb.entity_id = e.id
         LEFT JOIN entity_last_claim elc ON elc.entity_id = e.id
         ORDER BY belief_count DESC, e.created_at DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [limit],
     ).fetchall()
@@ -70,7 +70,7 @@ def graph_nodes(
 
 
 def graph_edges(
-    conn: duckdb.DuckDBPyConnection, node_ids: set[str]
+    conn: MeshConnection, node_ids: set[str]
 ) -> list[dict[str, Any]]:
     """Relationships whose both endpoints are in the rendered node set.
 
@@ -82,7 +82,7 @@ def graph_edges(
     rows = conn.execute(
         """
         SELECT from_entity_id, to_entity_id, type,
-               COALESCE(len(evidence_claim_ids), 0) AS claim_count
+               COALESCE(cardinality(evidence_claim_ids), 0) AS claim_count
         FROM relationships
         """
     ).fetchall()

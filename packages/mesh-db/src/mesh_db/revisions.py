@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-import duckdb
 from mesh_models.revision import BeliefRevision
+
+from mesh_db.connection import MeshConnection
 
 
 def _row_to_revision(row: tuple[Any, ...]) -> BeliefRevision:
@@ -37,14 +38,14 @@ _SELECT = (
 )
 
 
-def create_revision(conn: duckdb.DuckDBPyConnection, model: BeliefRevision) -> BeliefRevision:
+def create_revision(conn: MeshConnection, model: BeliefRevision) -> BeliefRevision:
     conn.execute(
         """
         INSERT INTO belief_revisions
             (id, belief_id, previous_statement, new_statement,
             previous_confidence, new_confidence, trigger_claim_ids,
             revised_by_agent, revised_at, rationale)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -62,8 +63,8 @@ def create_revision(conn: duckdb.DuckDBPyConnection, model: BeliefRevision) -> B
     return model
 
 
-def get_revision_by_id(conn: duckdb.DuckDBPyConnection, id: str) -> BeliefRevision | None:
-    row = conn.execute(f"{_SELECT} WHERE id = ?", [id]).fetchone()
+def get_revision_by_id(conn: MeshConnection, id: str) -> BeliefRevision | None:
+    row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_revision(row) if row else None
 
 
@@ -71,7 +72,7 @@ MAX_LIMIT = 200
 
 
 def list_revisions(
-    conn: duckdb.DuckDBPyConnection,
+    conn: MeshConnection,
     belief_id: str | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -81,10 +82,10 @@ def list_revisions(
     params: list[Any] = []
     where = ""
     if belief_id is not None:
-        where = " WHERE belief_id = ?"
+        where = " WHERE belief_id = %s"
         params.append(belief_id)
     params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY revised_at DESC LIMIT ? OFFSET ?", params
+        f"{_SELECT}{where} ORDER BY revised_at DESC LIMIT %s OFFSET %s", params
     ).fetchall()
     return [_row_to_revision(r) for r in rows]

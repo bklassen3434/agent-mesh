@@ -1,4 +1,4 @@
-from mesh_db.connection import get_connection, get_db_path
-from mesh_db.migrations import apply_migrations
+from mesh_db.connection import MeshConnection, get_connection
+from mesh_db.pg_migrations import init_pg
 
-__all__ = ["apply_migrations", "get_connection", "get_db_path"]
+__all__ = ["MeshConnection", "get_connection", "init_pg"]

@@ -13,7 +13,7 @@ from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
 from mesh_db.investigations import get_investigation_by_id, list_investigations
 from mesh_db.llm_usage import aggregate_usage_by_skill
-from mesh_db.migrations import apply_migrations
+from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.relationships import get_relationship_by_id
 from mesh_db.revisions import create_revision, get_revision_by_id, list_revisions
@@ -43,7 +43,7 @@ def cli() -> None:
 def init_db() -> None:
     """Create the database and apply all migrations."""
     conn = _get_conn()
-    apply_migrations(conn)
+    init_pg()
     conn.close()
     console.print("[green]Database initialized.[/green]")
 

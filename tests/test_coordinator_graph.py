@@ -18,7 +18,6 @@ from mesh_db.beliefs import list_beliefs
 from mesh_db.claims import list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import list_entities
-from mesh_db.migrations import apply_migrations
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.sources import list_sources
 
@@ -127,7 +126,6 @@ def _full_responses() -> dict[str, Any]:
 def test_happy_path_inserts_source_claim_entity_belief(tmp_path: Path) -> None:
     db = str(tmp_path / "coord.db")
     conn = get_connection(db)
-    apply_migrations(conn)
     conn.close()
 
     _run(db, _full_responses())
@@ -152,7 +150,6 @@ def test_zero_claims_skips_entity_and_sota(tmp_path: Path) -> None:
     resolution and no sota tracking happen."""
     db = str(tmp_path / "coord.db")
     conn = get_connection(db)
-    apply_migrations(conn)
     conn.close()
 
     responses = {
@@ -182,7 +179,6 @@ def test_zero_claims_skips_entity_and_sota(tmp_path: Path) -> None:
 def test_dedup_second_run_inserts_nothing(tmp_path: Path) -> None:
     db = str(tmp_path / "coord.db")
     conn = get_connection(db)
-    apply_migrations(conn)
     conn.close()
 
     _run(db, _full_responses())
@@ -208,7 +204,6 @@ def test_checkpoint_thread_is_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     db = str(tmp_path / "coord.db")
     conn = get_connection(db)
-    apply_migrations(conn)
     conn.close()
 
     saver = InMemorySaver()

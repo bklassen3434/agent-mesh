@@ -11,13 +11,13 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import duckdb
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from mesh_a2a.checkpoint import RunCheckpointState, read_run_states
 from mesh_db.beliefs import count_beliefs
 from mesh_db.claims import count_claims
+from mesh_db.connection import MeshConnection
 from mesh_db.pipeline_runs import PipelineRun, list_pipeline_runs
 from mesh_db.sources import count_sources
 
@@ -29,7 +29,7 @@ router = APIRouter(tags=["status"])
 # ── data gathering ─────────────────────────────────────────────────────────
 
 
-def _last_run(conn: duckdb.DuckDBPyConnection, run_type: str) -> PipelineRun | None:
+def _last_run(conn: MeshConnection, run_type: str) -> PipelineRun | None:
     rows = list_pipeline_runs(conn, limit=1, run_type=run_type)
     return rows[0] if rows else None
 
@@ -73,7 +73,7 @@ def _next_runs() -> dict[str, datetime | None]:
     return out
 
 
-def _sources_by_type(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
+def _sources_by_type(conn: MeshConnection) -> dict[str, int]:
     rows = conn.execute(
         "SELECT type, COUNT(*) FROM sources GROUP BY type ORDER BY type"
     ).fetchall()
@@ -145,7 +145,7 @@ def _row(k: str, v: str, *, cls: str = "") -> str:
     return f'<tr><td class="k">{k}</td><td class="v"{cls_attr}>{v}</td></tr>'
 
 
-def _section_runs(conn: duckdb.DuckDBPyConnection) -> str:
+def _section_runs(conn: MeshConnection) -> str:
     pipeline = _last_run(conn, "pipeline")
     sweep = _last_run(conn, "skeptic_sweep")
     nexts = _next_runs()
@@ -197,7 +197,7 @@ def _section_runs(conn: duckdb.DuckDBPyConnection) -> str:
 
 
 def _section_counts(
-    conn: duckdb.DuckDBPyConnection, run_states: list[RunCheckpointState]
+    conn: MeshConnection, run_states: list[RunCheckpointState]
 ) -> str:
     n_claims = count_claims(conn)
     n_beliefs_held = count_beliefs(conn, currently_held=True)

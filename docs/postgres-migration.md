@@ -321,6 +321,33 @@ Proceed to **12b — Postgres schema + migrations.**
   (live migration needs both stores, so it's covered by the verification
   harness, mirroring 12b).
 
+### 12d — access-layer rewrite (done)
+- `connection.py` now returns a `MeshConnection` proxy over a `psycopg_pool`
+  ConnectionPool: same call-site contract (`execute`/`fetchone`/`fetchall`/
+  `close`), but `close()` returns the connection to the pool. Writer/reader
+  pools by DSN (`MESH_PG_WRITER_URL`/`MESH_PG_READER_URL`, falling back to the
+  base owner DSN). Autocommit (matches DuckDB's implicit commit). The pool's
+  `configure` sets `search_path TO knowledge, public`, so all unqualified table/
+  view references resolve without rewriting every query.
+- Every `mesh-db` query ported to Postgres dialect: `?`→`%s`, JSON writes wrapped
+  in `Jsonb()` (reads already tolerate dict-or-str), `len()`→`cardinality()`.
+  `UNNEST`, `any_value` (PG16), `ON CONFLICT … excluded`, `ILIKE`, `TIMESTAMPTZ`
+  literals and `NULLS FIRST` are valid Postgres as-is. Agent SQL ported too —
+  the DuckDB `list_filter(aliases, x -> …)` lambda became
+  `EXISTS (SELECT 1 FROM unnest(aliases) …)`. API router raw SQL ported.
+- Schema provisioning decoupled from the runtime connection: the five
+  `apply_migrations(conn)` startup sites (coordinator, skeptic-sweep,
+  orchestrator, API, CLI) now call `init_pg()` (owner connection) — the
+  writer/reader roles can't run DDL.
+- Public method signatures unchanged; call sites only swapped the connection
+  type annotation. Read each query — no blanket transforms (caught a regex `?`
+  in sota_tracker and a Python `"?"` default in the status router).
+- **Tests** moved to testcontainers: a session pgvector/pg16 container, schema +
+  roles via `init_pg`, an autouse truncate for per-test isolation, and a
+  `tmp_db` that yields a pooled connection. The DuckDB read-only-file test was
+  rewritten to assert the real `mesh_reader` role rejects writes. Full suite
+  (393), mypy strict, ruff all green against Postgres.
+
 ### Open items carried into later sub-phases
 - Confirm `pipeline_runs`/`llm_usage`/`processed_items` schema placement against the
   `/status` reader and cost CLI when wiring 12e.

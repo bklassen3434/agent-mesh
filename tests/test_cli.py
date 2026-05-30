@@ -1,29 +1,37 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from click.testing import CliRunner
 from mesh_cli.main import cli
+from mesh_db.connection import get_connection
 
 
 @pytest.fixture
-def runner_with_db(tmp_path: Path) -> tuple[CliRunner, dict[str, str]]:
-    db_path = str(tmp_path / "test.db")
-    env = {"MESH_DB_PATH": db_path}
+def runner_with_db() -> tuple[CliRunner, dict[str, str]]:
+    # The store is the session Postgres container (MESH_PG_URL, set by the
+    # conftest fixture and inherited by the in-process CLI). MESH_DB_PATH is
+    # vestigial post-migration; kept only so the env dict is non-empty.
+    env = {"MESH_DB_PATH": "unused-postgres-backed"}
     runner = CliRunner()
-    # initialize db
     result = runner.invoke(cli, ["init-db"], env=env)
     assert result.exit_code == 0, result.output
     return runner, env
 
 
-def test_init_db(tmp_path: Path) -> None:
-    db_path = str(tmp_path / "new.db")
-    runner = CliRunner()
-    result = runner.invoke(cli, ["init-db"], env={"MESH_DB_PATH": db_path})
-    assert result.exit_code == 0
-    assert Path(db_path).exists()
+def _first_id(table: str, where: str = "") -> str | None:
+    conn = get_connection(read_only=True)
+    try:
+        row = conn.execute(f"SELECT id FROM {table}{where} LIMIT 1").fetchone()
+        return str(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def test_init_db(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
+    runner, env = runner_with_db
+    # Schema is up: a read command succeeds against the initialized store.
+    result = runner.invoke(cli, ["show-entities"], env=env)
+    assert result.exit_code == 0, result.output
 
 
 def test_init_db_idempotent(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
@@ -77,7 +85,6 @@ def test_add_source(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
 
 def test_add_claim(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
     runner, env = runner_with_db
-    # create entity and source first
     r1 = runner.invoke(cli, ["add-entity", "--name", "GPT-4", "--type", "model"], env=env)
     assert r1.exit_code == 0
     r2 = runner.invoke(
@@ -88,14 +95,9 @@ def test_add_claim(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
     )
     assert r2.exit_code == 0
 
-    # extract IDs from DB
-    import duckdb
-    conn = duckdb.connect(env["MESH_DB_PATH"])
-    entity_row = conn.execute("SELECT id FROM entities LIMIT 1").fetchone()
-    source_row = conn.execute("SELECT id FROM sources LIMIT 1").fetchone()
-    conn.close()
-    assert entity_row is not None and source_row is not None
-    eid, sid = entity_row[0], source_row[0]
+    eid = _first_id("entities")
+    sid = _first_id("sources")
+    assert eid is not None and sid is not None
 
     result = runner.invoke(
         cli,
@@ -128,13 +130,8 @@ def test_add_revision(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
         ["add-belief", "--topic", "rl", "--statement", "RL is hard.", "--confidence", "0.7"],
         env=env,
     )
-
-    import duckdb
-    conn = duckdb.connect(env["MESH_DB_PATH"])
-    belief_row = conn.execute("SELECT id FROM beliefs LIMIT 1").fetchone()
-    conn.close()
-    assert belief_row is not None
-    bid = belief_row[0]
+    bid = _first_id("beliefs")
+    assert bid is not None
 
     result = runner.invoke(
         cli,
@@ -153,12 +150,8 @@ def test_show_revisions(runner_with_db: tuple[CliRunner, dict[str, str]]) -> Non
          "--confidence", "0.5"],
         env=env,
     )
-    import duckdb
-    conn = duckdb.connect(env["MESH_DB_PATH"])
-    bid_row = conn.execute("SELECT id FROM beliefs WHERE topic = 'rev-test' LIMIT 1").fetchone()
-    conn.close()
-    assert bid_row is not None
-    bid = bid_row[0]
+    bid = _first_id("beliefs", where=" WHERE topic = 'rev-test'")
+    assert bid is not None
 
     runner.invoke(
         cli,
@@ -174,14 +167,8 @@ def test_show_revisions(runner_with_db: tuple[CliRunner, dict[str, str]]) -> Non
 def test_inspect_entity(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
     runner, env = runner_with_db
     runner.invoke(cli, ["add-entity", "--name", "Inspect-Me", "--type", "lab"], env=env)
-    import duckdb
-    conn = duckdb.connect(env["MESH_DB_PATH"])
-    eid_row = conn.execute(
-        "SELECT id FROM entities WHERE canonical_name = 'Inspect-Me'"
-    ).fetchone()
-    assert eid_row is not None
-    eid = eid_row[0]
-    conn.close()
+    eid = _first_id("entities", where=" WHERE canonical_name = 'Inspect-Me'")
+    assert eid is not None
 
     result = runner.invoke(cli, ["inspect", eid], env=env)
     assert result.exit_code == 0

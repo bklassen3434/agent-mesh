@@ -61,6 +61,12 @@ from mesh_db.pipeline_runs import (
     create_pipeline_run,
     pipeline_run_exists,
 )
+from mesh_db.processed_items import (
+    ProcessedDecision,
+    decide,
+    record_processed_item,
+    touch_processed_item,
+)
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
 from mesh_llm.pricing import estimate_cost
@@ -94,6 +100,7 @@ class PipelineResult(BaseModel):
     run_id: str
     papers_scouted: int
     sources_inserted: int
+    items_skipped: int = 0
     claims_inserted: int
     entities_created: int
     beliefs_created: int
@@ -142,6 +149,7 @@ class CoordinatorState(TypedDict):
     new_papers: list[dict[str, Any]]
     papers_scouted: int
     sources_inserted: int
+    items_skipped: int  # dedup: items skipped (already processed, unchanged)
     # extraction (fan-out workers append here): {paper, claims, latency_ms}
     extractions: Annotated[list[dict[str, Any]], operator.add]
     avg_extraction_latency_ms: int
@@ -473,6 +481,43 @@ def _paper_id_for_error(err: dict[str, Any]) -> str:
     return str(ctx.get("arxiv_id") or ctx.get("investigation_id") or err.get("skill_id") or "")
 
 
+def _item_identity(paper: ScoutedPaper) -> tuple[str, str, str]:
+    """(source_type, external_id, content_hash) used to key the dedup ledger.
+
+    external_id is the source URL — stable and present for every scout (arxiv
+    versions carry the version in the URL, so a new version is a new item)."""
+    return (
+        paper.source.type.value,
+        paper.source.url,
+        paper.source.raw_content_hash,
+    )
+
+
+def _dedup_for_extraction(
+    conn: Any, papers: list[ScoutedPaper], now: datetime
+) -> tuple[list[ScoutedPaper], int]:
+    """Partition scouted papers into (to_extract, skipped_count) using the
+    processed_items ledger. Unseen + content-changed items are extracted;
+    unchanged items are skipped (their last_seen_at bumped). Intra-batch
+    duplicates by (source_type, external_id) collapse to the first occurrence."""
+    to_extract: list[ScoutedPaper] = []
+    skipped = 0
+    seen_in_batch: set[tuple[str, str]] = set()
+    for paper in papers:
+        source_type, external_id, content_hash = _item_identity(paper)
+        key = (source_type, external_id)
+        if key in seen_in_batch:
+            continue
+        seen_in_batch.add(key)
+        decision = decide(conn, source_type, external_id, content_hash)
+        if decision is ProcessedDecision.unchanged:
+            touch_processed_item(conn, source_type, external_id, now)
+            skipped += 1
+        else:
+            to_extract.append(paper)
+    return to_extract, skipped
+
+
 def _persist_llm_usage(
     conn: Any,
     run_id: str,
@@ -556,12 +601,23 @@ def build_coordinator_graph(
 
     async def ingest(state: CoordinatorState) -> dict[str, Any]:
         papers = [ScoutedPaper.model_validate(p) for p in state["raw_papers"]]
-        new_papers = _dedup_and_insert_sources(conn, papers)
-        log.info("ingest", scouted=len(papers), new=len(new_papers))
+        now = datetime.now(UTC)
+        # Dedup gate: skip extraction for items already processed (unchanged
+        # content). Only unseen / content-changed items proceed to extraction.
+        to_extract, skipped = _dedup_for_extraction(conn, papers, now)
+        new_papers = _dedup_and_insert_sources(conn, to_extract)
+        log.info(
+            "ingest",
+            items_seen=len(papers),
+            items_skipped=skipped,
+            items_to_extract=len(to_extract),
+            new_sources=len(new_papers),
+        )
         return {
             "new_papers": [p.model_dump(mode="json") for p in new_papers],
             "papers_scouted": len(papers),
             "sources_inserted": len(new_papers),
+            "items_skipped": skipped,
         }
 
     def route_after_ingest(state: CoordinatorState) -> list[Send] | str:
@@ -744,6 +800,9 @@ def build_coordinator_graph(
             return {"finalized": True, "avg_extraction_latency_ms": avg}
         # Persist per-call token usage for every extraction (main fan-out path).
         # Investigation re-extraction usage is recorded in dispatch_investigations.
+        # Record each extracted item in the dedup ledger now that it has been
+        # processed (record-after-extract, so a failed extraction retries next run).
+        now = datetime.now(UTC)
         for e in state["extractions"]:
             _persist_llm_usage(
                 conn,
@@ -753,6 +812,12 @@ def build_coordinator_graph(
                 e.get("usage"),
                 str(e.get("model") or ""),
             )
+            try:
+                paper = ScoutedPaper.model_validate(e["paper"])
+                source_type, external_id, content_hash = _item_identity(paper)
+                record_processed_item(conn, source_type, external_id, content_hash, now)
+            except Exception:  # never let ledger bookkeeping abort finalize
+                log.warning("processed_item_record_failed", paper=e.get("paper"))
         errors = [
             PipelineError(
                 paper_id=_paper_id_for_error(e),
@@ -827,6 +892,7 @@ def _result_from_state(state: CoordinatorState) -> PipelineResult:
         run_id=state["run_id"],
         papers_scouted=state["papers_scouted"],
         sources_inserted=state["sources_inserted"],
+        items_skipped=state.get("items_skipped", 0),
         claims_inserted=state["claims_inserted"] + state["investigation_claims_inserted"],
         entities_created=state["entities_created"] + state["investigation_entities_created"],
         beliefs_created=state["beliefs_created"],
@@ -869,6 +935,7 @@ async def run_pipeline(
         "new_papers": [],
         "papers_scouted": 0,
         "sources_inserted": 0,
+        "items_skipped": 0,
         "extractions": [],
         "avg_extraction_latency_ms": 0,
         "entities_created": 0,

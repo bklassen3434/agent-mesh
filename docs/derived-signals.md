@@ -81,7 +81,7 @@ symmetric so the score reads as a balance, not a leaderboard.
 - These scores don't gate anything in the pipeline. If you want a
   belief skipped because its hype-substance is below X, that's a
   Phase 8+ change.
-- No score caching. DuckDB views recompute on each query; the math
+- No score caching. Postgres views recompute on each query; the math
   is cheap and the mesh is single-user.
 - No claim-level scoring. The signal lives at the belief level
   because beliefs are the unit of "what do we think is true."

@@ -20,7 +20,7 @@ Phase 0 establishes the substrate. It includes:
 
 - **Repository structure** — uv workspace monorepo with `packages/` and `apps/`
 - **Pydantic v2 models** — typed representations of all seven domain entities
-- **DuckDB schema** — migrations for all tables; single file database at `./data/mesh.db`
+- **Postgres schema** — migrations for all tables in the `knowledge` schema of the single `mesh-postgres` instance (pgvector)
 - **Database access layer** — typed read/write functions for each entity; immutability enforced on Claims
 - **CLI** — `mesh.cli` with subcommands to create and inspect all entity types
 - **Tracing plumbing** — Langfuse wrapper that no-ops without env vars
@@ -90,7 +90,7 @@ Each agent:
 - Is a **pure function** (no DB access, no side effects)
 
 The coordinator:
-- Owns the DuckDB file (mounted as a volume)
+- Owns all knowledge writes via the `mesh_writer` role
 - Pre-fetches DB context (existing entities, beliefs) and passes it to agents
 - Persists all results after each skill call
 
@@ -101,7 +101,7 @@ See [docs/a2a.md](a2a.md) for full protocol documentation.
 Phase 3 makes the mesh legible. The accumulated knowledge — entities, claims,
 beliefs, the revision timeline that proves "claims immutable, beliefs
 mutable" — becomes a browsable web wiki, served by a thin Python read API in
-front of DuckDB.
+front of Postgres.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -111,15 +111,15 @@ front of DuckDB.
 └────────────────────────────┬─────────────────────────────────┘
                              │
 ┌────────────────────────────▼─────────────────────────────────┐
-│  apps/api  (FastAPI, READ_ONLY DuckDB)           :8000        │
+│  apps/api  (FastAPI, read-only Postgres)           :8000        │
 │  /healthz · /openapi.json · /docs                              │
 │  /api/v1/{stats, pipeline-runs}                                │
 │  /api/v1/{entities, claims, beliefs, sources}                  │
 └────────────────────────────┬─────────────────────────────────┘
-                             │  duckdb file (volume: mesh-data)
+                             │  Postgres (mesh-postgres, pgvector)
                              ▼
         ┌────────────────────────────────────────────┐
-        │ DuckDB (single writer, many readers)        │
+        │ Postgres (coordinator writes; API reads as mesh_reader)        │
         └────────────────────────────────────────────┘
                              ▲
                              │  short batch writes only
@@ -254,7 +254,7 @@ automatically. See `docs/agents.md` for per-scout config knobs.
 
 ```
 packages/mesh-models   — Pydantic models; no I/O dependencies
-packages/mesh-db       — DuckDB access; depends on mesh-models
+packages/mesh-db       — Postgres access (psycopg pool); depends on mesh-models
 packages/mesh-tracing  — Langfuse wrapper; no required dependencies
 packages/mesh-llm      — Ollama client; depends on mesh-tracing
 packages/mesh-agents   — Agent classes; depends on mesh-llm, mesh-db, mesh-models
@@ -272,8 +272,8 @@ Dependencies flow strictly downward. `mesh-models` has no internal dependencies.
 
 See [schema.md](schema.md) for full rationale. Key decisions:
 
-1. **Single DuckDB file** — appropriate for Phase 0 and single-node Phase 1. Avoids infra overhead. Path configurable via `MESH_DB_PATH`.
+1. **Single Postgres instance** — knowledge + operational data in one server (mesh-postgres). Connection is env-driven (`MESH_PG_URL` / writer/reader role URLs).
 2. **Claims immutable by design** — enforced at the access layer (no `update_claim()` function exists). Only `update_claim_status()` is allowed.
-3. **Arrays stored as DuckDB native arrays** — cleaner than JSON arrays for list fields like `aliases`, `supporting_claim_ids`.
+3. **Arrays stored as Postgres `text[]`** — cleaner than JSON arrays for list fields like `aliases`, `supporting_claim_ids`.
 4. **JSON for flexible dicts** — `attributes` and `object` stored as JSON strings, parsed on read.
 5. **VSS installed early** — the `name_embedding` column on entities is inert in Phase 0 but positions us for entity resolution in Phase 2 without a schema migration.

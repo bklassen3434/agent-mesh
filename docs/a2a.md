@@ -14,9 +14,9 @@ Phase 1 ran all four agents in the same process. That works but limits horizonta
 
 ### Coordinator owns all DB writes
 
-The coordinator is the only process that touches DuckDB. Agents are pure functions: they receive typed JSON input and return typed JSON output with no side effects.
+The coordinator is the only process that writes the knowledge store (via the `mesh_writer` Postgres role). Agents are pure functions: they receive typed JSON input and return typed JSON output with no side effects.
 
-**Why:** DuckDB supports only one writer at a time. Routing all writes through the coordinator keeps the constraint trivially satisfied and makes the coordinator the single source of truth.
+**Why:** routing all writes through the coordinator keeps it the single source of truth; Postgres roles enforce it (only `mesh_writer` can write knowledge tables, and only the coordinator holds those credentials).
 
 **How it works in practice:**
 - Before calling `resolve_entities`, the coordinator fetches all existing entities from DB and passes them in the request.

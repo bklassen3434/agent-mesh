@@ -8,7 +8,7 @@ write in plain markdown. The wiki's `/briefing` route renders the result.
 1. The wiki calls `GET /api/v1/briefing?date=YYYY-MM-DD` (default = today).
 2. The API loads your profile from `$MESH_PROFILE_PATH`
    (default `~/.config/agent_mesh/profile.md`). Missing profile → HTTP 404.
-3. The API queries DuckDB for the 24h window of the target date: new beliefs,
+3. The API queries Postgres for the 24h window of the target date: new beliefs,
    belief revisions, and high-confidence claims.
 4. If there are no candidates, the API returns a "Quiet day" briefing
    immediately — no LLM call.

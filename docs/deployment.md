@@ -151,5 +151,5 @@ interface is wrong — re-check `MESH_BIND_INTERFACE`.
 - The **scheduler container** (compose profile `scheduler`) keeps the
   mesh ingesting on cron cadence — see [scheduling.md](scheduling.md).
 - The **`make backup`** target is the official "back up the DB" path
-  if/when added; for now a manual `cp data/mesh.db data/mesh.db.bak`
+  if/when added; for now a manual `docker compose exec mesh-postgres pg_dump -U langgraph langgraph > backup.sql`
   is the recommended habit before destructive operations.

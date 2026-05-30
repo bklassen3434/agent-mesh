@@ -15,25 +15,22 @@ to humans. Two new services, both long-lived behind `make up`:
 │   ├── /healthz  /openapi.json  /docs                            │
 │   ├── /api/v1/{stats, pipeline-runs}                            │
 │   ├── /api/v1/{entities, claims, beliefs, sources}              │
-│   └── deps.get_conn() → READ_ONLY DuckDB connection per request │
+│   └── deps.get_conn() → read-only Postgres (mesh_reader) per request │
 └────────────────────────────┬────────────────────────────────────┘
-                             │ duckdb file (volume: mesh-data)
+                             │ Postgres (mesh-postgres)         
                              ▼
-                      mesh.db (DuckDB)
+                      mesh-postgres (PG + pgvector)
                              ▲
                              │ writes (only when running)
                              │
             apps/pipeline/coordinator (batch, on demand)
 ```
 
-## Why API-in-front-of-DuckDB
+## Why API-in-front-of-Postgres
 
-We could have had Next.js open the DuckDB file directly. We chose not to:
+We could have had Next.js query Postgres directly. We chose not to:
 
-1. **DuckDB is single-writer.** Sharing a file with the coordinator from a
-   long-lived Node process is messy; one bad open and the coordinator can't
-   write. A Python process in front of the file gives us a single, narrow
-   place to enforce read-only.
+1. **Writes are coordinator-owned.** Only the coordinator writes the knowledge store (via the `mesh_writer` role); the API connects as the read-only `mesh_reader` role. A single Python service in front is the one narrow place to enforce that — Next.js never gets write-capable DB credentials.
 2. **The API is reusable.** Today it powers the wiki. Tomorrow it powers an
    MCP server, a CLI subcommand, a notebook. None of those should reimplement
    the join logic for "belief with full provenance."
@@ -43,16 +40,12 @@ We could have had Next.js open the DuckDB file directly. We chose not to:
 
 ## Read-only coexistence with the coordinator
 
-The locked decision: the API opens DuckDB in `READ_ONLY` mode. This is what
-allows it to coexist with the coordinator's writes without lock contention.
+The locked decision: the API connects as the read-only `mesh_reader` role. Postgres MVCC lets it coexist with the coordinator's writes without contention, and the role's grants make read-only a hard guarantee, not a convention.
 
-A subtlety that matters in practice: DuckDB's process-level locking means a
-*long-lived* read-only connection might not reflect writes the coordinator
-commits while the API is running. To sidestep that entirely, the API opens
-a **fresh** connection per request:
+The API draws a **pooled** connection per request, so every request sees the latest committed state with no reconnect bookkeeping:
 
 ```python
-def get_conn() -> Iterator[duckdb.DuckDBPyConnection]:
+def get_conn() -> Iterator[MeshConnection]:
     conn = get_connection(read_only=True)
     try:
         yield conn
@@ -60,9 +53,7 @@ def get_conn() -> Iterator[duckdb.DuckDBPyConnection]:
         conn.close()
 ```
 
-On every request: open, query, close. The cost is negligible (DuckDB cold
-opens are millisecond-fast), and the invariant is bulletproof — whatever is
-committed on disk is what the next request sees.
+On every request: check out from the pool, query, return. The cost is negligible (pooled connections, no TCP/auth churn), and the invariant holds — whatever the coordinator has committed is what the next request sees.
 
 Bootstrap is the only exception: at startup the API briefly opens read-write
 to apply (idempotent) migrations, then it never opens read-write again.

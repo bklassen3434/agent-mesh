@@ -13,7 +13,7 @@ skeptic-sweep and read via `mesh.cli cost report --run-id <id>`.
 ## Method
 
 - **Environment:** full docker fleet (`docker-compose.yml`), provider
-  `anthropic`, against the live `mesh-data` DuckDB volume.
+  `anthropic`, against the live knowledge store.
 - **Model routing:** no `MESH_LLM_MODEL_*` overrides set — every agent runs the
   default **`claude-haiku-4-5`** ($1.00 / Mtok input, $5.00 / Mtok output).
   Per-agent routing is revisited in 11e.
@@ -123,7 +123,7 @@ of them (~$0.117 at the 11a per-paper rate). After dedup, that re-run costs
 content-changed items.
 
 > Scope: exact + content-hash dedup keyed on `(source_type, url)`. Semantic
-> near-duplicate detection (reworded titles, cross-posts) via `duckdb-vss` is a
+> near-duplicate detection (reworded titles, cross-posts) via `pgvector` is a
 > deliberate follow-on, not built here.
 
 ---

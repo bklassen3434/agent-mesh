@@ -23,13 +23,13 @@ Represents a named thing in the AI/robotics research domain.
 |-------|------|-------|
 | id | UUID string | Primary key |
 | canonical_name | str | The preferred name |
-| aliases | list[str] | DuckDB native array |
+| aliases | list[str] | Postgres `text[]` array |
 | type | EntityType enum | model, paper, benchmark, method, person, lab, repo, concept |
 | attributes | JSON dict | Flexible key-value metadata |
 | created_at | timestamptz | When first seen |
 | last_seen_at | timestamptz | Updated on each re-encounter |
 
-`name_embedding FLOAT[384]` column exists for future VSS-based entity resolution (Phase 2).
+`name_embedding vector(384)` (pgvector) column exists for future entity resolution; unpopulated today.
 
 ## Sources
 

@@ -11,7 +11,7 @@ The interesting bits, written up at the end of Phase 7:
   (`methodological_flaw`, `cherry_picked_evidence`, …) — not free text the
   next layer has to re-parse. See [`docs/posts/falsification-first.md`](docs/posts/falsification-first.md).
 - **Production-ready without deployment.** The mesh runs on cron via
-  APScheduler, every dispatch is persisted to DuckDB with full lifecycle
+  APScheduler, every dispatch is persisted to Postgres with full lifecycle
   events, and access is single-user Tailscale — the laptop is the
   production environment. See [`docs/posts/production-without-deployment.md`](docs/posts/production-without-deployment.md).
 - **A2A wire protocol.** Agents discover each other via JSON-RPC cards;
@@ -24,7 +24,7 @@ The interesting bits, written up at the end of Phase 7:
 - **Derived signals over beliefs.** `belief_hype_substance` combines
   source diversity, cross-source reproduction, Skeptic attack count, and
   severe failure-mode density into a single 0-1 score per belief. Computed
-  on read by DuckDB views, never stored.
+  on read by Postgres views, never stored.
 
 **Status:** Phases 0–7 complete (7c DSPy deferred to a follow-up). Tagged
 [`v0.7.0-phase-7`](https://github.com/bklassen3434/agent-mesh/releases).
@@ -149,8 +149,8 @@ arxiv  hn    github  bluesky  reddit  blog  leaderboard          ← scouts (7)
                    │
                    ▼
          ┌─────────────────┐
-         │  DuckDB         │
-         │  (single-writer)│
+         │  Postgres       │
+         │  (writer role)  │
          │  - entities     │
          │  - claims       │
          │  - beliefs      │
@@ -179,7 +179,7 @@ arxiv  hn    github  bluesky  reddit  blog  leaderboard          ← scouts (7)
 - [`docs/schema.md`](docs/schema.md) — data model and design rationale
 - [`docs/a2a.md`](docs/a2a.md) — wire protocol + Phase 6b orchestrator-side durability
 - [`docs/agents.md`](docs/agents.md) — agent catalogue
-- [`docs/wiki.md`](docs/wiki.md) — why API-in-front-of-DuckDB
+- [`docs/wiki.md`](docs/wiki.md) — why API-in-front-of-Postgres
 - [`docs/scheduling.md`](docs/scheduling.md) — Phase 6a cron
 - [`docs/deployment.md`](docs/deployment.md) — Tailscale-only access
 - [`docs/personalization.md`](docs/personalization.md) — Phase 5c briefing profile

@@ -21,7 +21,7 @@ cp .env.example .env
 uv run mesh.cli init-db
 ```
 
-This creates `./data/mesh.db` and applies all migrations.
+This applies the Postgres knowledge schema + roles (uses MESH_PG_URL / LANGGRAPH_POSTGRES_URL).
 
 ## Try the CLI
 
@@ -123,7 +123,7 @@ agent-mesh/
 │   └── pipeline/          — mesh-pipeline orchestrator
 ├── packages/
 │   ├── mesh-models/       — Pydantic v2 domain models
-│   ├── mesh-db/           — DuckDB access layer + migrations
+│   ├── mesh-db/           — Postgres access layer (psycopg pool) + migrations
 │   ├── mesh-tracing/      — Langfuse tracing wrapper
 │   ├── mesh-llm/          — Ollama client + prompts
 │   └── mesh-agents/       — Agent classes (scout, extractor, tracker, synthesizer)
@@ -137,7 +137,7 @@ Copy `.env.example` to `.env` and fill in as needed:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MESH_DB_PATH` | `./data/mesh.db` | Path to DuckDB file |
+| `MESH_PG_URL` | (falls back to `LANGGRAPH_POSTGRES_URL`) | Knowledge-store Postgres DSN |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `MESH_LLM_MODEL` | `qwen3:8b` | Model for claim extraction |
 | `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |

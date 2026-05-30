@@ -18,7 +18,6 @@ from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.relationships import get_relationship_by_id
 from mesh_db.revisions import create_revision, get_revision_by_id, list_revisions
 from mesh_db.sources import create_source, get_source_by_id, list_sources
-from mesh_llm import LLMUsage, estimate_cost
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus
 from mesh_models.entity import Entity, EntityType
@@ -570,8 +569,8 @@ def _fmt_usd(amount: float) -> str:
 def cost_report(run_id: str | None, last: int) -> None:
     """Per-skill LLM token totals and estimated cost for a run.
 
-    Costs are recomputed from current list prices in mesh_llm.pricing, so
-    editing the price table re-prices historical runs.
+    Costs are the values recorded in the llm_usage ledger at run time, which
+    already account for cache reads (11c) and the batch discount (11d).
     """
     conn = _get_conn()
     try:
@@ -604,13 +603,10 @@ def cost_report(run_id: str | None, last: int) -> None:
 
             run_cost = 0.0
             for t in totals:
-                usage = LLMUsage(
-                    input_tokens=t.input_tokens,
-                    output_tokens=t.output_tokens,
-                    cache_read_tokens=t.cache_read_tokens,
-                    cache_creation_tokens=t.cache_creation_tokens,
-                )
-                skill_cost = estimate_cost(t.model or "", usage).total_cost
+                # Use the cost recorded at run time: it already reflects the
+                # cache discount (11c) and the batch discount (11d), which a
+                # token-only recompute here could not know about.
+                skill_cost = t.estimated_cost_usd
                 run_cost += skill_cost
                 table.add_row(
                     t.skill_id,

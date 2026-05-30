@@ -309,3 +309,140 @@ def test_merge_same_id_is_noop(tmp_db: MeshConnection) -> None:
     create_entity(tmp_db, a)
     merge_entities(tmp_db, a.id, a.id)
     assert get_entity_by_id(tmp_db, a.id) is not None
+
+
+# --------------------------------------------------------------------------
+# 13c — reconciliation
+# --------------------------------------------------------------------------
+
+
+def _blend(i: int, j: int, cos_target: float) -> list[float]:
+    """A unit vector whose cosine with _unit(i) is exactly ``cos_target`` (i!=j
+    orthogonal). Lets tests place a pair in any match band."""
+    import math
+
+    vec = [0.0] * EMBED_DIM
+    vec[i] = cos_target
+    vec[j] = math.sqrt(1.0 - cos_target * cos_target)
+    return vec
+
+
+class _VecEmbedder:
+    """Deterministic embedder driven by an explicit name→vector map (keyed by
+    canonical name; entity type is ignored when matching)."""
+
+    def __init__(self, by_name: dict[str, list[float]]) -> None:
+        self._by_name = by_name
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for text in texts:
+            name = text.rsplit(" (", 1)[0]  # strip the " (type)" suffix
+            out.append(self._by_name.get(name, _unit(0)))
+        return out
+
+
+def _seed(conn: MeshConnection, name: str, etype: EntityType) -> Entity:
+    ent = Entity(canonical_name=name, type=etype)
+    create_entity(conn, ent)
+    return ent
+
+
+def test_reconcile_auto_merges_high_band_clusters(tmp_db: MeshConnection) -> None:
+    from mesh_agents.reconcile import reconcile_entities
+
+    src = _source(tmp_db)
+    mamba = _seed(tmp_db, "Mamba", EntityType.model)
+    mamba2 = _seed(tmp_db, "Mamba-2", EntityType.model)
+    transformer = _seed(tmp_db, "Transformer", EntityType.model)
+    _claim(tmp_db, mamba.id, src, "p1")  # Mamba most-claimed → canonical
+    _claim(tmp_db, mamba.id, src, "p2")
+    _claim(tmp_db, mamba2.id, src, "p3")
+
+    embedder = _VecEmbedder({"Mamba": _unit(0), "Mamba-2": _unit(0), "Transformer": _unit(5)})
+    report = reconcile_entities(tmp_db, embedder, llm=None, dry_run=False)
+
+    assert report.entities_before == 3
+    assert report.entities_after == 2
+    assert report.merges == 1
+    assert report.auto_merges >= 1
+    # Mamba survives (most-claimed); Mamba-2 folded in as an alias.
+    survivor = get_entity_by_id(tmp_db, mamba.id)
+    assert survivor is not None
+    assert "mamba-2" in {a.lower() for a in survivor.aliases}
+    assert get_entity_by_id(tmp_db, mamba2.id) is None
+    assert get_entity_by_id(tmp_db, transformer.id) is not None
+
+
+def test_reconcile_is_idempotent(tmp_db: MeshConnection) -> None:
+    from mesh_agents.reconcile import reconcile_entities
+
+    _seed(tmp_db, "Mamba", EntityType.model)
+    _seed(tmp_db, "Mamba-2", EntityType.model)
+    embedder = _VecEmbedder({"Mamba": _unit(0), "Mamba-2": _unit(0)})
+
+    reconcile_entities(tmp_db, embedder, llm=None, dry_run=False)
+    second = reconcile_entities(tmp_db, embedder, llm=None, dry_run=False)
+    assert second.merges == 0
+    assert second.entities_before == second.entities_after == 1
+
+
+def test_reconcile_dry_run_makes_no_changes(tmp_db: MeshConnection) -> None:
+    from mesh_agents.reconcile import reconcile_entities
+
+    a = _seed(tmp_db, "Mamba", EntityType.model)
+    b = _seed(tmp_db, "Mamba-2", EntityType.model)
+    embedder = _VecEmbedder({"Mamba": _unit(0), "Mamba-2": _unit(0)})
+
+    report = reconcile_entities(tmp_db, embedder, llm=None, dry_run=True)
+    assert report.merges == 1
+    assert report.entities_after == 1  # projected
+    # …but nothing actually merged.
+    assert get_entity_by_id(tmp_db, a.id) is not None
+    assert get_entity_by_id(tmp_db, b.id) is not None
+
+
+def test_reconcile_does_not_merge_across_types(tmp_db: MeshConnection) -> None:
+    from mesh_agents.reconcile import reconcile_entities
+
+    model = _seed(tmp_db, "GPT-4", EntityType.model)
+    bench = _seed(tmp_db, "GPT-4", EntityType.benchmark)
+    # Identical vectors, but blocking is type-filtered so they never pair.
+    embedder = _VecEmbedder({"GPT-4": _unit(0)})
+    report = reconcile_entities(tmp_db, embedder, llm=None, dry_run=False)
+    assert report.merges == 0
+    assert get_entity_by_id(tmp_db, model.id) is not None
+    assert get_entity_by_id(tmp_db, bench.id) is not None
+
+
+def test_reconcile_middle_band_uses_llm(tmp_db: MeshConnection) -> None:
+    from mesh_agents.reconcile import reconcile_entities
+
+    a = _seed(tmp_db, "GPT-4", EntityType.model)
+    b = _seed(tmp_db, "GPT-four", EntityType.model)
+    # cos ~0.85 → middle band (default high=0.93, low=0.80).
+    embedder = _VecEmbedder({"GPT-4": _unit(0), "GPT-four": _blend(0, 1, 0.85)})
+
+    # LLM says same → merged; adjudication counted.
+    yes_llm = _FakeLLM(EntityMatchDecision(same_entity=True, reason="same"))
+    report = reconcile_entities(tmp_db, embedder, llm=yes_llm, dry_run=False)
+    assert report.adjudications == 1
+    assert report.merges == 1
+    assert (get_entity_by_id(tmp_db, a.id) is None) ^ (
+        get_entity_by_id(tmp_db, b.id) is None
+    )  # exactly one survives
+
+
+def test_reconcile_middle_band_llm_no_does_not_merge(tmp_db: MeshConnection) -> None:
+    from mesh_agents.reconcile import reconcile_entities
+
+    a = _seed(tmp_db, "GPT-4", EntityType.model)
+    b = _seed(tmp_db, "Gopher", EntityType.model)
+    embedder = _VecEmbedder({"GPT-4": _unit(0), "Gopher": _blend(0, 1, 0.85)})
+
+    no_llm = _FakeLLM(EntityMatchDecision(same_entity=False, reason="different"))
+    report = reconcile_entities(tmp_db, embedder, llm=no_llm, dry_run=False)
+    assert report.adjudications == 1
+    assert report.merges == 0
+    assert get_entity_by_id(tmp_db, a.id) is not None
+    assert get_entity_by_id(tmp_db, b.id) is not None

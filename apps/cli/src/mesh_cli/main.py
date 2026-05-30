@@ -1019,3 +1019,64 @@ def backfill_entity_embeddings(batch_size: int, embed_all: bool) -> None:
         console.print(f"[green]Backfilled {done} entity embeddings.[/green]")
     finally:
         conn.close()
+
+
+@cli.command("reconcile-entities")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Perform merges (default: dry-run — compute + report only).",
+)
+@click.option(
+    "--report",
+    "report_path",
+    default="docs/entity-resolution-reconciliation.md",
+    show_default=True,
+)
+@click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
+def reconcile_entities_cmd(apply_changes: bool, report_path: str, k: int) -> None:
+    """One-time reconciliation of accumulated duplicate entities (Phase 13c).
+
+    Blocks → matches → merges across the whole entity table. Middle-band
+    adjudications route through the Anthropic Batch API when available. Writes a
+    report (before/after counts, sample of merges) for false-merge review.
+    Idempotent — re-running finds little to do.
+    """
+    from pathlib import Path
+
+    from mesh_agents.reconcile import reconcile_entities, render_report_markdown
+    from mesh_llm import make_embedder, make_llm_client
+
+    embedder = make_embedder()
+    llm: Any | None
+    try:
+        llm = make_llm_client(agent_name="entity_resolution")
+        llm.health_check()
+    except Exception as exc:  # provider not ready → high-band auto-merges only
+        console.print(f"[yellow]LLM unavailable ({exc}); adjudicating none.[/yellow]")
+        llm = None
+
+    mode = "APPLY" if apply_changes else "dry-run"
+    console.print(f"Reconciling entities ([cyan]{mode}[/cyan])…")
+    conn = get_connection()  # writer
+    try:
+        report = reconcile_entities(
+            conn, embedder, llm, k=k, dry_run=not apply_changes
+        )
+    finally:
+        conn.close()
+
+    console.print(
+        f"[green]before={report.entities_before} after={report.entities_after} "
+        f"merges={report.merges} auto={report.auto_merges} "
+        f"adjudicated={report.adjudications} embedded={report.embedded_now}[/green]"
+    )
+    out = Path(report_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_report_markdown(report))
+    console.print(f"Report written to [cyan]{out}[/cyan]")
+    if not apply_changes and report.merges:
+        console.print(
+            "[yellow]Dry run: re-run with --apply to perform these merges.[/yellow]"
+        )

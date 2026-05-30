@@ -1282,6 +1282,7 @@ source = { editable = "apps/cli" }
 dependencies = [
     { name = "click" },
     { name = "mesh-a2a" },
+    { name = "mesh-agents" },
     { name = "mesh-db" },
     { name = "mesh-llm" },
     { name = "mesh-models" },
@@ -1293,6 +1294,7 @@ dependencies = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "mesh-a2a", editable = "packages/mesh-a2a" },
+    { name = "mesh-agents", editable = "packages/mesh-agents" },
     { name = "mesh-db", editable = "packages/mesh-db" },
     { name = "mesh-llm", editable = "packages/mesh-llm" },
     { name = "mesh-models", editable = "packages/mesh-models" },

@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Agent Mesh Read API",
         description=(
-            "Read-only HTTP service in front of the mesh DuckDB. Powers the "
+            "Read-only HTTP service in front of the mesh Postgres store. Powers the "
             "Next.js wiki and is reusable as a generic JSON contract over the "
             "knowledge base. All endpoints are GET; the API never writes."
         ),

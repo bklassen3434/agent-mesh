@@ -16,7 +16,7 @@ checkpointed with thread_id == run_id (Postgres in docker, in-memory
 locally / tests).
 
 Persistence note: the per-belief assessment is written inside the
-``evaluate_one`` fan-out worker. DuckDB writes are synchronous and never
+``evaluate_one`` fan-out worker. Postgres writes are synchronous and never
 await, so the single-threaded event loop serializes them across the
 concurrent workers — no concurrent-transaction hazard, and each worker
 operates on a distinct belief.
@@ -317,7 +317,7 @@ def _persist_assessment(
         create_claim(conn, claim)
         new_claim_ids.append(claim.id)
 
-    # Update the belief FIRST, append the revision second — DuckDB rejects an
+    # Update the belief FIRST, append the revision second — the FK rejects an
     # UPDATE on a row already referenced by a freshly-inserted row in the same
     # tx, so this ordering sidesteps that quirk.
     new_confidence = max(
@@ -440,7 +440,7 @@ def build_sweep_graph(
     client: MeshA2AClient, conn: Any, batch_llm: AnthropicClient | None = None
 ) -> StateGraph[SweepState, Any, Any, Any]:
     """Build the skeptic-sweep graph. Nodes close over the live A2A client +
-    DuckDB connection. When ``batch_llm`` is provided (MESH_SKEPTIC_BATCH on,
+    Postgres connection. When ``batch_llm`` is provided (MESH_SKEPTIC_BATCH on,
     anthropic provider), belief evaluation goes through the Batch API
     (submit/poll/collect); otherwise the synchronous A2A fan-out is used."""
     threshold = _apply_threshold()

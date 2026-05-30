@@ -20,7 +20,7 @@ skill failure is recorded into ``state["errors"]`` and the graph
 continues — one bad paper never aborts the run.
 
 DB ownership is unchanged: the coordinator owns every read/write; the
-fan-out worker nodes touch only the network, so the shared DuckDB
+fan-out worker nodes touch only the network, so the shared Postgres
 connection is only ever used from join/sequential nodes (no concurrent
 access).
 """
@@ -526,7 +526,7 @@ def _persist_llm_usage(
     usage_dict: dict[str, Any] | None,
     model: str,
 ) -> None:
-    """Write one llm_usage ledger row (coordinator is the single DuckDB writer).
+    """Write one llm_usage ledger row (coordinator is the single writer).
 
     No-ops when the call recorded no tokens (e.g. a parse failure that never
     reached the provider)."""
@@ -562,7 +562,7 @@ def build_coordinator_graph(
     client: MeshA2AClient, conn: Any, semaphore: asyncio.Semaphore
 ) -> StateGraph[CoordinatorState, Any, Any, Any]:
     """Build the coordinator graph. Nodes close over the live A2A client +
-    DuckDB connection (non-serializable, so kept out of checkpointed state)."""
+    Postgres connection (non-serializable, so kept out of checkpointed state)."""
 
     async def scout(state: CoordinatorState) -> dict[str, Any]:
         discovered = await client.discover(_agent_urls())

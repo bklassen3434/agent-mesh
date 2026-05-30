@@ -1,7 +1,7 @@
 """Per-call LLM token + cost ledger (Phase 11a).
 
 One row per LLM skill call, keyed by ``run_id``. Written exclusively by the
-coordinator / skeptic-sweep graphs (the single DuckDB writer); agents thread
+coordinator / skeptic-sweep graphs (the single writer); agents thread
 their token usage back through the A2A skill response. Read by
 ``mesh.cli cost report`` to attribute spend per skill for a run.
 """

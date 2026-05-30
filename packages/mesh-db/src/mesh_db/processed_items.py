@@ -7,7 +7,7 @@ The coordinator consults this before spending tokens on ``extract_claims``:
 * seen, ``content_hash`` unchanged  → skip extraction, bump ``last_seen_at``
 * seen, ``content_hash`` changed    → re-extract, update the row
 
-Written exclusively by the coordinator (DuckDB single-writer).
+Written exclusively by the coordinator (single-writer; coordinator-owned).
 """
 from __future__ import annotations
 

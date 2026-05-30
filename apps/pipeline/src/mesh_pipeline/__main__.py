@@ -34,7 +34,12 @@ structlog.configure(
     default=None,
     help="Fetch papers since this date/duration (e.g. 24h, 7d, 2024-01-01)",
 )
-@click.option("--db-path", default=None, envvar="MESH_DB_PATH", help="DuckDB file path")
+@click.option(
+    "--db-path",
+    default=None,
+    envvar="MESH_DB_PATH",
+    help="(deprecated; ignored — the store is Postgres)",
+)
 @click.option(
     "--a2a",
     "use_a2a",

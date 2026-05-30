@@ -12,3 +12,15 @@ CREATE TABLE IF NOT EXISTS processed_items (
     last_seen_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (source_type, external_id)
 );
+
+-- Backfill from already-ingested sources so the ledger is consistent with
+-- history on day one: items already in `sources` have effectively been
+-- processed, so they should not be re-extracted. Idempotent (ON CONFLICT) and
+-- a no-op on a fresh DB. external_id == source url, matching the coordinator's
+-- _item_identity().
+INSERT INTO processed_items
+    (source_type, external_id, content_hash, first_seen_at, last_seen_at)
+SELECT type, url, any_value(raw_content_hash), min(fetched_at), max(fetched_at)
+FROM sources
+GROUP BY type, url
+ON CONFLICT (source_type, external_id) DO NOTHING;

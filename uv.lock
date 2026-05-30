@@ -1213,6 +1213,7 @@ source = { editable = "packages/mesh-db" }
 dependencies = [
     { name = "duckdb" },
     { name = "mesh-models" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pytz" },
 ]
 
@@ -1220,6 +1221,7 @@ dependencies = [
 requires-dist = [
     { name = "duckdb", specifier = ">=0.10" },
     { name = "mesh-models", editable = "packages/mesh-models" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pytz", specifier = ">=2023.3" },
 ]
 

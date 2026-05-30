@@ -270,6 +270,35 @@ in a migration in 12b.
 
 Proceed to **12b — Postgres schema + migrations.**
 
+---
+
+## 9. As-built log
+
+### 12b — schema + migrations (done)
+- Migrations live in `packages/mesh-db/migrations_pg/` as a **consolidated
+  fresh-state baseline** (not a replay of the 18 incremental DuckDB migrations):
+  `001_extensions` (pgvector), `002_core_tables` (the 7 knowledge entities +
+  indexes), `003_operational_tables` (pipeline_runs / llm_usage /
+  processed_items), `004_derived_signal_views`, `005_grants`.
+- Runner: `mesh_db.pg_migrations` (psycopg3) — `ensure_roles` (env-driven
+  `mesh_writer`/`mesh_reader` login roles) then `apply_pg_migrations` (idempotent,
+  numbered, per-file transaction, tracked in `knowledge.migrations`). Exposed as
+  `mesh.cli init-pg-db` and `python -m mesh_db.pg_migrations`. `psycopg[binary]`
+  added to `mesh-db` deps. The DuckDB path is untouched (removed in 12d/12e).
+- Gotcha fixed: the statement splitter strips `--` comments *before* splitting on
+  `;` (comments legitimately contain semicolons). Regression test in
+  `tests/test_pg_migrations.py`.
+- New env vars: `MESH_PG_URL` (knowledge DSN; falls back to
+  `LANGGRAPH_POSTGRES_URL`), `MESH_WRITER_PASSWORD` / `MESH_READER_PASSWORD`
+  (defaults `mesh_writer` / `mesh_reader`). To be documented in `.env.example` /
+  compose in 12e.
+- **Gates verified** on a fresh DB: 11 tables + 3 views; 7 scalar provenance FKs
+  enforced; `processed_items` composite PK; `name_embedding` is `vector(384)`;
+  HNSW index builds + cosine k-NN returns self first; `belief_hype_substance`
+  computes correctly on seed data (diversity=3, repro=3 → 0.9375, matching the
+  DuckDB formula); `mesh_writer` can INSERT but **not** DELETE, `mesh_reader` is
+  SELECT-only. Full offline suite (383 tests), mypy strict, ruff all pass.
+
 ### Open items carried into later sub-phases
 - Confirm `pipeline_runs`/`llm_usage`/`processed_items` schema placement against the
   `/status` reader and cost CLI when wiring 12e.

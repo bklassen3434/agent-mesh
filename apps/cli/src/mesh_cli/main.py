@@ -48,6 +48,25 @@ def init_db() -> None:
     console.print("[green]Database initialized.[/green]")
 
 
+@cli.command("init-pg-db")
+def init_pg_db() -> None:
+    """Stand up the Postgres knowledge schema + roles (Phase 12).
+
+    Uses MESH_PG_URL / LANGGRAPH_POSTGRES_URL. Run as a superuser/DB owner so
+    CREATE EXTENSION + CREATE ROLE succeed. Idempotent.
+    """
+    from mesh_db.pg_migrations import init_pg
+
+    applied = init_pg()
+    if applied:
+        console.print(
+            f"[green]Postgres knowledge schema initialized.[/green] "
+            f"Applied: {', '.join(applied)}"
+        )
+    else:
+        console.print("[green]Postgres knowledge schema already up to date.[/green]")
+
+
 _ENTITY_CHOICES = click.Choice([e.value for e in EntityType])
 _SOURCE_CHOICES = click.Choice([s.value for s in SourceType])
 _CLAIM_STATUS_CHOICES = click.Choice([c.value for c in ClaimStatus])

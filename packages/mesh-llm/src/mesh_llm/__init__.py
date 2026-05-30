@@ -8,24 +8,38 @@ from mesh_llm.client import (
     OllamaClient,
     OllamaNotReadyError,
 )
+from mesh_llm.embeddings import (
+    DEFAULT_EMBED_MODEL,
+    EMBED_DIM,
+    Embedder,
+    FastEmbedEmbedder,
+    entity_embed_text,
+    make_embedder,
+)
 from mesh_llm.factory import make_llm_client
 from mesh_llm.pricing import CostBreakdown, estimate_cost, is_priced
 from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
 
 __all__ = [
+    "DEFAULT_EMBED_MODEL",
+    "EMBED_DIM",
     "AnthropicClient",
     "AnthropicNotReadyError",
     "BatchItemResult",
     "BatchRequestItem",
     "CostBreakdown",
+    "Embedder",
+    "FastEmbedEmbedder",
     "LLMClient",
     "LLMProviderNotReadyError",
     "LLMResponseError",
     "LLMUsage",
     "OllamaClient",
     "OllamaNotReadyError",
+    "entity_embed_text",
     "estimate_cost",
     "is_priced",
+    "make_embedder",
     "make_llm_client",
 ]

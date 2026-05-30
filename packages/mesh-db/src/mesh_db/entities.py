@@ -49,6 +49,62 @@ def create_entity(conn: MeshConnection, model: Entity) -> Entity:
     return model
 
 
+def _vector_literal(embedding: list[float]) -> str:
+    """pgvector text input format: ``[0.1,0.2,...]``. Used with a ``::vector``
+    cast so we need no extra psycopg type adapter."""
+    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+
+
+def set_entity_embedding(
+    conn: MeshConnection, id: str, embedding: list[float]
+) -> None:
+    """Populate ``name_embedding`` for an entity (Phase 13). Mutating the
+    embedding is a resolution-layer write, not a claim/identity content change."""
+    conn.execute(
+        "UPDATE entities SET name_embedding = %s::vector WHERE id = %s",
+        [_vector_literal(embedding), id],
+    )
+
+
+def find_candidate_duplicates(
+    conn: MeshConnection,
+    embedding: list[float],
+    *,
+    entity_type: EntityType | str | None = None,
+    k: int = 10,
+    exclude_id: str | None = None,
+) -> list[tuple[str, str, str, float]]:
+    """Blocking query: the ``k`` nearest existing entities by cosine distance.
+
+    Returns ``(id, canonical_name, type, distance)`` ordered nearest-first.
+    Cosine distance (``<=>``) is in ``[0, 2]``; similarity is ``1 - distance``
+    for the normalised vectors the embedder produces. Optionally filtered by
+    entity type (a model never blocks against a benchmark) and excluding a
+    given id (so an entity does not match itself)."""
+    conditions = ["name_embedding IS NOT NULL"]
+    params: list[Any] = [_vector_literal(embedding)]
+    if entity_type is not None:
+        conditions.append("type = %s")
+        params.append(
+            entity_type.value if isinstance(entity_type, EntityType) else entity_type
+        )
+    if exclude_id is not None:
+        conditions.append("id <> %s")
+        params.append(exclude_id)
+    params.append(max(int(k), 0))
+    rows = conn.execute(
+        f"""
+        SELECT id, canonical_name, type, name_embedding <=> %s::vector AS distance
+        FROM entities
+        WHERE {' AND '.join(conditions)}
+        ORDER BY distance
+        LIMIT %s
+        """,
+        params,
+    ).fetchall()
+    return [(str(r[0]), str(r[1]), str(r[2]), float(r[3])) for r in rows]
+
+
 def get_entity_by_id(conn: MeshConnection, id: str) -> Entity | None:
     row = conn.execute(
         "SELECT id, canonical_name, aliases, type, attributes, created_at, last_seen_at "

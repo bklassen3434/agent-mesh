@@ -976,3 +976,46 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
             inv.hypothesis or inv.question,
         )
     console.print(table)
+
+
+@cli.command("backfill-entity-embeddings")
+@click.option("--batch-size", default=256, type=int, show_default=True)
+@click.option(
+    "--all",
+    "embed_all",
+    is_flag=True,
+    help="Re-embed every entity (default: only those missing an embedding).",
+)
+def backfill_entity_embeddings(batch_size: int, embed_all: bool) -> None:
+    """Populate entities.name_embedding for entity-resolution blocking (Phase 13a).
+
+    Batches embedding calls and writes via the writer role. Re-runnable: by
+    default it skips entities that already have an embedding.
+    """
+    from mesh_db.entities import set_entity_embedding
+    from mesh_llm import entity_embed_text, make_embedder
+
+    embedder = make_embedder()
+    conn = get_connection()  # writer
+    try:
+        where = "" if embed_all else " WHERE name_embedding IS NULL"
+        rows = conn.execute(
+            f"SELECT id, canonical_name, type FROM entities{where} ORDER BY created_at"
+        ).fetchall()
+        total = len(rows)
+        if total == 0:
+            console.print("[green]All entities already have embeddings.[/green]")
+            return
+        console.print(f"Embedding [cyan]{total}[/cyan] entities (batch={batch_size})…")
+        done = 0
+        for start in range(0, total, batch_size):
+            chunk = rows[start : start + batch_size]
+            texts = [entity_embed_text(str(r[1]), str(r[2])) for r in chunk]
+            vectors = embedder.embed(texts)
+            for (entity_id, _name, _type), vec in zip(chunk, vectors, strict=True):
+                set_entity_embedding(conn, str(entity_id), vec)
+            done += len(chunk)
+            console.print(f"  …{done}/{total}")
+        console.print(f"[green]Backfilled {done} entity embeddings.[/green]")
+    finally:
+        conn.close()

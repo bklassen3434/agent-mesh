@@ -27,6 +27,7 @@ import asyncio
 import hashlib
 import operator
 import os
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, TypedDict, cast
@@ -44,6 +45,9 @@ from mesh_agents.skeptic import (
     InScopeEntity,
     SkepticAssessment,
     SkepticCounterClaim,
+    SkepticInput,
+    build_skeptic_prompt,
+    filter_to_scope,
 )
 from mesh_agents.sota_tracker import BeliefSummary
 from mesh_db.beliefs import get_belief_by_id, list_beliefs, update_belief
@@ -59,12 +63,19 @@ from mesh_db.pipeline_runs import (
 )
 from mesh_db.revisions import create_revision, list_revisions
 from mesh_db.sources import create_source, get_source_by_id
+from mesh_llm import (
+    AnthropicClient,
+    BatchRequestItem,
+    LLMProviderNotReadyError,
+    make_llm_client,
+)
 from mesh_llm.pricing import estimate_cost
 from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
+from mesh_tracing.tracing import trace_generation
 from pydantic import BaseModel
 
 from mesh_pipeline._investigations import persist_investigation_suggestions
@@ -111,6 +122,19 @@ def _cooldown_days() -> int:
 
 def _source_reliability() -> float:
     return float(os.environ.get("MESH_SKEPTIC_SOURCE_RELIABILITY", "0.4"))
+
+
+def _batch_enabled() -> bool:
+    return os.environ.get("MESH_SKEPTIC_BATCH", "true").lower() in ("1", "true", "yes")
+
+
+def _batch_poll_seconds() -> float:
+    return float(os.environ.get("MESH_SKEPTIC_BATCH_POLL_SECONDS", "15"))
+
+
+def _batch_timeout_seconds() -> float:
+    # Anthropic batches expire at 24h; default our wait a little under that.
+    return float(os.environ.get("MESH_SKEPTIC_BATCH_TIMEOUT_SECONDS", "85000"))
 
 
 # ── curator payload helpers ──────────────────────────────────────────────────
@@ -324,6 +348,65 @@ def _persist_assessment(
     return (len(new_claim_ids), 1)
 
 
+def _skeptic_input_for(
+    conn: Any, belief_id: str
+) -> tuple[Belief | None, SkepticInput | None]:
+    """Hydrate a belief into the SkepticInput the agent/batch reason over.
+    Returns (None, None) if the belief vanished since it was picked."""
+    belief = get_belief_by_id(conn, belief_id)
+    if belief is None:
+        return None, None
+    supporting = _hydrate_claims(conn, belief.supporting_claim_ids)
+    contradicting = _hydrate_claims(conn, belief.contradicting_claim_ids)
+    in_scope = _collect_in_scope_entities(conn, supporting, contradicting)
+    skeptic_input = SkepticInput(
+        belief=BeliefSummary(
+            belief_id=belief.id,
+            topic=belief.topic,
+            statement=belief.statement,
+            confidence=belief.confidence,
+        ),
+        supporting_claims=supporting,
+        contradicting_claims=contradicting,
+        in_scope_entities=in_scope,
+    )
+    return belief, skeptic_input
+
+
+def _assessment_verdict(
+    conn: Any,
+    belief: Belief,
+    assessment: SkepticAssessment,
+    threshold: float,
+    usage: LLMUsage,
+    model: str,
+    *,
+    batch: bool,
+) -> dict[str, Any]:
+    """Apply the apply-threshold, persist counter-claims/revision, and build the
+    verdict dict consumed by route_after_evaluate + finalize. Shared by the
+    synchronous (A2A) and batch paths so they behave identically."""
+    applied = False
+    n_claims = n_revs = 0
+    if (
+        assessment.verdict in {"weakened", "contradicted"}
+        and assessment.confidence >= threshold
+    ):
+        n_claims, n_revs = _persist_assessment(conn, belief, assessment, datetime.now(UTC))
+        applied = n_revs > 0
+    return {
+        "belief_id": belief.id,
+        "verdict": assessment.verdict,
+        "confidence": assessment.confidence,
+        "applied": applied,
+        "n_counter_claims": n_claims,
+        "n_revisions": n_revs,
+        "usage": usage.model_dump(),
+        "model": model,
+        "batch": batch,
+    }
+
+
 # ── graph state ──────────────────────────────────────────────────────────────
 
 
@@ -333,6 +416,7 @@ class SweepState(TypedDict):
     traceparent: str
     started_at: str  # ISO-8601
     beliefs_to_evaluate: list[str]
+    batch_id: str | None  # Anthropic Message Batch id (batch path); None for sync
     verdicts: Annotated[list[dict[str, Any]], operator.add]
     curator_triggered: bool
     beliefs_considered: int
@@ -353,10 +437,12 @@ class _BeliefWork(TypedDict):
 
 
 def build_sweep_graph(
-    client: MeshA2AClient, conn: Any
+    client: MeshA2AClient, conn: Any, batch_llm: AnthropicClient | None = None
 ) -> StateGraph[SweepState, Any, Any, Any]:
     """Build the skeptic-sweep graph. Nodes close over the live A2A client +
-    DuckDB connection."""
+    DuckDB connection. When ``batch_llm`` is provided (MESH_SKEPTIC_BATCH on,
+    anthropic provider), belief evaluation goes through the Batch API
+    (submit/poll/collect); otherwise the synchronous A2A fan-out is used."""
     threshold = _apply_threshold()
 
     async def load_beliefs(state: SweepState) -> dict[str, Any]:
@@ -366,7 +452,12 @@ def build_sweep_graph(
             return {"beliefs_considered": 0, "beliefs_picked": 0}
 
         discovered = await client.discover(_agent_urls())
-        for required in ("select_beliefs_to_challenge", "challenge_belief"):
+        # The curator is always needed; the skeptic A2A agent is only needed on
+        # the synchronous path (the batch path calls the LLM directly).
+        required_skills = ["select_beliefs_to_challenge"]
+        if batch_llm is None:
+            required_skills.append("challenge_belief")
+        for required in required_skills:
             if required not in discovered:
                 raise SystemExit(
                     f"Required skill '{required}' not discovered. "
@@ -388,6 +479,8 @@ def build_sweep_graph(
     def route_after_load(state: SweepState) -> list[Send] | str:
         if not state["beliefs_to_evaluate"]:
             return "finalize"
+        if batch_llm is not None:
+            return "submit_batch"
         tp = state["traceparent"]
         return [
             Send("evaluate_one", {"belief_id": bid, "traceparent": tp})
@@ -440,31 +533,106 @@ def build_sweep_graph(
             confidence=assessment.confidence,
             counter_claim_count=len(assessment.counter_claims),
         )
+        usage = LLMUsage(**(result.get("usage") or {}))
+        verdict = _assessment_verdict(
+            conn, belief, assessment, threshold, usage,
+            str(result.get("model") or ""), batch=False,
+        )
+        return {"verdicts": [verdict]}
 
-        applied = False
-        n_claims = n_revs = 0
-        if (
-            assessment.verdict in {"weakened", "contradicted"}
-            and assessment.confidence >= threshold
-        ):
-            n_claims, n_revs = _persist_assessment(
-                conn, belief, assessment, datetime.now(UTC)
+    async def submit_batch(state: SweepState) -> dict[str, Any]:
+        assert batch_llm is not None
+        items: list[BatchRequestItem] = []
+        for bid in state["beliefs_to_evaluate"]:
+            _, skeptic_input = _skeptic_input_for(conn, bid)
+            if skeptic_input is None:
+                log.warning("picked_belief_missing", belief_id=bid)
+                continue
+            system, user = build_skeptic_prompt(skeptic_input)
+            items.append(BatchRequestItem(custom_id=bid, system=system, user=user))
+        if not items:
+            return {"batch_id": None}
+        batch_id = await asyncio.to_thread(
+            batch_llm.submit_batch, items, SkepticAssessment
+        )
+        log.info("skeptic_batch_submitted", batch_id=batch_id, requests=len(items))
+        return {"batch_id": batch_id}
+
+    def route_after_submit(state: SweepState) -> str:
+        return "poll_batch" if state.get("batch_id") else "finalize"
+
+    async def poll_batch(state: SweepState) -> dict[str, Any]:
+        assert batch_llm is not None
+        batch_id = state["batch_id"]
+        if not batch_id:
+            return {}
+        # Single long-running poll node: the batch_id was checkpointed by
+        # submit_batch, so a crash here resumes at poll_batch (re-polling the
+        # SAME batch) rather than re-submitting.
+        deadline = time.monotonic() + _batch_timeout_seconds()
+        while True:
+            status = await asyncio.to_thread(batch_llm.batch_status, batch_id)
+            if status == "ended":
+                log.info("skeptic_batch_ended", batch_id=batch_id)
+                break
+            if time.monotonic() > deadline:
+                log.warning("skeptic_batch_timeout", batch_id=batch_id, status=status)
+                break
+            await asyncio.sleep(_batch_poll_seconds())
+        return {}
+
+    async def collect_results(state: SweepState) -> dict[str, Any]:
+        assert batch_llm is not None
+        batch_id = state["batch_id"]
+        if not batch_id:
+            return {}
+        results = await asyncio.to_thread(
+            batch_llm.collect_batch, batch_id, SkepticAssessment
+        )
+        verdicts: list[dict[str, Any]] = []
+        for bid in state["beliefs_to_evaluate"]:
+            res = results.get(bid)
+            if res is None or res.parsed is None:
+                log.warning(
+                    "skeptic_batch_item_failed",
+                    belief_id=bid,
+                    error=res.error if res else "missing result",
+                )
+                continue
+            belief, skeptic_input = _skeptic_input_for(conn, bid)
+            if belief is None or skeptic_input is None:
+                continue
+            assessment = filter_to_scope(res.parsed, skeptic_input.in_scope_entities)
+            # Trace the batched generation to Langfuse at the discounted rate.
+            system, user = build_skeptic_prompt(skeptic_input)
+            cost = estimate_cost(res.model, res.usage, batch=True)
+            trace_generation(
+                name="challenge_belief",
+                model=res.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                output=assessment.model_dump_json(),
+                latency_ms=0,
+                usage=res.usage.model_dump(),
+                cost_usd=cost.total_cost,
+                agent_name="skeptic",
             )
-            applied = n_revs > 0
-        return {
-            "verdicts": [
-                {
-                    "belief_id": belief.id,
-                    "verdict": assessment.verdict,
-                    "confidence": assessment.confidence,
-                    "applied": applied,
-                    "n_counter_claims": n_claims,
-                    "n_revisions": n_revs,
-                    "usage": result.get("usage") or {},
-                    "model": result.get("model") or "",
-                }
-            ]
-        }
+            log.info(
+                "skeptic_assessment",
+                belief_id=belief.id,
+                verdict=assessment.verdict,
+                confidence=assessment.confidence,
+                counter_claim_count=len(assessment.counter_claims),
+                batch=True,
+            )
+            verdicts.append(
+                _assessment_verdict(
+                    conn, belief, assessment, threshold, res.usage, res.model, batch=True
+                )
+            )
+        return {"verdicts": verdicts}
 
     def route_after_evaluate(state: SweepState) -> str:
         any_contradicted = any(v["verdict"] == "contradicted" for v in state["verdicts"])
@@ -506,7 +674,9 @@ def build_sweep_graph(
                     output_tokens=usage.output_tokens,
                     cache_read_tokens=usage.cache_read_tokens,
                     cache_creation_tokens=usage.cache_creation_tokens,
-                    estimated_cost_usd=estimate_cost(model, usage).total_cost,
+                    estimated_cost_usd=estimate_cost(
+                        model, usage, batch=bool(v.get("batch", False))
+                    ).total_cost,
                 ),
             )
         counter_claims = sum(int(v["n_counter_claims"]) for v in verdicts)
@@ -538,13 +708,26 @@ def build_sweep_graph(
     g.add_node("load_beliefs", load_beliefs)
     # Fan-out worker reads a per-belief Send payload, not the graph state.
     g.add_node("evaluate_one", evaluate_one, input_schema=_BeliefWork)
+    # Batch path (Phase 11d): submit one batch, poll, collect.
+    g.add_node("submit_batch", submit_batch)
+    g.add_node("poll_batch", poll_batch)
+    g.add_node("collect_results", collect_results)
     g.add_node("trigger_curator", trigger_curator)
     g.add_node("finalize", finalize)
 
     g.add_edge(START, "load_beliefs")
-    g.add_conditional_edges("load_beliefs", route_after_load, ["evaluate_one", "finalize"])
+    g.add_conditional_edges(
+        "load_beliefs", route_after_load, ["evaluate_one", "submit_batch", "finalize"]
+    )
+    # Sync path
     g.add_conditional_edges(
         "evaluate_one", route_after_evaluate, ["trigger_curator", "finalize"]
+    )
+    # Batch path
+    g.add_conditional_edges("submit_batch", route_after_submit, ["poll_batch", "finalize"])
+    g.add_edge("poll_batch", "collect_results")
+    g.add_conditional_edges(
+        "collect_results", route_after_evaluate, ["trigger_curator", "finalize"]
     )
     g.add_edge("trigger_curator", "finalize")
     g.add_edge("finalize", END)
@@ -580,6 +763,7 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
         "traceparent": new_traceparent(),
         "started_at": datetime.now(UTC).isoformat(),
         "beliefs_to_evaluate": [],
+        "batch_id": None,
         "verdicts": [],
         "curator_triggered": False,
         "beliefs_considered": 0,
@@ -589,8 +773,24 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
         "finalized": False,
     }
 
+    # Batch path is on by default but only for the anthropic provider (the
+    # Batch API is Anthropic-specific). Falls back to the synchronous A2A path
+    # otherwise, or when MESH_SKEPTIC_BATCH is disabled.
+    batch_llm: AnthropicClient | None = None
+    if _batch_enabled():
+        try:
+            candidate = make_llm_client(agent_name="skeptic")
+        except LLMProviderNotReadyError as exc:
+            log.info("skeptic_batch_provider_unavailable_falling_back", error=str(exc))
+            candidate = None
+        if isinstance(candidate, AnthropicClient):
+            batch_llm = candidate
+            log.info("skeptic_batch_mode", model=batch_llm.model)
+        elif candidate is not None:
+            log.info("skeptic_batch_skipped_non_anthropic")
+
     async with MeshA2AClient() as client:
-        graph = build_sweep_graph(client, conn)
+        graph = build_sweep_graph(client, conn, batch_llm)
         async with open_checkpointer() as saver:
             app = graph.compile(checkpointer=saver)
             final = await app.ainvoke(initial_state, config=thread_config(run_id))

@@ -158,9 +158,12 @@ def _filter_to_scope(
     return assessment.model_copy(update={"counter_claims": kept})
 
 
-def _assess_sync(
-    llm: LLMClient, input: SkepticInput
-) -> tuple[SkepticAssessment, LLMUsage, str]:
+def build_skeptic_prompt(input: SkepticInput) -> tuple[str, str]:
+    """Return (system, user) for a skeptic assessment.
+
+    Shared by the synchronous agent path and the sweep's Batch-API path (which
+    submits requests directly rather than calling this agent over A2A), so both
+    reason over identical prompts."""
     user_prompt = format_skeptic_user(
         topic=input.belief.topic,
         statement=input.belief.statement,
@@ -172,9 +175,24 @@ def _assess_sync(
         n_supporting=len(input.supporting_claims),
         n_contradicting=len(input.contradicting_claims),
     )
+    return SKEPTIC_SYSTEM, user_prompt
+
+
+def filter_to_scope(
+    assessment: SkepticAssessment, entities: list[InScopeEntity]
+) -> SkepticAssessment:
+    """Public wrapper: drop counter-claims referencing out-of-scope entities.
+    Applied to both sync and batch assessments."""
+    return _filter_to_scope(assessment, entities)
+
+
+def _assess_sync(
+    llm: LLMClient, input: SkepticInput
+) -> tuple[SkepticAssessment, LLMUsage, str]:
+    system, user_prompt = build_skeptic_prompt(input)
     result, _, usage = llm.complete_with_usage(
         name="challenge_belief",
-        system=SKEPTIC_SYSTEM,
+        system=system,
         user=user_prompt,
         response_model=SkepticAssessment,
     )

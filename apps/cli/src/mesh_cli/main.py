@@ -41,43 +41,18 @@ def cli() -> None:
 
 @cli.command("init-db")
 def init_db() -> None:
-    """Create the database and apply all migrations."""
-    conn = _get_conn()
-    init_pg()
-    conn.close()
-    console.print("[green]Database initialized.[/green]")
+    """Apply the Postgres knowledge schema + roles. Idempotent.
 
-
-@cli.command("init-pg-db")
-def init_pg_db() -> None:
-    """Stand up the Postgres knowledge schema + roles (Phase 12).
-
-    Uses MESH_PG_URL / LANGGRAPH_POSTGRES_URL. Run as a superuser/DB owner so
-    CREATE EXTENSION + CREATE ROLE succeed. Idempotent.
+    Uses MESH_PG_URL / LANGGRAPH_POSTGRES_URL; run as a superuser/DB owner so
+    CREATE EXTENSION + CREATE ROLE succeed.
     """
-    from mesh_db.pg_migrations import init_pg
-
     applied = init_pg()
     if applied:
         console.print(
-            f"[green]Postgres knowledge schema initialized.[/green] "
-            f"Applied: {', '.join(applied)}"
+            f"[green]Knowledge schema initialized.[/green] Applied: {', '.join(applied)}"
         )
     else:
-        console.print("[green]Postgres knowledge schema already up to date.[/green]")
-
-
-@cli.command("migrate-duckdb-to-pg")
-def migrate_duckdb_to_pg() -> None:
-    """One-time DuckDB -> Postgres knowledge data migration (Phase 12c).
-
-    Reads MESH_DB_PATH (DuckDB) and writes into the knowledge schema at
-    MESH_PG_URL / LANGGRAPH_POSTGRES_URL. Idempotent (truncate-and-reload).
-    Run init-pg-db first.
-    """
-    from mesh_db.duckdb_to_pg import run
-
-    run()
+        console.print("[green]Knowledge schema already up to date.[/green]")
 
 
 _ENTITY_CHOICES = click.Choice([e.value for e in EntityType])

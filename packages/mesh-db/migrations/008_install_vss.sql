@@ -1,4 +1,0 @@
-INSTALL vss;
-LOAD vss;
-
-ALTER TABLE entities ADD COLUMN IF NOT EXISTS name_embedding FLOAT[384];

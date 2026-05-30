@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import os
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from mesh_db.connection import get_connection
 from mesh_db.pg_migrations import init_pg
 
 from mesh_api.routers import (
@@ -28,17 +28,16 @@ from mesh_api.routers import (
 
 
 def _ensure_schema() -> None:
-    """Apply migrations at startup against a brief read-write connection.
+    """Best-effort knowledge-schema provisioning at startup.
 
-    The API operates read-only for all request handling. This one-shot write
-    open ensures a freshly mounted volume has the schema before requests
-    arrive. Migrations are idempotent — re-running is safe.
+    The API handles requests read-only (mesh_reader). init_pg needs owner
+    privileges (CREATE EXTENSION/ROLE), so this is a convenience that succeeds
+    only when the API is given an owner DSN (MESH_PG_URL); otherwise the
+    coordinator/operator has already applied the schema and this no-ops.
+    Idempotent and never blocks startup.
     """
-    conn = get_connection(read_only=False)
-    try:
+    with contextlib.suppress(Exception):
         init_pg()
-    finally:
-        conn.close()
 
 
 def _ensure_schedules() -> None:

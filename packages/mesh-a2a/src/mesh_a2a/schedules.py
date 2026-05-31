@@ -25,7 +25,12 @@ from mesh_a2a.checkpoint import postgres_url
 
 # job_id → default interval (hours). Seeded into the table on first ensure;
 # also the fallback the scheduler uses if the table is somehow empty.
-DEFAULT_INTERVALS: dict[str, int] = {"pipeline": 6, "skeptic_sweep": 24}
+DEFAULT_INTERVALS: dict[str, int] = {
+    "pipeline": 6,
+    "skeptic_sweep": 24,
+    # Phase 16c: memory consolidation runs daily, offline (batch API).
+    "consolidation": 24,
+}
 
 
 class SchedulesUnavailable(RuntimeError):

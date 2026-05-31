@@ -49,6 +49,9 @@ logger = structlog.get_logger(__name__)
 JOB_COMMANDS: dict[str, list[str]] = {
     "pipeline": ["uv", "run", "mesh-pipeline", "--a2a"],
     "skeptic_sweep": ["uv", "run", "mesh-skeptic-sweep"],
+    # Phase 16c: offline memory consolidation (distills episodic history into
+    # procedural heuristics). Fired by the existing scheduler — no new container.
+    "consolidation": ["uv", "run", "mesh-consolidate"],
 }
 
 _RECONCILE_JOB_ID = "_reconcile"

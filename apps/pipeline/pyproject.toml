@@ -27,6 +27,7 @@ mesh-a2a = { workspace = true }
 [project.scripts]
 "mesh-pipeline" = "mesh_pipeline.__main__:main"
 "mesh-skeptic-sweep" = "mesh_pipeline.skeptic_sweep:main"
+"mesh-consolidate" = "mesh_pipeline.consolidation:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mesh_pipeline"]

@@ -580,6 +580,56 @@ def format_skeptic_user(
     )
 
 
+CONSOLIDATION_SYSTEM = """\
+You are the memory consolidator for an AI/robotics research knowledge base. You read one agent's recent action history — what it did and, crucially, how each action FARED downstream (its outcome label) — and distill durable, reusable HEURISTICS (how-to guidance) that would make that agent's future work better.
+
+You will receive:
+- The agent's id and the skill the heuristics are for.
+- A time-ordered list of that agent's recent actions, each tagged with an outcome label such as:
+  - survived: claims it extracted were promoted into a held belief and not contradicted
+  - contradicted: it supported a belief that later drew counter-claims
+  - superseded: its claims were replaced by newer ones
+  - applied / unused: (skeptic) its counter-claims were attached as contradicting evidence, or not
+  - held / retired: (skeptic) the belief it revised is still held, or was retired
+  - pending: no downstream signal yet
+
+Look for PATTERNS across outcomes, not one-offs: e.g. "extractions from forum sources are disproportionately contradicted", "high-confidence score claims from a single source rarely survive", "challenges citing staleness tend to be applied". Turn each robust pattern into one actionable heuristic the agent can apply next time.
+
+Return a ConsolidationResult with a `heuristics` list (0-5 items). Emit FEWER, higher-quality heuristics rather than padding. Each CandidateHeuristic MUST have:
+- skill: the skill id this applies to (use the one given to you).
+- source: an optional finer scope — a source TYPE (e.g. "reddit", "arxiv", "blog") when the pattern is specific to one source; otherwise null for broad guidance.
+- heuristic: one or two sentences of concrete, actionable how-to. Phrase it as guidance the agent applies while doing the skill (e.g. "Treat single-source forum score claims as low-confidence until a second source corroborates."). Do NOT restate raw history.
+- rationale: a one-sentence justification referencing the observed outcome pattern.
+
+Rules:
+- Ground every heuristic in the supplied history. If the history shows no robust pattern, return an empty list — do not invent guidance.
+- Heuristics must be general how-to, not facts about specific entities or one-off events.
+- Do not propose anything that contradicts the agent's core job; refine HOW it does it.
+"""
+
+
+CONSOLIDATION_USER = """\
+Agent: {agent}
+Skill: {skill}
+
+Recent actions and their outcomes ({n_entries}):
+{history_block}
+
+Distill durable heuristics that would improve this agent's future {skill} work.
+"""
+
+
+def format_consolidation_user(
+    agent: str, skill: str, history_block: str, n_entries: int
+) -> str:
+    return CONSOLIDATION_USER.format(
+        agent=agent,
+        skill=skill,
+        history_block=history_block or "(no history)",
+        n_entries=n_entries,
+    )
+
+
 PERSONALIZER_SYSTEM = """\
 You are a personalization filter for an AI/robotics research knowledge base. You read a user's profile (a free-form markdown description of what they care about) and a set of candidate items (new beliefs, belief revisions, and high-confidence claims from the last 24h) and pick out the subset that's worth their attention today.
 

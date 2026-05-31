@@ -1,4 +1,4 @@
-.PHONY: up down logs pipeline skeptic smoke wiki api types \
+.PHONY: up down logs pipeline skeptic consolidate smoke wiki api types \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
@@ -31,6 +31,16 @@ skeptic:
 	docker compose --profile skeptic up -d --build curator skeptic
 	docker compose build skeptic-sweep
 	docker compose --profile skeptic run --rm skeptic-sweep
+
+# Run one memory-consolidation cycle — distills recent episodic history into
+# procedural heuristics via the batch API. Needs only Postgres + an LLM key, so
+# it reuses the skeptic-sweep job container (same coordinator image, has the
+# writer + LLM env) with the entry point overridden and --no-deps, rather than
+# adding a new service. Requires `make up` (mesh-postgres) first.
+consolidate:
+	docker compose --profile skeptic build skeptic-sweep
+	docker compose --profile skeptic run --rm --no-deps \
+		--entrypoint "uv run mesh-consolidate" skeptic-sweep
 
 # Smoke test: bring up the stack, run one pipeline cycle, check row counts.
 smoke: up

@@ -40,6 +40,7 @@ from mesh_a2a.client import MeshA2AClient
 from mesh_a2a.node import call_skill_node
 from mesh_a2a.tracing import new_traceparent
 from mesh_agents.curator import BeliefForCuration, CuratorPick, InvestigationSuggestion
+from mesh_agents.memory import recall_block
 from mesh_agents.skeptic import (
     HydratedClaim,
     InScopeEntity,
@@ -548,7 +549,14 @@ def build_sweep_graph(
             if skeptic_input is None:
                 log.warning("picked_belief_missing", belief_id=bid)
                 continue
-            system, user = build_skeptic_prompt(skeptic_input)
+            # Phase 16a: fold the skeptic's own challenge history on this topic
+            # into the batch prompt too, so the batch path matches the sync path.
+            # Reuse the sweep's connection (read-only intent) rather than opening
+            # a separate reader.
+            memory_block = recall_block(
+                "skeptic", conn=conn, topic=skeptic_input.belief.topic
+            )
+            system, user = build_skeptic_prompt(skeptic_input, memory_block)
             items.append(BatchRequestItem(custom_id=bid, system=system, user=user))
         if not items:
             return {"batch_id": None}
@@ -604,7 +612,11 @@ def build_sweep_graph(
                 continue
             assessment = filter_to_scope(res.parsed, skeptic_input.in_scope_entities)
             # Trace the batched generation to Langfuse at the discounted rate.
-            system, user = build_skeptic_prompt(skeptic_input)
+            # Reconstruct the same prompt submit_batch sent (recall block included).
+            memory_block = recall_block(
+                "skeptic", conn=conn, topic=skeptic_input.belief.topic
+            )
+            system, user = build_skeptic_prompt(skeptic_input, memory_block)
             cost = estimate_cost(res.model, res.usage, batch=True)
             trace_generation(
                 name="challenge_belief",

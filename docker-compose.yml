@@ -207,6 +207,9 @@ services:
       MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
       MESH_LLM_MODEL: ${MESH_LLM_MODEL:-claude-haiku-4-5}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # Phase 16a: read-only access so the skill can recall its own episodic
+      # history (mesh_reader role; never writes — coordinator owns all writes).
+      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
     env_file:
       - .env
     ports:
@@ -368,6 +371,9 @@ services:
       MESH_LLM_MODEL_SKEPTIC: ${MESH_LLM_MODEL_SKEPTIC:-}
       MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # Phase 16a: read-only access so the skill can recall its own episodic
+      # history (mesh_reader role; never writes — coordinator owns all writes).
+      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
     env_file:
       - .env
     ports:

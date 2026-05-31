@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from mesh_agents.base import BaseAgent
+from mesh_agents.memory import recall_block
 from mesh_agents.sota_tracker import BeliefSummary
 
 logger = logging.getLogger(__name__)
@@ -158,12 +159,16 @@ def _filter_to_scope(
     return assessment.model_copy(update={"counter_claims": kept})
 
 
-def build_skeptic_prompt(input: SkepticInput) -> tuple[str, str]:
+def build_skeptic_prompt(
+    input: SkepticInput, memory_block: str = ""
+) -> tuple[str, str]:
     """Return (system, user) for a skeptic assessment.
 
     Shared by the synchronous agent path and the sweep's Batch-API path (which
     submits requests directly rather than calling this agent over A2A), so both
-    reason over identical prompts."""
+    reason over identical prompts. ``memory_block`` (Phase 16a — the skeptic's
+    own recent challenge history + outcomes) is appended to the USER message,
+    after the cached system prefix, so the prompt cache prefix stays stable."""
     user_prompt = format_skeptic_user(
         topic=input.belief.topic,
         statement=input.belief.statement,
@@ -175,6 +180,8 @@ def build_skeptic_prompt(input: SkepticInput) -> tuple[str, str]:
         n_supporting=len(input.supporting_claims),
         n_contradicting=len(input.contradicting_claims),
     )
+    if memory_block:
+        user_prompt = f"{user_prompt}\n{memory_block}"
     return SKEPTIC_SYSTEM, user_prompt
 
 
@@ -187,9 +194,9 @@ def filter_to_scope(
 
 
 def _assess_sync(
-    llm: LLMClient, input: SkepticInput
+    llm: LLMClient, input: SkepticInput, memory_block: str = ""
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
-    system, user_prompt = build_skeptic_prompt(input)
+    system, user_prompt = build_skeptic_prompt(input, memory_block)
     result, _, usage = llm.complete_with_usage(
         name="challenge_belief",
         system=system,
@@ -201,15 +208,16 @@ def _assess_sync(
 
 
 def challenge_belief_pure(
-    llm: LLMClient, input: SkepticInput
+    llm: LLMClient, input: SkepticInput, memory_block: str = ""
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
     """Synchronous pure entry point — used by both the agent and the A2A handler.
 
     Returns ``(assessment, usage, model)``; the agent path discards usage, the
     A2A handler threads it back to the coordinator for the cost ledger.
+    ``memory_block`` carries the skeptic's recent history (Phase 16a).
     """
     try:
-        return _assess_sync(llm, input)
+        return _assess_sync(llm, input, memory_block)
     except LLMProviderNotReadyError:
         raise
     except LLMResponseError as exc:
@@ -220,7 +228,16 @@ def challenge_belief_pure(
         return _INCONCLUSIVE.model_copy(), LLMUsage(), getattr(llm, "model", "")
 
 
-def _build_handler(llm: LLMClient) -> Any:
+def _challenge_with_recall(
+    llm: LLMClient, agent_input: SkepticInput, agent_name: str
+) -> tuple[SkepticAssessment, LLMUsage, str]:
+    """Recall the skeptic's own challenge history on this belief's topic (off the
+    event loop), then assess with that history folded into the prompt."""
+    memory_block = recall_block(agent_name, topic=agent_input.belief.topic)
+    return challenge_belief_pure(llm, agent_input, memory_block)
+
+
+def _build_handler(llm: LLMClient, agent_name: str) -> Any:
     async def _handle_challenge_belief(payload: dict[str, Any]) -> dict[str, Any]:
         skill_input = ChallengeBeliefSkillInput.model_validate(payload)
         agent_input = SkepticInput(
@@ -236,7 +253,7 @@ def _build_handler(llm: LLMClient) -> Any:
             ],
         )
         assessment, usage, model = await asyncio.to_thread(
-            challenge_belief_pure, llm, agent_input
+            _challenge_with_recall, llm, agent_input, agent_name
         )
         return ChallengeBeliefSkillOutput(
             verdict=assessment.verdict,
@@ -284,6 +301,6 @@ class SkepticAgent(BaseAgent):
         )
         return build_task_app(
             agent_card=card,
-            skill_handlers={"challenge_belief": _build_handler(self.llm)},
-            agent_name="skeptic",
+            skill_handlers={"challenge_belief": _build_handler(self.llm, self.name)},
+            agent_name=self.name,
         )

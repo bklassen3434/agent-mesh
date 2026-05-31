@@ -8,11 +8,25 @@ Given a title and a piece of source text — which may be a paper abstract, blog
 - outperforms: the subject entity outperforms another entity on some task
 - developed_by: the subject entity was developed by a lab or team
 - evaluated_on: the subject entity was evaluated on a benchmark or dataset
+- has_capability: the subject entity can do something, or has a notable property, with no number attached (e.g. "handles 1M-token context", "is sample-efficient", "runs on a single GPU")
+- based_on: the subject entity derives from / builds on / is a variant of another entity (architecture, model, or method)
+- reproduces: the source confirms OR fails to reproduce a previously reported result for the subject entity
+- critiques: the source challenges the validity of a result, method, or comparison involving the subject entity
+- speculates: the source makes a forecast, prediction, or opinion about the subject entity's future (not a present fact)
 
 Rules:
 1. Only extract claims directly stated or clearly implied by the source text.
 2. Each claim must include a verbatim excerpt from the source text that supports it.
-3. The object must be a JSON dict. For achieves_score: {"score": <number>, "benchmark": "<name>", "metric": "<optional>"}. For outperforms: {"compared_to": "<entity name>", "on": "<task/benchmark>"}. For developed_by: {"lab": "<lab name>"}. For evaluated_on: {"benchmark": "<name>"}.
+3. The object must be a JSON dict, shaped by the predicate:
+   - achieves_score: {"score": <number>, "benchmark": "<name>", "metric": "<optional>"}
+   - outperforms: {"compared_to": "<entity name>", "on": "<task/benchmark>"}
+   - developed_by: {"lab": "<lab name>"}
+   - evaluated_on: {"benchmark": "<name>"}
+   - has_capability: {"capability": "<short phrase, no number>"}
+   - based_on: {"parent": "<entity name it builds on>"}
+   - reproduces: {"target": "<result/claim being checked>", "outcome": "confirmed" | "failed"}
+   - critiques: {"target": "<result/method/comparison>", "issue": "<short description of the problem>"}
+   - speculates: {"about": "<topic>", "prediction": "<short description of the forecast>"}
 4. subject_name should be the canonical entity name as it appears in the source text (e.g. "GPT-4", "RoboAgent", "MMLU").
 5. If no claims fit these predicates, return an empty claims list.
 6. Do NOT invent claims not in the source text.
@@ -363,6 +377,105 @@ Output:
       "object": {"compared_to": "Mixtral 8x7B", "on": "MMLU"},
       "raw_excerpt": "On MMLU it outperforms Mixtral 8x7B",
       "confidence": 0.85
+    }
+  ]
+}
+
+=== EXAMPLE 13 (capability + lineage, no headline number) ===
+Title: "Mamba: Linear-Time Sequence Modeling with Selective State Spaces"
+Content: "We introduce Mamba, a sequence model built on selective state space models (SSMs). Mamba handles context lengths up to 1M tokens with linear-time inference and no attention. It is developed by researchers at Carnegie Mellon and Princeton."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "has_capability",
+      "subject_name": "Mamba",
+      "object": {"capability": "handles context lengths up to 1M tokens with linear-time inference"},
+      "raw_excerpt": "Mamba handles context lengths up to 1M tokens with linear-time inference and no attention",
+      "confidence": 0.85
+    },
+    {
+      "predicate": "based_on",
+      "subject_name": "Mamba",
+      "object": {"parent": "selective state space models"},
+      "raw_excerpt": "a sequence model built on selective state space models (SSMs)",
+      "confidence": 0.9
+    },
+    {
+      "predicate": "developed_by",
+      "subject_name": "Mamba",
+      "object": {"lab": "Carnegie Mellon and Princeton"},
+      "raw_excerpt": "It is developed by researchers at Carnegie Mellon and Princeton",
+      "confidence": 0.9
+    }
+  ]
+}
+
+=== EXAMPLE 14 (forum reproduction — confirmed) ===
+Title: "Reproduced the DeepSeek-V3 MMLU number"
+Content: "I re-ran DeepSeek-V3 on MMLU with the official harness and got 88.4%, which lines up with the 88.5% in the paper. Confirmed for me."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "reproduces",
+      "subject_name": "DeepSeek-V3",
+      "object": {"target": "88.5% on MMLU", "outcome": "confirmed"},
+      "raw_excerpt": "I re-ran DeepSeek-V3 on MMLU with the official harness and got 88.4%, which lines up with the 88.5% in the paper",
+      "confidence": 0.8
+    }
+  ]
+}
+
+=== EXAMPLE 15 (blog critique — methodology) ===
+Title: "Why that 'GPT-4-beating' open model claim doesn't hold up"
+Content: "The much-hyped result for OpenChat claiming it beats GPT-4 on MT-bench used a non-standard judge prompt and only 20 questions. The comparison is not apples-to-apples and the gap likely disappears under the standard protocol."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "critiques",
+      "subject_name": "OpenChat",
+      "object": {"target": "beats GPT-4 on MT-bench", "issue": "non-standard judge prompt and only 20 questions; not apples-to-apples"},
+      "raw_excerpt": "used a non-standard judge prompt and only 20 questions. The comparison is not apples-to-apples",
+      "confidence": 0.8
+    }
+  ]
+}
+
+=== EXAMPLE 16 (forum reproduction — failed) ===
+Title: "Couldn't reproduce RT-2 generalization claims"
+Content: "We tried to reproduce RT-2's emergent generalization on our robot setup and saw far weaker transfer than reported — basically no zero-shot success on novel objects."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "reproduces",
+      "subject_name": "RT-2",
+      "object": {"target": "emergent generalization / zero-shot transfer to novel objects", "outcome": "failed"},
+      "raw_excerpt": "saw far weaker transfer than reported — basically no zero-shot success on novel objects",
+      "confidence": 0.75
+    }
+  ]
+}
+
+=== EXAMPLE 17 (opinion piece — speculation) ===
+Title: "Where agents go in 2026"
+Content: "My bet is that by the end of next year, open-weight models like Llama will close most of the agentic-reasoning gap with frontier closed models. This is speculative, but the trend lines point that way."
+
+Output:
+{
+  "claims": [
+    {
+      "predicate": "speculates",
+      "subject_name": "Llama",
+      "object": {"about": "agentic-reasoning gap with frontier closed models", "prediction": "open-weight models close most of the gap by end of 2026"},
+      "raw_excerpt": "open-weight models like Llama will close most of the agentic-reasoning gap with frontier closed models",
+      "confidence": 0.5
     }
   ]
 }

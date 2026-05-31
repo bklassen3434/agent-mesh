@@ -23,7 +23,19 @@ logger = logging.getLogger(__name__)
 
 
 class ExtractedClaim(BaseModel):
-    predicate: Literal["achieves_score", "outperforms", "developed_by", "evaluated_on"]
+    predicate: Literal[
+        # legacy four
+        "achieves_score",
+        "outperforms",
+        "developed_by",
+        "evaluated_on",
+        # Phase 14a additions (claim_type is derived from these downstream)
+        "has_capability",
+        "based_on",
+        "reproduces",
+        "critiques",
+        "speculates",
+    ]
     subject_name: str
     object: dict[str, Any]
     raw_excerpt: str

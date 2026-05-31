@@ -55,6 +55,25 @@ def init_db() -> None:
         console.print("[green]Knowledge schema already up to date.[/green]")
 
 
+@cli.command("backfill-claim-types")
+def backfill_claim_types_cmd() -> None:
+    """Type any untyped/drifted claims (Phase 14a). Deterministic + idempotent.
+
+    Migration 007 backfills claim_type on apply; this re-runnable command
+    recomputes claim_type from each claim's predicate for any rows where it is
+    NULL or has drifted (e.g. after a manual edit). No LLM — the predicate fully
+    determines the claim_type.
+    """
+    from mesh_db.claims import backfill_claim_types
+
+    conn = get_connection()  # writer
+    try:
+        updated = backfill_claim_types(conn)
+    finally:
+        conn.close()
+    console.print(f"[green]Claim types backfilled: {updated} row(s) updated.[/green]")
+
+
 _ENTITY_CHOICES = click.Choice([e.value for e in EntityType])
 _SOURCE_CHOICES = click.Choice([s.value for s in SourceType])
 _CLAIM_STATUS_CHOICES = click.Choice([c.value for c in ClaimStatus])

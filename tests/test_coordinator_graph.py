@@ -271,6 +271,9 @@ def test_capability_claims_produce_entity_anchored_belief(tmp_path: Path) -> Non
     assert "1M-token context" in belief.statement
     assert "single GPU" in belief.statement
     assert len(belief.supporting_claim_ids) == 2
+    # 14d: confidence is computed from evidence signals, not the hardcoded 0.5.
+    # Two supporting claims, no attacks → above base.
+    assert belief.confidence > 0.5
     runs = list_pipeline_runs(conn, limit=5, run_type="pipeline")
     assert runs[0].beliefs_created == 1
     conn.close()

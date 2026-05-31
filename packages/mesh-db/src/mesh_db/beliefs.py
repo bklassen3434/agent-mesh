@@ -158,6 +158,38 @@ def find_stale_beliefs(
     return [_row_to_belief(r) for r in rows]
 
 
+def get_belief_signals(conn: MeshConnection, belief_id: str) -> dict[str, int]:
+    """Read a belief's evidence signals from the belief_signals view (Phase 14d).
+
+    Returns all-zero signals for a belief the view doesn't cover (e.g. not
+    currently held). The view recomputes on read, so it reflects a belief's
+    claim links as soon as they're written."""
+    row = conn.execute(
+        """
+        SELECT source_type_diversity, reproduction_count,
+               skeptic_counter_claim_count, severe_failure_mode_count,
+               claims_last_30d
+        FROM belief_signals WHERE belief_id = %s
+        """,
+        [belief_id],
+    ).fetchone()
+    if row is None:
+        return {
+            "source_type_diversity": 0,
+            "reproduction_count": 0,
+            "skeptic_counter_claim_count": 0,
+            "severe_failure_mode_count": 0,
+            "claims_last_30d": 0,
+        }
+    return {
+        "source_type_diversity": int(row[0]),
+        "reproduction_count": int(row[1]),
+        "skeptic_counter_claim_count": int(row[2]),
+        "severe_failure_mode_count": int(row[3]),
+        "claims_last_30d": int(row[4]),
+    }
+
+
 def update_belief(
     conn: MeshConnection, id: str, **fields: Any
 ) -> Belief:

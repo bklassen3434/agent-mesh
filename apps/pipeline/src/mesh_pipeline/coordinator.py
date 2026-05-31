@@ -42,6 +42,11 @@ from mesh_a2a.node import call_skill_node
 from mesh_a2a.tracing import new_traceparent
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.claim_extractor import ExtractedClaim
+from mesh_agents.confidence import (
+    BeliefSignals,
+    ConfidenceWeights,
+    compute_confidence,
+)
 from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
@@ -53,7 +58,13 @@ from mesh_agents.synthesis import (
     edge_for_claim,
     synthesize_capability_belief,
 )
-from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, update_belief
+from mesh_db.beliefs import (
+    create_belief,
+    get_belief_by_id,
+    get_belief_signals,
+    list_beliefs,
+    update_belief,
+)
 from mesh_db.claims import create_claim, list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
@@ -375,11 +386,25 @@ def _insert_claims(
     return resolved_claims, inserted
 
 
+def _belief_confidence(
+    conn: Any, belief_id: str, weights: ConfidenceWeights
+) -> float:
+    """Confidence from a belief's evidence signals (Phase 14d).
+
+    Reads the belief_signals view (which already reflects the just-written claim
+    links) and maps it to a confidence. Applies to every synthesized belief —
+    score and capability alike — so confidence varies with real evidence instead
+    of a hardcoded constant. Read-only; the caller writes it."""
+    signals = BeliefSignals.from_row(get_belief_signals(conn, belief_id))
+    return compute_confidence(signals, weights)
+
+
 async def _run_sota(
     conn: Any,
     client: MeshA2AClient,
     resolved_claims: list[ResolvedClaim],
     traceparent: str,
+    weights: ConfidenceWeights,
 ) -> tuple[int, int]:
     """Update SOTA beliefs from the resolved claims. Returns (created, revised)."""
     existing_sota = [
@@ -417,14 +442,17 @@ async def _run_sota(
     created = revised = 0
     for update in belief_updates:
         if update.is_new_belief:
-            create_belief(
-                conn,
-                Belief(
-                    topic=update.topic,
-                    statement=update.new_statement,
-                    supporting_claim_ids=update.supporting_claim_ids,
-                    confidence=update.new_confidence,
-                ),
+            belief = Belief(
+                topic=update.topic,
+                statement=update.new_statement,
+                supporting_claim_ids=update.supporting_claim_ids,
+                confidence=update.new_confidence,
+            )
+            create_belief(conn, belief)
+            # 14d: confidence comes from the belief's own evidence signals, not
+            # the seed constant from the SOTA computation.
+            update_belief(
+                conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
             created += 1
         else:
@@ -432,12 +460,15 @@ async def _run_sota(
             existing_b = get_belief_by_id(conn, update.existing_belief_id)
             if existing_b is None:
                 continue
+            new_confidence = _belief_confidence(
+                conn, update.existing_belief_id, weights
+            )
             revision = BeliefRevision(
                 belief_id=update.existing_belief_id,
                 previous_statement=existing_b.statement,
                 new_statement=update.new_statement,
                 previous_confidence=existing_b.confidence,
-                new_confidence=update.new_confidence,
+                new_confidence=new_confidence,
                 trigger_claim_ids=update.supporting_claim_ids,
                 revised_by_agent="sota_tracker",
                 rationale=update.rationale,
@@ -447,7 +478,7 @@ async def _run_sota(
                 conn,
                 update.existing_belief_id,
                 statement=update.new_statement,
-                confidence=update.new_confidence,
+                confidence=new_confidence,
                 last_revised_at=revision.revised_at,
                 revision_count=existing_b.revision_count + 1,
             )
@@ -455,7 +486,9 @@ async def _run_sota(
     return created, revised
 
 
-def _run_capability(conn: Any, resolved_claims: list[ResolvedClaim]) -> tuple[int, int]:
+def _run_capability(
+    conn: Any, resolved_claims: list[ResolvedClaim], weights: ConfidenceWeights
+) -> tuple[int, int]:
     """Synthesize entity-anchored capability beliefs (Phase 14b). Returns
     (created, revised).
 
@@ -521,14 +554,15 @@ def _run_capability(conn: Any, resolved_claims: list[ResolvedClaim]) -> tuple[in
         if update is None:
             continue
         if update.is_new_belief:
-            create_belief(
-                conn,
-                Belief(
-                    topic=update.topic,
-                    statement=update.new_statement,
-                    supporting_claim_ids=update.supporting_claim_ids,
-                    confidence=update.new_confidence,
-                ),
+            belief = Belief(
+                topic=update.topic,
+                statement=update.new_statement,
+                supporting_claim_ids=update.supporting_claim_ids,
+                confidence=update.new_confidence,
+            )
+            create_belief(conn, belief)
+            update_belief(
+                conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
             created += 1
         else:
@@ -536,25 +570,34 @@ def _run_capability(conn: Any, resolved_claims: list[ResolvedClaim]) -> tuple[in
             existing_full = get_belief_by_id(conn, update.existing_belief_id)
             if existing_full is None:
                 continue
-            revision = BeliefRevision(
-                belief_id=update.existing_belief_id,
-                previous_statement=existing_full.statement,
-                new_statement=update.new_statement,
-                previous_confidence=existing_full.confidence,
-                new_confidence=update.new_confidence,
-                trigger_claim_ids=update.supporting_claim_ids,
-                revised_by_agent="synthesizer",
-                rationale=update.rationale,
-            )
-            create_revision(conn, revision)
+            revised_at = datetime.now(UTC)
+            # Persist the new statement + claim links first so the signals (and
+            # thus the recomputed confidence) reflect this run's evidence.
             update_belief(
                 conn,
                 update.existing_belief_id,
                 statement=update.new_statement,
                 supporting_claim_ids=update.supporting_claim_ids,
-                confidence=update.new_confidence,
-                last_revised_at=revision.revised_at,
+                last_revised_at=revised_at,
                 revision_count=existing_full.revision_count + 1,
+            )
+            new_confidence = _belief_confidence(
+                conn, update.existing_belief_id, weights
+            )
+            update_belief(conn, update.existing_belief_id, confidence=new_confidence)
+            create_revision(
+                conn,
+                BeliefRevision(
+                    belief_id=update.existing_belief_id,
+                    previous_statement=existing_full.statement,
+                    new_statement=update.new_statement,
+                    previous_confidence=existing_full.confidence,
+                    new_confidence=new_confidence,
+                    trigger_claim_ids=update.supporting_claim_ids,
+                    revised_at=revised_at,
+                    revised_by_agent="synthesizer",
+                    rationale=update.rationale,
+                ),
             )
             revised += 1
     return created, revised
@@ -777,6 +820,7 @@ def build_coordinator_graph(
     ``embedder`` (+ optional ``llm`` for adjudication) enables Phase 13 semantic
     entity resolution; when absent, resolution falls back to exact-match."""
     resolution_config = ResolutionConfig.from_env()
+    confidence_weights = ConfidenceWeights.from_env()
 
     async def scout(state: CoordinatorState) -> dict[str, Any]:
         discovered = await client.discover(_agent_urls())
@@ -922,9 +966,11 @@ def build_coordinator_graph(
             ResolvedClaim.model_validate(rc) for rc in state["resolved_claims"]
         ]
         sota_created, sota_revised = await _run_sota(
-            conn, client, resolved_claims, state["traceparent"]
+            conn, client, resolved_claims, state["traceparent"], confidence_weights
         )
-        cap_created, cap_revised = _run_capability(conn, resolved_claims)
+        cap_created, cap_revised = _run_capability(
+            conn, resolved_claims, confidence_weights
+        )
         log.info(
             "beliefs_synthesized",
             sota_created=sota_created,

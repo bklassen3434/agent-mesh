@@ -4,11 +4,18 @@ from datetime import UTC, datetime
 
 import psycopg
 import pytest
-from mesh_db.claims import create_claim, get_claim_by_id, list_claims, update_claim_status
+from mesh_db.claims import (
+    backfill_claim_types,
+    count_claims,
+    create_claim,
+    get_claim_by_id,
+    list_claims,
+    update_claim_status,
+)
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
 from mesh_db.sources import create_source
-from mesh_models.claim import Claim, ClaimStatus
+from mesh_models.claim import Claim, ClaimStatus, ClaimType
 from mesh_models.entity import Entity, EntityType
 from mesh_models.source import Source, SourceType
 
@@ -89,6 +96,57 @@ def test_content_fields_not_mutable(tmp_db: MeshConnection) -> None:
     """No general update_claim function exists — only update_claim_status."""
     from mesh_db import claims as claims_module
     assert not hasattr(claims_module, "update_claim")
+
+
+def test_claim_type_round_trips(tmp_db: MeshConnection) -> None:
+    eid, sid = _setup(tmp_db)
+    c = _make_claim(eid, sid, predicate="outperforms",
+                    object={"compared_to": "GPT-3", "on": "MMLU"})
+    assert c.claim_type == ClaimType.comparison  # derived in the model
+    create_claim(tmp_db, c)
+    fetched = get_claim_by_id(tmp_db, c.id)
+    assert fetched is not None
+    assert fetched.claim_type == ClaimType.comparison
+
+
+def test_list_and_count_filter_by_claim_type(tmp_db: MeshConnection) -> None:
+    eid, sid = _setup(tmp_db)
+    create_claim(tmp_db, _make_claim(eid, sid, predicate="achieves_score",
+                                     object={"score": 90, "benchmark": "MMLU"}))
+    create_claim(tmp_db, _make_claim(eid, sid, predicate="has_capability",
+                                     object={"capability": "long context"}))
+    caps = list_claims(tmp_db, claim_type=ClaimType.capability)
+    assert len(caps) == 1 and caps[0].claim_type == ClaimType.capability
+    assert count_claims(tmp_db, claim_type=ClaimType.score) == 1
+
+
+def test_check_constraint_rejects_bad_claim_type(tmp_db: MeshConnection) -> None:
+    eid, sid = _setup(tmp_db)
+    with pytest.raises(psycopg.errors.Error):
+        tmp_db.execute(
+            "INSERT INTO claims (id, predicate, claim_type, subject_entity_id, "
+            "object, source_id, extracted_at, extracted_by_agent, raw_excerpt, "
+            "status, confidence) VALUES "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ["badtype-1", "p", "not_a_real_type", eid, "{}", sid,
+             datetime.now(UTC), "a", "x", "active", 0.5],
+        )
+
+
+def test_backfill_claim_types_repairs_drift(tmp_db: MeshConnection) -> None:
+    eid, sid = _setup(tmp_db)
+    c = _make_claim(eid, sid, predicate="developed_by", object={"lab": "OpenAI"})
+    create_claim(tmp_db, c)
+    # Force a drifted claim_type directly, bypassing the model derivation.
+    tmp_db.execute(
+        "UPDATE claims SET claim_type = 'speculative' WHERE id = %s", [c.id]
+    )
+    updated = backfill_claim_types(tmp_db)
+    assert updated == 1
+    fetched = get_claim_by_id(tmp_db, c.id)
+    assert fetched is not None and fetched.claim_type == ClaimType.attribution
+    # Idempotent: a second pass changes nothing.
+    assert backfill_claim_types(tmp_db) == 0
 
 
 def test_fk_constraint_missing_entity(tmp_db: MeshConnection) -> None:

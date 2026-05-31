@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 from mesh_models.belief import Belief
-from mesh_models.claim import Claim, ClaimStatus
+from mesh_models.claim import (
+    PREDICATE_TO_CLAIM_TYPE,
+    Claim,
+    ClaimStatus,
+    ClaimType,
+    claim_type_for_predicate,
+)
 from mesh_models.entity import Entity, EntityType
 from mesh_models.investigation import Investigation, InvestigationStatus
 from mesh_models.relationship import Relationship
@@ -98,6 +104,57 @@ class TestClaimModel:
             source_id="s", extracted_by_agent="a", raw_excerpt="",
         )
         assert c.superseded_by_claim_id is None
+
+    @pytest.mark.parametrize(
+        ("predicate", "expected"),
+        [
+            ("achieves_score", ClaimType.score),
+            ("outperforms", ClaimType.comparison),
+            ("developed_by", ClaimType.attribution),
+            ("evaluated_on", ClaimType.evaluation),
+            ("has_capability", ClaimType.capability),
+            ("based_on", ClaimType.lineage),
+            ("reproduces", ClaimType.reproduction),
+            ("critiques", ClaimType.critique),
+            ("speculates", ClaimType.speculative),
+        ],
+    )
+    def test_claim_type_derived_from_predicate(
+        self, predicate: str, expected: ClaimType
+    ) -> None:
+        c = Claim(
+            predicate=predicate, subject_entity_id="e", object={},
+            source_id="s", extracted_by_agent="a", raw_excerpt="",
+        )
+        assert c.claim_type == expected
+
+    def test_claim_type_map_is_total_over_predicate_vocab(self) -> None:
+        # The map must stay 1:1 with the extractor's predicate Literal so every
+        # extracted claim lands in a real bucket (not the speculative fallback).
+        from mesh_agents.claim_extractor import ExtractedClaim
+
+        literal_predicates = set(
+            ExtractedClaim.model_fields["predicate"].annotation.__args__  # type: ignore[union-attr]
+        )
+        assert literal_predicates == set(PREDICATE_TO_CLAIM_TYPE)
+
+    def test_unknown_predicate_falls_back_to_speculative(self) -> None:
+        assert claim_type_for_predicate("totally_unknown") == ClaimType.speculative
+        c = Claim(
+            predicate="totally_unknown", subject_entity_id="e", object={},
+            source_id="s", extracted_by_agent="a", raw_excerpt="",
+        )
+        assert c.claim_type == ClaimType.speculative
+
+    def test_explicit_claim_type_is_respected(self) -> None:
+        # An explicit claim_type overrides predicate-derivation (e.g. a future
+        # caller that knows better than the predicate suggests).
+        c = Claim(
+            predicate="achieves_score", claim_type=ClaimType.capability,
+            subject_entity_id="e", object={}, source_id="s",
+            extracted_by_agent="a", raw_excerpt="",
+        )
+        assert c.claim_type == ClaimType.capability
 
 
 class TestBeliefModel:

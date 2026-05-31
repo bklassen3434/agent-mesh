@@ -5,7 +5,13 @@ from mesh_models.briefing import (
     ItemType,
     PersonalizedItem,
 )
-from mesh_models.claim import Claim, ClaimStatus
+from mesh_models.claim import (
+    PREDICATE_TO_CLAIM_TYPE,
+    Claim,
+    ClaimStatus,
+    ClaimType,
+    claim_type_for_predicate,
+)
 from mesh_models.entity import Entity, EntityType
 from mesh_models.graph import GraphData, GraphDataEdge, GraphDataNode
 from mesh_models.investigation import Investigation, InvestigationStatus
@@ -22,12 +28,14 @@ from mesh_models.source import Source, SourceType
 
 __all__ = [
     "ALLOWED_INTERVAL_HOURS",
+    "PREDICATE_TO_CLAIM_TYPE",
     "Belief",
     "BeliefRevision",
     "Briefing",
     "BriefingSection",
     "Claim",
     "ClaimStatus",
+    "ClaimType",
     "Entity",
     "EntityType",
     "GraphData",
@@ -44,4 +52,5 @@ __all__ = [
     "Source",
     "SourceType",
     "TriggerResult",
+    "claim_type_for_predicate",
 ]

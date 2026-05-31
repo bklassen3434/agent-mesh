@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from mesh_models.claim import Claim, ClaimStatus, FailureMode
+from mesh_models.claim import Claim, ClaimStatus, ClaimType, FailureMode
 from psycopg.types.json import Jsonb
 
 from mesh_db.connection import MeshConnection
@@ -12,13 +12,14 @@ from mesh_db.connection import MeshConnection
 
 def _row_to_claim(row: tuple[Any, ...]) -> Claim:
     (
-        id_, predicate, subject_entity_id, object_, source_id,
+        id_, predicate, claim_type, subject_entity_id, object_, source_id,
         extracted_at, extracted_by_agent, raw_excerpt, status,
         confidence, superseded_by_claim_id, failure_mode,
-    ) = row[:12]
+    ) = row[:13]
     return Claim(
         id=id_,
         predicate=predicate,
+        claim_type=ClaimType(claim_type),
         subject_entity_id=subject_entity_id,
         object=json.loads(object_) if isinstance(object_, str) else (object_ or {}),
         source_id=source_id,
@@ -36,7 +37,7 @@ def _row_to_claim(row: tuple[Any, ...]) -> Claim:
 
 
 _SELECT = (
-    "SELECT id, predicate, subject_entity_id, object, source_id, "
+    "SELECT id, predicate, claim_type, subject_entity_id, object, source_id, "
     "extracted_at, extracted_by_agent, raw_excerpt, status, confidence, "
     "superseded_by_claim_id, failure_mode "
     "FROM claims"
@@ -47,14 +48,15 @@ def create_claim(conn: MeshConnection, model: Claim) -> Claim:
     conn.execute(
         """
         INSERT INTO claims
-            (id, predicate, subject_entity_id, object, source_id,
+            (id, predicate, claim_type, subject_entity_id, object, source_id,
             extracted_at, extracted_by_agent, raw_excerpt, status, confidence,
             superseded_by_claim_id, failure_mode)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
             model.predicate,
+            model.claim_type.value,
             model.subject_entity_id,
             Jsonb(model.object),
             model.source_id,
@@ -83,6 +85,7 @@ def _claim_filters(
     source_id: str | None,
     status: ClaimStatus | None,
     predicate: str | None,
+    claim_type: ClaimType | None,
 ) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
@@ -98,6 +101,9 @@ def _claim_filters(
     if predicate is not None:
         conditions.append("predicate = %s")
         params.append(predicate)
+    if claim_type is not None:
+        conditions.append("claim_type = %s")
+        params.append(claim_type.value)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return where, params
 
@@ -108,12 +114,13 @@ def list_claims(
     source_id: str | None = None,
     status: ClaimStatus | None = None,
     predicate: str | None = None,
+    claim_type: ClaimType | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[Claim]:
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
-    where, params = _claim_filters(entity_id, source_id, status, predicate)
+    where, params = _claim_filters(entity_id, source_id, status, predicate, claim_type)
     params.extend([limit, offset])
     rows = conn.execute(
         f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT %s OFFSET %s", params
@@ -127,8 +134,9 @@ def count_claims(
     source_id: str | None = None,
     status: ClaimStatus | None = None,
     predicate: str | None = None,
+    claim_type: ClaimType | None = None,
 ) -> int:
-    where, params = _claim_filters(entity_id, source_id, status, predicate)
+    where, params = _claim_filters(entity_id, source_id, status, predicate, claim_type)
     row = conn.execute(f"SELECT COUNT(*) FROM claims{where}", params).fetchone()
     return int(row[0]) if row else 0
 
@@ -143,6 +151,36 @@ def get_claims_by_ids(
         f"{_SELECT} WHERE id IN ({placeholders})", ids
     ).fetchall()
     return [_row_to_claim(r) for r in rows]
+
+
+# Phase 14a: deterministic predicate→claim_type backfill. Kept as one SQL CASE
+# (mirrors migration 007 and mesh_models.claim.PREDICATE_TO_CLAIM_TYPE) so the
+# typing of stored claims is exact, free, and idempotent — re-running only
+# rewrites rows whose claim_type drifted from what the predicate implies.
+_CLAIM_TYPE_CASE = """
+    CASE predicate
+        WHEN 'achieves_score' THEN 'score'
+        WHEN 'outperforms'    THEN 'comparison'
+        WHEN 'developed_by'   THEN 'attribution'
+        WHEN 'evaluated_on'   THEN 'evaluation'
+        WHEN 'has_capability' THEN 'capability'
+        WHEN 'based_on'       THEN 'lineage'
+        WHEN 'reproduces'     THEN 'reproduction'
+        WHEN 'critiques'      THEN 'critique'
+        WHEN 'speculates'     THEN 'speculative'
+        ELSE 'speculative'
+    END
+"""
+
+
+def backfill_claim_types(conn: MeshConnection) -> int:
+    """Recompute claim_type from predicate for any rows where it is NULL or has
+    drifted. Returns the number of rows updated. Idempotent."""
+    cur = conn.execute(
+        f"UPDATE claims SET claim_type = {_CLAIM_TYPE_CASE} "
+        f"WHERE claim_type IS DISTINCT FROM ({_CLAIM_TYPE_CASE})"
+    )
+    return cur.rowcount if cur.rowcount is not None else 0
 
 
 def update_claim_status(

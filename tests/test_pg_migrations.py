@@ -39,7 +39,7 @@ def test_statements_drops_trailing_and_empty_chunks() -> None:
 def test_real_migration_files_split_into_runnable_statements() -> None:
     # Every committed pg migration must split into non-empty statements that
     # start with a SQL keyword (no stray comment fragments).
-    keywords = ("CREATE", "ALTER", "GRANT", "INSERT", "DROP", "REVOKE")
+    keywords = ("CREATE", "ALTER", "GRANT", "INSERT", "DROP", "REVOKE", "UPDATE")
     files = sorted(PG_MIGRATIONS.glob("[0-9][0-9][0-9]_*.sql"))
     assert files, "no pg migration files found"
     for f in files:

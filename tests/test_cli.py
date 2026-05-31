@@ -192,3 +192,49 @@ def test_show_sources(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
     result = runner.invoke(cli, ["show-sources"], env=env)
     assert result.exit_code == 0
     assert "blog" in result.output
+
+
+def test_heuristics_list_empty(runner_with_db: tuple[CliRunner, dict[str, str]]) -> None:
+    runner, env = runner_with_db
+    result = runner.invoke(cli, ["heuristics", "list"], env=env)
+    assert result.exit_code == 0
+    assert "No heuristics recorded" in result.output
+
+
+def test_heuristics_list_after_persist(
+    runner_with_db: tuple[CliRunner, dict[str, str]],
+) -> None:
+    runner, env = runner_with_db
+    from mesh_agents.consolidator import HeuristicProposal
+    from mesh_pipeline._heuristics import persist_heuristic
+
+    conn = get_connection()
+    try:
+        persist_heuristic(
+            conn,
+            HeuristicProposal(
+                agent="claim_extractor",
+                skill="extract_claims",
+                source="reddit",
+                heuristic="Forum scores are self-reported; lower confidence.",
+                provenance_run_ids=["run-1"],
+                rationale="seen repeatedly",
+            ),
+        )
+    finally:
+        conn.close()
+
+    # Widen the rich console so cell contents aren't truncated for the asserts.
+    wide = {**env, "COLUMNS": "200"}
+    result = runner.invoke(cli, ["heuristics", "list"], env=wide)
+    assert result.exit_code == 0, result.output
+    assert "claim_extractor" in result.output
+    assert "extract_claims" in result.output
+    assert "reddit" in result.output
+
+    # Skill filter narrows the set.
+    miss = runner.invoke(
+        cli, ["heuristics", "list", "--skill", "challenge_belief"], env=wide
+    )
+    assert miss.exit_code == 0
+    assert "No heuristics recorded" in miss.output

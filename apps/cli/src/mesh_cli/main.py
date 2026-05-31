@@ -11,6 +11,7 @@ from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, updat
 from mesh_db.claims import create_claim, get_claim_by_id, list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
+from mesh_db.heuristics import list_heuristics
 from mesh_db.investigations import get_investigation_by_id, list_investigations
 from mesh_db.llm_usage import aggregate_usage_by_skill
 from mesh_db.pg_migrations import init_pg
@@ -993,6 +994,66 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
             sources,
             runs_claims,
             inv.hypothesis or inv.question,
+        )
+    console.print(table)
+
+
+@cli.group("heuristics")
+def heuristics() -> None:
+    """Phase 16 procedural-memory inspection."""
+
+
+@heuristics.command("list")
+@click.option("--agent", default=None, help="Filter by agent (e.g. claim_extractor).")
+@click.option("--skill", default=None, help="Filter by skill (e.g. extract_claims).")
+@click.option(
+    "--include-expired/--active-only",
+    default=False,
+    show_default=True,
+    help="Include heuristics past their TTL (default: only unexpired).",
+)
+@click.option("--limit", default=50, type=int, show_default=True)
+def heuristics_list(
+    agent: str | None, skill: str | None, include_expired: bool, limit: int
+) -> None:
+    """List learned heuristics with agent, skill, scope, confidence, and TTL."""
+    conn = _get_conn()
+    try:
+        rows = list_heuristics(
+            conn,
+            agent=agent,
+            skill=skill,
+            include_expired=include_expired,
+            limit=limit,
+        )
+    finally:
+        conn.close()
+
+    if not rows:
+        console.print("[dim]No heuristics recorded.[/dim]")
+        return
+
+    table = Table(title="Agent heuristics")
+    table.add_column("ID", style="dim", max_width=8)
+    table.add_column("Agent", style="cyan")
+    table.add_column("Skill")
+    table.add_column("Scope", style="dim")
+    table.add_column("Conf", justify="right")
+    table.add_column("Active")
+    table.add_column("Expires", style="dim")
+    table.add_column("Heuristic", overflow="fold")
+    for h in rows:
+        scope_bits = [b for b in (h.source, h.entity_id) if b]
+        scope = ", ".join(scope_bits) or "—"
+        table.add_row(
+            h.id[:8],
+            h.agent,
+            h.skill,
+            scope,
+            f"{h.confidence:.2f}",
+            "yes" if h.is_currently_active else "no",
+            h.expires_at.strftime("%Y-%m-%d"),
+            h.heuristic,
         )
     console.print(table)
 

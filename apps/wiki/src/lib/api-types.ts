@@ -588,6 +588,8 @@ export interface components {
             id?: string;
             /** Predicate */
             predicate: string;
+            /** @default speculative */
+            claim_type: components["schemas"]["ClaimType"];
             /** Subject Entity Id */
             subject_entity_id: string;
             /** Object */
@@ -627,6 +629,28 @@ export interface components {
          * @enum {string}
          */
         ClaimStatus: "active" | "superseded" | "retracted" | "disputed";
+        /**
+         * ClaimType
+         * @description Phase 14a: derived classification of what a claim *asserts*, used to route
+         *     synthesis (14b/c) — entity-anchored beliefs, relationship edges, or evidence
+         *     signals. It is metadata derived from the predicate; it does not alter what the
+         *     source said, so it does not violate claim-content immutability.
+         *
+         *     The taxonomy is intentionally small and 1:1 with the extractor's predicate
+         *     vocabulary (see ``PREDICATE_TO_CLAIM_TYPE``):
+         *
+         *       score        — a benchmark/performance result ("X scores Y on Z")
+         *       capability    — a property / what an entity can do ("X handles long context")
+         *       comparison    — one entity vs another on an axis ("X outperforms Y on Z")
+         *       attribution   — who made/owns an entity ("X developed by Y")
+         *       lineage       — what an entity derives from ("X builds on Y")
+         *       evaluation    — what an entity was tested on ("X evaluated on Z")
+         *       reproduction  — confirms / fails to reproduce a prior result
+         *       critique      — challenges the validity of a claim/result
+         *       speculative   — forecast / opinion about the future
+         * @enum {string}
+         */
+        ClaimType: "score" | "capability" | "comparison" | "attribution" | "lineage" | "evaluation" | "reproduction" | "critique" | "speculative";
         /**
          * ClaimWithContext
          * @description Claim joined with its source and subject entity for display.

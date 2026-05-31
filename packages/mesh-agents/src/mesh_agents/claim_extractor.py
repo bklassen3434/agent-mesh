@@ -18,7 +18,7 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
-from mesh_agents.memory import recall_block
+from mesh_agents.memory import build_memory_block
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +85,11 @@ def _extract_sync(
     llm: Any, paper: ScoutedPaper, memory_block: str = ""
 ) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
     user_prompt = format_extraction_user(title=paper.title, abstract=paper.abstract)
-    # Phase 16a: fold the extractor's own recent history + outcomes into the
-    # USER message, after the cached system prefix (cache-prefix stability).
+    # Phase 16a/d: fold the extractor's applicable heuristics + recent history
+    # into the USER message, before the task content but after the cached system
+    # prefix (cache-prefix stability).
     if memory_block:
-        user_prompt = f"{user_prompt}\n\n{memory_block}"
+        user_prompt = f"{memory_block}\n\n{user_prompt}"
     result, latency_ms, usage = llm.complete_with_usage(
         name="extract_claims",
         system=CLAIM_EXTRACTION_SYSTEM,
@@ -98,14 +99,19 @@ def _extract_sync(
     return result.claims, latency_ms, usage, getattr(llm, "model", "")
 
 
-def _extract_with_recall(
+def _extract_with_memory(
     llm: Any, paper: ScoutedPaper, agent_name: str
 ) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
-    """Recall the extractor's own recent history (off the event loop), then
-    extract with that history folded into the prompt. No scope filter — a
-    freshly-scouted source has no prior extraction to key on, so the relevant
-    signal is the extractor's broad recent track record + outcomes."""
-    memory_block = recall_block(agent_name)
+    """Gather the extractor's applicable heuristics + recent history (off the
+    event loop), then extract with that memory folded into the prompt.
+
+    Heuristics are scoped to this paper's source TYPE (so source-specific how-to
+    like "forum scores are self-reported" applies); episodic recall is the
+    extractor's broad recent track record (a freshly-scouted source has no prior
+    extraction to key on)."""
+    memory_block = build_memory_block(
+        agent_name, "extract_claims", source=paper.source.type.value
+    )
     return _extract_sync(llm, paper, memory_block)
 
 
@@ -115,7 +121,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
         paper = ScoutedPaper.model_validate(skill_input.paper)
         try:
             claims, latency_ms, usage, model = await asyncio.to_thread(
-                _extract_with_recall, llm, paper, agent_name
+                _extract_with_memory, llm, paper, agent_name
             )
         except LLMProviderNotReadyError:
             raise

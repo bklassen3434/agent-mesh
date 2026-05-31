@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from mesh_agents.base import BaseAgent
-from mesh_agents.memory import recall_block
+from mesh_agents.memory import build_memory_block
 from mesh_agents.sota_tracker import BeliefSummary
 
 logger = logging.getLogger(__name__)
@@ -166,9 +166,10 @@ def build_skeptic_prompt(
 
     Shared by the synchronous agent path and the sweep's Batch-API path (which
     submits requests directly rather than calling this agent over A2A), so both
-    reason over identical prompts. ``memory_block`` (Phase 16a — the skeptic's
-    own recent challenge history + outcomes) is appended to the USER message,
-    after the cached system prefix, so the prompt cache prefix stays stable."""
+    reason over identical prompts. ``memory_block`` (Phase 16a/d — the skeptic's
+    applicable heuristics + recent challenge history) is prepended to the USER
+    message, after the cached system prefix, so the prompt cache prefix stays
+    stable."""
     user_prompt = format_skeptic_user(
         topic=input.belief.topic,
         statement=input.belief.statement,
@@ -181,7 +182,7 @@ def build_skeptic_prompt(
         n_contradicting=len(input.contradicting_claims),
     )
     if memory_block:
-        user_prompt = f"{user_prompt}\n{memory_block}"
+        user_prompt = f"{memory_block}\n\n{user_prompt}"
     return SKEPTIC_SYSTEM, user_prompt
 
 
@@ -228,12 +229,15 @@ def challenge_belief_pure(
         return _INCONCLUSIVE.model_copy(), LLMUsage(), getattr(llm, "model", "")
 
 
-def _challenge_with_recall(
+def _challenge_with_memory(
     llm: LLMClient, agent_input: SkepticInput, agent_name: str
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
-    """Recall the skeptic's own challenge history on this belief's topic (off the
-    event loop), then assess with that history folded into the prompt."""
-    memory_block = recall_block(agent_name, topic=agent_input.belief.topic)
+    """Gather the skeptic's applicable heuristics + challenge history on this
+    belief's topic (off the event loop), then assess with that memory folded
+    into the prompt."""
+    memory_block = build_memory_block(
+        agent_name, "challenge_belief", topic=agent_input.belief.topic
+    )
     return challenge_belief_pure(llm, agent_input, memory_block)
 
 
@@ -253,7 +257,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
             ],
         )
         assessment, usage, model = await asyncio.to_thread(
-            _challenge_with_recall, llm, agent_input, agent_name
+            _challenge_with_memory, llm, agent_input, agent_name
         )
         return ChallengeBeliefSkillOutput(
             verdict=assessment.verdict,

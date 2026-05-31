@@ -86,6 +86,39 @@ source, so they are excluded when it is set); `topic` (revision belief topic
 only — extractions excluded when it is set); `since`/`until` (inclusive window);
 `limit` (capped at `MAX_LIMIT = 200`). Read-only: only SELECTs, no writes.
 
+## 15b — outcome tagging
+
+Each entry carries a deterministic `outcome` (`EpisodicOutcome`) computed
+**purely in SQL from current table state** — no LLM, no new columns on the
+source tables, derived in the read path. "What I did *and whether it worked*."
+
+**Extraction events** roll up the fate of the claims produced (FILTER aggregates
+over per-claim facets), with a headline `label`:
+
+| label | meaning |
+|---|---|
+| `survived` | a produced claim is supporting evidence in a currently-held belief that drew no contradicting claims |
+| `contradicted` | a produced claim supports a belief that later drew skeptic counter-claims (`claims_contested > 0`) |
+| `superseded` | all produced claims were superseded |
+| `applied` (skeptic) | the skeptic counter-claim is attached as contradicting evidence |
+| `unused` (skeptic) | counter-claim created but not attached (e.g. a `weakened` verdict) |
+| `pending` | active claim not yet referenced by any belief |
+
+Facets also expose `claims_supporting` / `claims_contradicting` /
+`claims_contested` / `claims_superseded`, the distinct `failure_modes`, and
+`investigations` — a `status → count` map of investigations whose
+`collected_claim_ids` include this event's claims (the link by which the
+non-agent-attributed investigation lifecycle, `resolved` / `abandoned` / `open`,
+attaches to an agent's episodic record).
+
+**Belief-revision events** carry `belief_currently_held` and `later_revisions`
+(how many revisions superseded this one), with `label` ∈ {`held`, `retired`}.
+
+All of this is derived from existing tables (`claims.status`,
+`beliefs.supporting/contradicting_claim_ids`, `claims.failure_mode`,
+`investigations.status`/`collected_claim_ids`, `beliefs.is_currently_held`);
+nothing is written.
+
 ## A2A exposure (read step 4) — STOPPED by design
 
 The brief asked to expose `recall_history` as a read-only A2A skill *via the

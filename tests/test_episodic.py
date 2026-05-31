@@ -13,13 +13,15 @@ from mesh_db.beliefs import create_belief
 from mesh_db.claims import create_claim
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
-from mesh_db.episodic import recall_history
+from mesh_db.episodic import EpisodicEntry, recall_history
+from mesh_db.investigations import create_investigation
 from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source
 from mesh_models.belief import Belief
-from mesh_models.claim import Claim
+from mesh_models.claim import Claim, ClaimStatus, FailureMode
 from mesh_models.entity import Entity, EntityType
+from mesh_models.investigation import Investigation, InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
 
@@ -234,3 +236,176 @@ def test_run_id_none_when_outside_any_run(tmp_db: MeshConnection) -> None:
     entries = recall_history(tmp_db, "claim_extractor")
     assert len(entries) == 1
     assert entries[0].run_id is None
+
+
+# ── 15b: outcome tagging ──────────────────────────────────────────────────────
+
+
+def _src(conn: MeshConnection, n: int) -> str:
+    return create_source(
+        conn,
+        Source(
+            type=SourceType.arxiv,
+            url=f"https://arxiv.org/abs/{n:04d}",
+            published_at=_dt(9, 0),
+            raw_content_hash=f"oh{n}",
+        ),
+    ).id
+
+
+def _claim(
+    conn: MeshConnection,
+    entity_id: str,
+    source_id: str,
+    *,
+    agent: str = "claim_extractor",
+    status: ClaimStatus = ClaimStatus.active,
+    failure_mode: FailureMode | None = None,
+) -> str:
+    return create_claim(
+        conn,
+        Claim(
+            predicate="has_capability",
+            subject_entity_id=entity_id,
+            object={"capability": "x"},
+            source_id=source_id,
+            extracted_by_agent=agent,
+            raw_excerpt="...",
+            status=status,
+            failure_mode=failure_mode,
+            extracted_at=_dt(10, 5),
+        ),
+    ).id
+
+
+def _outcomes_seed(conn: MeshConnection) -> dict[str, str]:
+    """A pipeline run with claims of known, distinct fates — each on its own
+    source so it forms a separate (cleanly-labelled) extraction event."""
+    create_pipeline_run(
+        conn, PipelineRun(started_at=_dt(10, 0), finished_at=_dt(10, 10))
+    )
+    ent = create_entity(conn, Entity(canonical_name="M", type=EntityType.model))
+
+    s_surv, s_cont, s_skept = _src(conn, 1), _src(conn, 2), _src(conn, 3)
+    s_res, s_aband, s_sup = _src(conn, 4), _src(conn, 5), _src(conn, 6)
+
+    c_surv = _claim(conn, ent.id, s_surv)
+    c_cont = _claim(conn, ent.id, s_cont)
+    cc = _claim(
+        conn, ent.id, s_skept, agent="skeptic",
+        failure_mode=FailureMode.methodological_flaw,
+    )
+    c_res = _claim(conn, ent.id, s_res)
+    c_aband = _claim(conn, ent.id, s_aband)
+    _claim(conn, ent.id, s_sup, status=ClaimStatus.superseded)
+
+    # c_surv supports a held belief with no contradictions → survived.
+    create_belief(
+        conn, Belief(topic="b:held", statement="s", supporting_claim_ids=[c_surv])
+    )
+    # c_cont supports a held belief that drew a skeptic counter-claim (cc) →
+    # contested; cc is applied as contradicting evidence.
+    create_belief(
+        conn,
+        Belief(
+            topic="b:attacked", statement="s",
+            supporting_claim_ids=[c_cont], contradicting_claim_ids=[cc],
+        ),
+    )
+    # Investigations collecting the produced claims, with known terminal states.
+    create_investigation(
+        conn,
+        Investigation(
+            question="q1", status=InvestigationStatus.resolved,
+            collected_claim_ids=[c_res],
+        ),
+    )
+    create_investigation(
+        conn,
+        Investigation(
+            question="q2", status=InvestigationStatus.abandoned,
+            collected_claim_ids=[c_aband],
+        ),
+    )
+    return {"source_surv": s_surv, "source_cont": s_cont, "source_skept": s_skept,
+            "source_res": s_res, "source_aband": s_aband, "source_sup": s_sup}
+
+
+def _by_source(entries: list[EpisodicEntry], source_id: str) -> EpisodicEntry:
+    [ev] = [e for e in entries if e.refs.get("source_id") == source_id]
+    return ev
+
+
+def test_outcome_survived_vs_contradicted(tmp_db: MeshConnection) -> None:
+    ids = _outcomes_seed(tmp_db)
+    entries = recall_history(tmp_db, "claim_extractor")
+
+    survived = _by_source(entries, ids["source_surv"])
+    assert survived.outcome.label == "survived"
+    assert survived.outcome.claims_supporting == 1
+    assert survived.outcome.claims_contested == 0
+
+    contradicted = _by_source(entries, ids["source_cont"])
+    assert contradicted.outcome.label == "contradicted"
+    assert contradicted.outcome.claims_contested == 1
+
+    superseded = _by_source(entries, ids["source_sup"])
+    assert superseded.outcome.label == "superseded"
+    assert superseded.outcome.claims_superseded == 1
+
+
+def test_outcome_skeptic_counter_claim_applied(tmp_db: MeshConnection) -> None:
+    ids = _outcomes_seed(tmp_db)
+    entries = recall_history(tmp_db, "skeptic")
+    applied = _by_source(entries, ids["source_skept"])
+    assert applied.outcome.label == "applied"
+    assert applied.outcome.claims_contradicting == 1
+    assert "methodological_flaw" in applied.outcome.failure_modes
+
+
+def test_outcome_investigation_status(tmp_db: MeshConnection) -> None:
+    ids = _outcomes_seed(tmp_db)
+    entries = recall_history(tmp_db, "claim_extractor")
+    assert _by_source(entries, ids["source_res"]).outcome.investigations == {
+        "resolved": 1
+    }
+    assert _by_source(entries, ids["source_aband"]).outcome.investigations == {
+        "abandoned": 1
+    }
+
+
+def test_outcome_belief_held_vs_retired(tmp_db: MeshConnection) -> None:
+    create_pipeline_run(
+        tmp_db, PipelineRun(started_at=_dt(10, 0), finished_at=_dt(10, 10))
+    )
+    held = create_belief(tmp_db, Belief(topic="b:live", statement="s"))
+    retired = create_belief(
+        tmp_db, Belief(topic="b:dead", statement="s", is_currently_held=False)
+    )
+    create_revision(
+        tmp_db,
+        BeliefRevision(
+            belief_id=held.id, previous_statement="a", new_statement="b",
+            previous_confidence=0.5, new_confidence=0.6, revised_by_agent="sota_tracker",
+            revised_at=_dt(10, 3), rationale="r",
+        ),
+    )
+    create_revision(
+        tmp_db,
+        BeliefRevision(
+            belief_id=retired.id, previous_statement="a", new_statement="b",
+            previous_confidence=0.5, new_confidence=0.2, revised_by_agent="synthesizer",
+            revised_at=_dt(10, 4), rationale="r",
+        ),
+    )
+    held_ev = _by_belief(recall_history(tmp_db, "sota_tracker"), held.id)
+    assert held_ev.outcome.label == "held"
+    assert held_ev.outcome.belief_currently_held is True
+    retired_ev = _by_belief(recall_history(tmp_db, "synthesizer"), retired.id)
+    assert retired_ev.outcome.label == "retired"
+    assert retired_ev.outcome.belief_currently_held is False
+
+
+def _by_belief(entries: list[EpisodicEntry], belief_id: str) -> EpisodicEntry:
+    [ev] = [e for e in entries if e.refs.get("belief_id") == belief_id]
+    return ev

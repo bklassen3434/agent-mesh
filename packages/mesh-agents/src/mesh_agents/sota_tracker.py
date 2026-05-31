@@ -9,7 +9,8 @@ from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
 from mesh_db.beliefs import list_beliefs
 from mesh_db.connection import MeshConnection
-from pydantic import BaseModel
+from mesh_models.claim import ClaimType, claim_type_for_predicate
+from pydantic import BaseModel, model_validator
 from starlette.applications import Starlette
 
 from mesh_agents.base import BaseAgent
@@ -23,10 +24,20 @@ class ResolvedClaim(BaseModel):
     claim_id: str
     subject_entity_id: str
     predicate: str
+    # Routing key for type-dispatched synthesis (Phase 14). Derived from the
+    # predicate when a caller (or an older serialized payload) omits it.
+    claim_type: ClaimType = ClaimType.speculative
     object: dict[str, Any]
     source_id: str
     raw_excerpt: str
     confidence: float
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_claim_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data.get("claim_type") and data.get("predicate"):
+            data = {**data, "claim_type": claim_type_for_predicate(str(data["predicate"]))}
+        return data
 
 
 class BeliefUpdate(BaseModel):

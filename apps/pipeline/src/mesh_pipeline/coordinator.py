@@ -10,8 +10,8 @@ Graph shape::
     START → scout ─(Send fan-out)→ scout_one → ingest
       ingest ─[new papers?]→ extract_one (Send fan-out) | finalize
       extract_one ─[claims>0?]→ track_entities | finalize
-      track_entities ─[model/benchmark?]→ track_sota | curate
-      track_sota → curate
+      track_entities ─[resolved claims?]→ synthesize | curate
+      synthesize → curate          (score + capability belief handlers)
       curate ─[open investigations?]→ dispatch_investigations | finalize
       dispatch_investigations → finalize → END
 
@@ -45,10 +45,17 @@ from mesh_agents.claim_extractor import ExtractedClaim
 from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
+from mesh_agents.synthesis import (
+    CAPABILITY_TOPIC_PREFIX,
+    CapabilityBeliefInput,
+    ExistingCapabilityBelief,
+    capability_topic,
+    synthesize_capability_belief,
+)
 from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, update_belief
-from mesh_db.claims import create_claim
+from mesh_db.claims import create_claim, list_claims
 from mesh_db.connection import get_connection
-from mesh_db.entities import create_entity, list_entities
+from mesh_db.entities import create_entity, get_entity_by_id, list_entities
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     list_investigations,
@@ -75,7 +82,7 @@ from mesh_llm.pricing import estimate_cost
 from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
-from mesh_models.claim import Claim
+from mesh_models.claim import Claim, ClaimStatus, ClaimType
 from mesh_models.entity import Entity, EntityType
 from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
@@ -444,6 +451,111 @@ async def _run_sota(
     return created, revised
 
 
+def _run_capability(conn: Any, resolved_claims: list[ResolvedClaim]) -> tuple[int, int]:
+    """Synthesize entity-anchored capability beliefs (Phase 14b). Returns
+    (created, revised).
+
+    For every entity touched by a capability claim this run, rebuild its
+    ``capability:<entity_id>`` belief from the entity's *full* active capability
+    claim set — so all capability claims about one resolved entity converge on a
+    single belief and provenance stays complete. Coordinator-owned writes;
+    idempotent (no change → no revision)."""
+    cap_entity_ids = {
+        rc.subject_entity_id
+        for rc in resolved_claims
+        if rc.claim_type == ClaimType.capability
+    }
+    if not cap_entity_ids:
+        return 0, 0
+
+    existing = {
+        b.topic: b
+        for b in list_beliefs(conn, currently_held=True, limit=1000)
+        if b.topic.startswith(CAPABILITY_TOPIC_PREFIX)
+    }
+
+    created = revised = 0
+    for entity_id in sorted(cap_entity_ids):
+        ent = get_entity_by_id(conn, entity_id)
+        name = ent.canonical_name if ent is not None else entity_id
+        all_caps = list_claims(
+            conn,
+            entity_id=entity_id,
+            claim_type=ClaimType.capability,
+            status=ClaimStatus.active,
+            limit=200,
+        )
+        claims = [
+            ResolvedClaim(
+                claim_id=c.id,
+                subject_entity_id=c.subject_entity_id,
+                predicate=c.predicate,
+                claim_type=c.claim_type,
+                object=c.object,
+                source_id=c.source_id,
+                raw_excerpt=c.raw_excerpt,
+                confidence=c.confidence,
+            )
+            for c in all_caps
+        ]
+        existing_b = existing.get(capability_topic(entity_id))
+        eb = (
+            ExistingCapabilityBelief(
+                belief_id=existing_b.id,
+                statement=existing_b.statement,
+                confidence=existing_b.confidence,
+                supporting_claim_ids=existing_b.supporting_claim_ids,
+            )
+            if existing_b is not None
+            else None
+        )
+        update = synthesize_capability_belief(
+            CapabilityBeliefInput(
+                entity_id=entity_id, entity_name=name, claims=claims, existing_belief=eb
+            )
+        )
+        if update is None:
+            continue
+        if update.is_new_belief:
+            create_belief(
+                conn,
+                Belief(
+                    topic=update.topic,
+                    statement=update.new_statement,
+                    supporting_claim_ids=update.supporting_claim_ids,
+                    confidence=update.new_confidence,
+                ),
+            )
+            created += 1
+        else:
+            assert update.existing_belief_id is not None
+            existing_full = get_belief_by_id(conn, update.existing_belief_id)
+            if existing_full is None:
+                continue
+            revision = BeliefRevision(
+                belief_id=update.existing_belief_id,
+                previous_statement=existing_full.statement,
+                new_statement=update.new_statement,
+                previous_confidence=existing_full.confidence,
+                new_confidence=update.new_confidence,
+                trigger_claim_ids=update.supporting_claim_ids,
+                revised_by_agent="synthesizer",
+                rationale=update.rationale,
+            )
+            create_revision(conn, revision)
+            update_belief(
+                conn,
+                update.existing_belief_id,
+                statement=update.new_statement,
+                supporting_claim_ids=update.supporting_claim_ids,
+                confidence=update.new_confidence,
+                last_revised_at=revision.revised_at,
+                revision_count=existing_full.revision_count + 1,
+            )
+            revised += 1
+    return created, revised
+
+
 async def _extract_papers(
     client: MeshA2AClient,
     papers: list[ScoutedPaper],
@@ -738,17 +850,34 @@ def build_coordinator_graph(
         }
 
     def route_after_entities(state: CoordinatorState) -> str:
-        return "track_sota" if state["has_model_or_benchmark_entity"] else "curate"
+        # Synthesize whenever the run produced any resolved claims — the score
+        # handler self-filters to leaderboard claims, and the capability handler
+        # attaches to any entity type, so the old model/benchmark gate is too
+        # narrow now.
+        return "synthesize" if state["resolved_claims"] else "curate"
 
-    async def track_sota(state: CoordinatorState) -> dict[str, Any]:
+    async def synthesize(state: CoordinatorState) -> dict[str, Any]:
+        # Type-routed synthesis (Phase 14b): the leaderboard path is now one
+        # handler among several. `score` claims feed the (unchanged) SOTA
+        # handler; `capability` claims feed entity-anchored belief synthesis.
         resolved_claims = [
             ResolvedClaim.model_validate(rc) for rc in state["resolved_claims"]
         ]
-        created, revised = await _run_sota(
+        sota_created, sota_revised = await _run_sota(
             conn, client, resolved_claims, state["traceparent"]
         )
-        log.info("sota_updated", created=created, revised=revised)
-        return {"beliefs_created": created, "beliefs_revised": revised}
+        cap_created, cap_revised = _run_capability(conn, resolved_claims)
+        log.info(
+            "beliefs_synthesized",
+            sota_created=sota_created,
+            sota_revised=sota_revised,
+            capability_created=cap_created,
+            capability_revised=cap_revised,
+        )
+        return {
+            "beliefs_created": sota_created + cap_created,
+            "beliefs_revised": sota_revised + cap_revised,
+        }
 
     async def curate(state: CoordinatorState) -> dict[str, Any]:
         # The Curator is a sweep-time agent (skill: select_beliefs_to_challenge)
@@ -919,7 +1048,7 @@ def build_coordinator_graph(
     g.add_node("ingest", ingest)
     g.add_node("extract_one", extract_one, input_schema=_ExtractWork)
     g.add_node("track_entities", track_entities)
-    g.add_node("track_sota", track_sota)
+    g.add_node("synthesize", synthesize)
     g.add_node("curate", curate)
     g.add_node("dispatch_investigations", dispatch_investigations)
     g.add_node("finalize", finalize)
@@ -929,8 +1058,8 @@ def build_coordinator_graph(
     g.add_edge("scout_one", "ingest")
     g.add_conditional_edges("ingest", route_after_ingest, ["extract_one", "finalize"])
     g.add_conditional_edges("extract_one", route_after_extract, ["track_entities", "finalize"])
-    g.add_conditional_edges("track_entities", route_after_entities, ["track_sota", "curate"])
-    g.add_edge("track_sota", "curate")
+    g.add_conditional_edges("track_entities", route_after_entities, ["synthesize", "curate"])
+    g.add_edge("synthesize", "curate")
     g.add_conditional_edges("curate", route_after_curate, ["dispatch_investigations", "finalize"])
     g.add_edge("dispatch_investigations", "finalize")
     g.add_edge("finalize", END)

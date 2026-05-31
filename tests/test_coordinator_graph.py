@@ -169,6 +169,56 @@ def test_happy_path_inserts_source_claim_entity_belief(tmp_path: Path) -> None:
     conn.close()
 
 
+_CAP_CLAIM_A = {
+    "predicate": "has_capability",
+    "subject_name": "TestModel-7B",
+    "object": {"capability": "handles 1M-token context"},
+    "raw_excerpt": "handles 1M-token context with linear-time inference",
+    "confidence": 0.9,
+}
+_CAP_CLAIM_B = {
+    "predicate": "has_capability",
+    "subject_name": "TestModel-7B",
+    "object": {"capability": "runs on a single GPU"},
+    "raw_excerpt": "runs on a single consumer GPU",
+    "confidence": 0.9,
+}
+
+
+def _capability_responses(claims: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "scout_arxiv": {"papers": [_paper("2401.0003", "hash-cap")]},
+        "extract_claims": {"claims": claims, "latency_ms": 90},
+        "resolve_entities": _RESOLVE_RESP,
+        # No score claims → the SOTA handler emits nothing; capability synthesis
+        # is coordinator-side and does not use this skill.
+        "update_sota": {"belief_updates": []},
+    }
+
+
+def test_capability_claims_produce_entity_anchored_belief(tmp_path: Path) -> None:
+    db = str(tmp_path / "coord.db")
+    conn = get_connection(db)
+    conn.close()
+
+    # Two capability claims about the same resolved entity must converge on ONE
+    # entity-anchored belief carrying both claims as provenance.
+    _run(db, _capability_responses([_CAP_CLAIM_A, _CAP_CLAIM_B]))
+
+    conn = get_connection(db)
+    beliefs = list_beliefs(conn, limit=50)
+    cap_beliefs = [b for b in beliefs if b.topic.startswith("capability:")]
+    assert len(cap_beliefs) == 1
+    belief = cap_beliefs[0]
+    assert belief.statement.startswith("TestModel-7B:")
+    assert "1M-token context" in belief.statement
+    assert "single GPU" in belief.statement
+    assert len(belief.supporting_claim_ids) == 2
+    runs = list_pipeline_runs(conn, limit=5, run_type="pipeline")
+    assert runs[0].beliefs_created == 1
+    conn.close()
+
+
 def test_zero_claims_skips_entity_and_sota(tmp_path: Path) -> None:
     """Conditional edge: extract→finalize when no claims, so no entity
     resolution and no sota tracking happen."""

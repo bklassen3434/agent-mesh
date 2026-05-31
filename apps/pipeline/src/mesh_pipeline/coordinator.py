@@ -50,6 +50,7 @@ from mesh_agents.synthesis import (
     CapabilityBeliefInput,
     ExistingCapabilityBelief,
     capability_topic,
+    edge_for_claim,
     synthesize_capability_belief,
 )
 from mesh_db.beliefs import create_belief, get_belief_by_id, list_beliefs, update_belief
@@ -75,6 +76,7 @@ from mesh_db.processed_items import (
     record_processed_item,
     touch_processed_item,
 )
+from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
 from mesh_llm import Embedder
@@ -82,7 +84,7 @@ from mesh_llm.pricing import estimate_cost
 from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
-from mesh_models.claim import Claim, ClaimStatus, ClaimType
+from mesh_models.claim import Claim, ClaimStatus, ClaimType, claim_type_for_predicate
 from mesh_models.entity import Entity, EntityType
 from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
@@ -115,6 +117,7 @@ class PipelineResult(BaseModel):
     entities_created: int
     beliefs_created: int
     beliefs_revised: int
+    relationships_created: int = 0
     avg_extraction_latency_ms: int
     errors: list[dict[str, str]]
 
@@ -168,9 +171,10 @@ class CoordinatorState(TypedDict):
     claims_inserted: int
     resolved_claims: list[dict[str, Any]]
     has_model_or_benchmark_entity: bool
-    # sota
+    # synthesis
     beliefs_created: int
     beliefs_revised: int
+    relationships_created: int
     # investigations (relocated full 7a lifecycle)
     has_open_investigations: bool
     investigations_dispatched: int
@@ -556,6 +560,49 @@ def _run_capability(conn: Any, resolved_claims: list[ResolvedClaim]) -> tuple[in
     return created, revised
 
 
+def _edge_target_names(claims: list[ExtractedClaim]) -> set[str]:
+    """Names of the *other* entity each relational claim points at, so the
+    coordinator resolves them to nodes before synthesizing edges (Phase 14c)."""
+    out: set[str] = set()
+    for ec in claims:
+        spec = edge_for_claim(claim_type_for_predicate(ec.predicate), ec.object)
+        if spec is not None:
+            out.add(spec[1])
+    return out
+
+
+def _run_edges(
+    conn: Any, resolved_claims: list[ResolvedClaim], entity_map: dict[str, str]
+) -> int:
+    """Synthesize claim-grounded relationship edges from relational claims
+    (Phase 14c). Returns the number of *new* edges created (repeat assertions
+    aggregate onto the existing edge instead). Coordinator-owned writes.
+
+    Each edge connects the (Phase-13 canonical) subject entity to the resolved
+    target entity named in the claim object; edges whose target didn't resolve,
+    or that would self-loop, are skipped rather than fabricated."""
+    created = 0
+    for rc in resolved_claims:
+        spec = edge_for_claim(rc.claim_type, rc.object)
+        if spec is None:
+            continue
+        edge_type, target_name = spec
+        target_id = entity_map.get(target_name)
+        if target_id is None or target_id == rc.subject_entity_id:
+            continue
+        _rel, was_created = add_relationship_evidence(
+            conn,
+            rc.subject_entity_id,
+            target_id,
+            edge_type,
+            rc.claim_id,
+            rc.confidence,
+        )
+        if was_created:
+            created += 1
+    return created
+
+
 async def _extract_papers(
     client: MeshA2AClient,
     papers: list[ScoutedPaper],
@@ -835,18 +882,29 @@ def build_coordinator_graph(
             claims = [ExtractedClaim.model_validate(c) for c in e["claims"]]
             pairs.append((paper, claims))
             names.update(ec.subject_name for ec in claims)
+            # Relational claims also reference a *target* entity (in the object);
+            # resolve those too so 14c can ground edges on real nodes.
+            names.update(_edge_target_names(claims))
         entity_map, created, resolved = await _resolve_and_persist(
             conn, client, embedder, llm, list(names),
             state["traceparent"], resolution_config,
         )
         resolved_claims, inserted = _insert_claims(conn, pairs, entity_map, {})
+        relationships_created = _run_edges(conn, resolved_claims, entity_map)
         has_mb = any(r.entity_type in _MODEL_LIKE_TYPES for r in resolved)
-        log.info("entities_resolved", total=len(entity_map), created=created, claims=inserted)
+        log.info(
+            "entities_resolved",
+            total=len(entity_map),
+            created=created,
+            claims=inserted,
+            edges=relationships_created,
+        )
         return {
             "entities_created": created,
             "claims_inserted": inserted,
             "resolved_claims": [rc.model_dump(mode="json") for rc in resolved_claims],
             "has_model_or_benchmark_entity": has_mb,
+            "relationships_created": relationships_created,
         }
 
     def route_after_entities(state: CoordinatorState) -> str:
@@ -1101,6 +1159,7 @@ def _result_from_state(state: CoordinatorState) -> PipelineResult:
         entities_created=state["entities_created"] + state["investigation_entities_created"],
         beliefs_created=state["beliefs_created"],
         beliefs_revised=state["beliefs_revised"],
+        relationships_created=state.get("relationships_created", 0),
         avg_extraction_latency_ms=state.get("avg_extraction_latency_ms", 0),
         errors=errors,
     )
@@ -1148,6 +1207,7 @@ async def run_pipeline(
         "has_model_or_benchmark_entity": False,
         "beliefs_created": 0,
         "beliefs_revised": 0,
+        "relationships_created": 0,
         "has_open_investigations": False,
         "investigations_dispatched": 0,
         "investigations_resolved": 0,

@@ -1,13 +1,18 @@
 """Pure unit tests for type-routed capability synthesis (Phase 14b)."""
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from mesh_agents.sota_tracker import ResolvedClaim
 from mesh_agents.synthesis import (
     CapabilityBeliefInput,
     ExistingCapabilityBelief,
     capability_topic,
+    edge_for_claim,
     synthesize_capability_belief,
 )
+from mesh_models.claim import ClaimType
 
 
 def _cap_claim(claim_id: str, entity_id: str, capability: str) -> ResolvedClaim:
@@ -107,3 +112,33 @@ def test_idempotent_no_change_returns_none() -> None:
         )
     )
     assert update is None  # nothing changed → no revision churn
+
+
+# --- relational edge mapping (14c) ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("claim_type", "object", "expected"),
+    [
+        (ClaimType.comparison, {"compared_to": "GPT-3", "on": "MMLU"},
+         ("outperforms", "GPT-3")),
+        (ClaimType.attribution, {"lab": "Meta AI"}, ("developed_by", "Meta AI")),
+        (ClaimType.lineage, {"parent": "Transformer"}, ("based_on", "Transformer")),
+        (ClaimType.evaluation, {"benchmark": "MMLU"}, ("evaluated_on", "MMLU")),
+    ],
+)
+def test_edge_for_claim_maps_relational_types(
+    claim_type: ClaimType, object: dict[str, Any], expected: tuple[str, str]
+) -> None:
+    assert edge_for_claim(claim_type, object) == expected
+
+
+def test_edge_for_claim_non_relational_is_none() -> None:
+    assert edge_for_claim(ClaimType.capability, {"capability": "x"}) is None
+    assert edge_for_claim(ClaimType.score, {"score": 90, "benchmark": "MMLU"}) is None
+    assert edge_for_claim(ClaimType.reproduction, {"target": "x"}) is None
+
+
+def test_edge_for_claim_missing_target_is_none() -> None:
+    assert edge_for_claim(ClaimType.comparison, {"on": "MMLU"}) is None
+    assert edge_for_claim(ClaimType.attribution, {"lab": "   "}) is None

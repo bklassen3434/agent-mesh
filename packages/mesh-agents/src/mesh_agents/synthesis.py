@@ -17,11 +17,52 @@ re-running with no new capability claims yields no update.
 """
 from __future__ import annotations
 
+from typing import Any
+
+from mesh_models.claim import ClaimType
 from pydantic import BaseModel
 
 from mesh_agents.sota_tracker import BeliefUpdate, ResolvedClaim
 
 CAPABILITY_TOPIC_PREFIX = "capability:"
+
+# ---------------------------------------------------------------------------
+# Relational synthesis (Phase 14c): relational claim types → graph edges.
+# Small, fixed edge vocabulary — unrecognized relational shapes are left
+# unsynthesized rather than inventing new edge kinds. The "other" entity lives
+# in the claim's object under a predicate-specific key.
+# ---------------------------------------------------------------------------
+
+_RELATIONAL_EDGE_TYPE: dict[ClaimType, str] = {
+    ClaimType.comparison: "outperforms",
+    ClaimType.attribution: "developed_by",
+    ClaimType.lineage: "based_on",
+    ClaimType.evaluation: "evaluated_on",
+}
+
+# Where the edge's *target* entity name sits in the claim object, per type.
+_EDGE_TARGET_KEY: dict[ClaimType, str] = {
+    ClaimType.comparison: "compared_to",
+    ClaimType.attribution: "lab",
+    ClaimType.lineage: "parent",
+    ClaimType.evaluation: "benchmark",
+}
+
+RELATIONAL_CLAIM_TYPES = frozenset(_RELATIONAL_EDGE_TYPE)
+
+
+def edge_for_claim(claim_type: ClaimType, object: dict[str, Any]) -> tuple[str, str] | None:
+    """Map a relational claim to ``(edge_type, target_entity_name)``.
+
+    Returns ``None`` for non-relational claim types or when the object names no
+    target entity (so the caller skips it rather than minting a dangling edge)."""
+    edge_type = _RELATIONAL_EDGE_TYPE.get(claim_type)
+    if edge_type is None:
+        return None
+    target = str(object.get(_EDGE_TARGET_KEY[claim_type], "")).strip()
+    if not target:
+        return None
+    return edge_type, target
 
 # Cap how many capability phrases render into the belief statement (provenance
 # still links every claim). Keeps the statement readable as evidence grows.
@@ -77,7 +118,7 @@ def synthesize_capability_belief(inp: CapabilityBeliefInput) -> BeliefUpdate | N
     Returns ``None`` when there is nothing to assert, or when an existing belief
     is already in sync with the evidence (so re-runs don't churn revisions).
     """
-    capability_claims = [c for c in inp.claims if c.claim_type.value == "capability"]
+    capability_claims = [c for c in inp.claims if c.claim_type == ClaimType.capability]
     capabilities = _ordered_unique(
         [str(c.object.get("capability", "")).strip() for c in capability_claims]
     )

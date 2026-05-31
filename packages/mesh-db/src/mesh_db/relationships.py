@@ -69,6 +69,53 @@ def list_relationships(
     return [_row_to_relationship(r) for r in rows]
 
 
+def find_relationship(
+    conn: MeshConnection, from_entity_id: str, to_entity_id: str, type: str
+) -> Relationship | None:
+    """Locate the single edge for a (from, to, type) triple, if it exists."""
+    row = conn.execute(
+        f"{_SELECT} WHERE from_entity_id = %s AND to_entity_id = %s AND type = %s LIMIT 1",
+        [from_entity_id, to_entity_id, type],
+    ).fetchone()
+    return _row_to_relationship(row) if row else None
+
+
+def add_relationship_evidence(
+    conn: MeshConnection,
+    from_entity_id: str,
+    to_entity_id: str,
+    type: str,
+    claim_id: str,
+    confidence: float,
+) -> tuple[Relationship, bool]:
+    """Claim-grounded edge upsert (Phase 14c). Aggregates onto one edge per
+    (from, to, type): creates it if absent, else appends the evidence claim
+    (deduped) and lifts confidence to the strongest supporting claim. Idempotent.
+
+    Returns ``(relationship, created)`` where ``created`` is True only when a new
+    edge row was inserted."""
+    existing = find_relationship(conn, from_entity_id, to_entity_id, type)
+    if existing is None:
+        rel = Relationship(
+            from_entity_id=from_entity_id,
+            to_entity_id=to_entity_id,
+            type=type,
+            evidence_claim_ids=[claim_id],
+            confidence=confidence,
+        )
+        create_relationship(conn, rel)
+        return rel, True
+    if claim_id in existing.evidence_claim_ids:
+        return existing, False
+    updated = update_relationship(
+        conn,
+        existing.id,
+        evidence_claim_ids=[*existing.evidence_claim_ids, claim_id],
+        confidence=max(existing.confidence, confidence),
+    )
+    return updated, False
+
+
 def update_relationship(
     conn: MeshConnection, id: str, **fields: Any
 ) -> Relationship:

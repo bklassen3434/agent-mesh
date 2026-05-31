@@ -196,6 +196,63 @@ def _capability_responses(claims: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _resolve_all(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve every candidate name as a new model entity (deterministic id),
+    so relational targets like `compared_to` become real nodes for edges."""
+    return {
+        "resolved": [
+            {
+                "name": name,
+                "entity_id": str(uuid.uuid5(uuid.NAMESPACE_URL, name)),
+                "canonical_name": name,
+                "entity_type": "model",
+                "is_new": True,
+            }
+            for name in payload.get("candidate_names", [])
+        ]
+    }
+
+
+_COMPARISON_CLAIM = {
+    "predicate": "outperforms",
+    "subject_name": "TestModel-7B",
+    "object": {"compared_to": "GPT-3", "on": "MMLU"},
+    "raw_excerpt": "TestModel-7B outperforms GPT-3 on MMLU",
+    "confidence": 0.85,
+}
+
+
+def test_relational_claim_produces_claim_grounded_edge(tmp_path: Path) -> None:
+    db = str(tmp_path / "coord.db")
+    conn = get_connection(db)
+    conn.close()
+
+    responses = {
+        "scout_arxiv": {"papers": [_paper("2401.0004", "hash-edge")]},
+        "extract_claims": {"claims": [_COMPARISON_CLAIM], "latency_ms": 80},
+        "resolve_entities": _resolve_all,
+        "update_sota": {"belief_updates": []},
+    }
+    _run(db, responses)
+
+    conn = get_connection(db)
+    from mesh_db.relationships import list_relationships
+
+    edges = list_relationships(conn, limit=50)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.type == "outperforms"
+    # Edge is claim-grounded: it links the asserting claim.
+    claims = list_claims(conn, limit=50)
+    assert len(claims) == 1
+    assert edge.evidence_claim_ids == [claims[0].id]
+    # Both endpoints are real, distinct entity nodes.
+    names = {e.canonical_name for e in list_entities(conn, limit=50)}
+    assert {"TestModel-7B", "GPT-3"} <= names
+    assert edge.from_entity_id != edge.to_entity_id
+    conn.close()
+
+
 def test_capability_claims_produce_entity_anchored_belief(tmp_path: Path) -> None:
     db = str(tmp_path / "coord.db")
     conn = get_connection(db)

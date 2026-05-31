@@ -14,6 +14,7 @@ from mesh_models.claim import (
 )
 from mesh_models.entity import Entity, EntityType
 from mesh_models.graph import GraphData, GraphDataEdge, GraphDataNode
+from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
 from mesh_models.investigation import Investigation, InvestigationStatus
 from mesh_models.relationship import Relationship
 from mesh_models.revision import BeliefRevision
@@ -29,6 +30,8 @@ from mesh_models.source import Source, SourceType
 __all__ = [
     "ALLOWED_INTERVAL_HOURS",
     "PREDICATE_TO_CLAIM_TYPE",
+    "AgentHeuristic",
+    "AgentHeuristicRevision",
     "Belief",
     "BeliefRevision",
     "Briefing",

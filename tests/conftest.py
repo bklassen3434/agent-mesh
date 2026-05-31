@@ -12,7 +12,7 @@ from testcontainers.core.container import DockerContainer
 _KNOWLEDGE_TABLES = [
     "entities", "sources", "claims", "beliefs", "belief_revisions",
     "relationships", "investigations", "pipeline_runs", "llm_usage",
-    "processed_items",
+    "processed_items", "agent_heuristic", "agent_heuristic_revision",
 ]
 
 

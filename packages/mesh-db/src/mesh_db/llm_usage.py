@@ -107,6 +107,73 @@ def aggregate_usage_by_skill(
     ]
 
 
+class ModelUsageTotals(BaseModel):
+    """Per-model token + cost totals aggregated across runs (Phase 20)."""
+
+    model: str | None = None
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+def aggregate_usage_by_model(
+    conn: MeshConnection,
+    *,
+    field_id: str | None = None,
+    since: datetime | None = None,
+) -> list[ModelUsageTotals]:
+    """Per-model token + cost totals, optionally scoped to a field and a time
+    window. Powers ``mesh.cli routing-stats`` — the before/after evidence that
+    tiered routing is paying off, read straight from the existing ledger.
+
+    ``field_id`` filters by the run's field (joined via ``pipeline_runs``);
+    ``since`` filters by the usage row's ``created_at``.
+    """
+    where: list[str] = []
+    params: list[Any] = []
+    join = ""
+    if field_id is not None:
+        join = "JOIN pipeline_runs r ON r.id = u.run_id"
+        where.append("r.field_id = %s")
+        params.append(field_id)
+    if since is not None:
+        where.append("u.created_at >= %s")
+        params.append(since)
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"""
+        SELECT u.model,
+               COUNT(*)                    AS calls,
+               SUM(u.input_tokens)         AS input_tokens,
+               SUM(u.output_tokens)        AS output_tokens,
+               SUM(u.cache_read_tokens)    AS cache_read_tokens,
+               SUM(u.cache_creation_tokens) AS cache_creation_tokens,
+               SUM(u.estimated_cost_usd)   AS estimated_cost_usd
+        FROM llm_usage u
+        {join}
+        {where_sql}
+        GROUP BY u.model
+        ORDER BY estimated_cost_usd DESC
+        """,
+        params,
+    ).fetchall()
+    return [
+        ModelUsageTotals(
+            model=None if r[0] is None else str(r[0]),
+            calls=int(r[1]),
+            input_tokens=int(r[2] or 0),
+            output_tokens=int(r[3] or 0),
+            cache_read_tokens=int(r[4] or 0),
+            cache_creation_tokens=int(r[5] or 0),
+            estimated_cost_usd=float(r[6] or 0.0),
+        )
+        for r in rows
+    ]
+
+
 def list_llm_usage(
     conn: MeshConnection, run_id: str
 ) -> list[LLMUsageRecord]:

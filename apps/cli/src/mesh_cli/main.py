@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import click
@@ -13,7 +13,7 @@ from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
 from mesh_db.heuristics import list_heuristics
 from mesh_db.investigations import get_investigation_by_id, list_investigations
-from mesh_db.llm_usage import aggregate_usage_by_skill
+from mesh_db.llm_usage import aggregate_usage_by_model, aggregate_usage_by_skill
 from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import list_pipeline_runs
 from mesh_db.relationships import get_relationship_by_id
@@ -661,6 +661,133 @@ def cost_report(run_id: str | None, last: int) -> None:
             )
     finally:
         conn.close()
+
+
+def _parse_since(since: str | None) -> datetime | None:
+    """Parse a ``--since`` value: ``24h`` / ``7d`` durations or an ISO date."""
+    if since is None:
+        return None
+    if since.endswith("h"):
+        return datetime.now(UTC) - timedelta(hours=int(since[:-1]))
+    if since.endswith("d"):
+        return datetime.now(UTC) - timedelta(days=int(since[:-1]))
+    return datetime.fromisoformat(since)
+
+
+def _tier_for_model(model: str | None) -> str:
+    """Label a realized model with its routing tier.
+
+    Tier isn't persisted (the ledger records only the realized ``model``), so
+    derive it: match the live RoutingConfig's cheap/strong models first, then
+    fall back to a family heuristic. Unpriced/local models read as cheap.
+    """
+    if not model:
+        return "—"
+    from mesh_llm.routing import RoutingConfig
+
+    cfg = RoutingConfig.from_env()
+    if model == cfg.cheap_model:
+        return "cheap"
+    if model == cfg.strong_model:
+        return "strong"
+    # Family fallback for models that don't match the current config exactly.
+    if model.startswith(("claude-sonnet", "claude-opus", "claude-3-5-sonnet")):
+        return "strong"
+    if model.startswith(("claude-haiku", "claude-3-5-haiku")):
+        return "cheap"
+    return "?"
+
+
+@cli.command("routing-stats")
+@click.option("--field", "field_slug", default=None, help="Scope to a field slug")
+@click.option(
+    "--since", default=None,
+    help="Only usage since this date/duration (e.g. 24h, 7d, 2024-01-01)",
+)
+def routing_stats(field_slug: str | None, since: str | None) -> None:
+    """Per-tier LLM request / token / cost split from the llm_usage ledger.
+
+    The before/after evidence that tiered routing (Phase 20) is paying off:
+    aggregates the realized model recorded per call, labels each with its tier,
+    and shows request counts, token totals, and estimated dollars per tier.
+    Reads the existing ledger — no new table.
+    """
+    try:
+        since_dt = _parse_since(since)
+    except ValueError as exc:
+        console.print(f"[red]Invalid --since value:[/red] {exc}")
+        return
+
+    conn = _get_conn()
+    try:
+        totals = aggregate_usage_by_model(
+            conn, field_id=field_slug, since=since_dt
+        )
+    except Exception:
+        console.print(
+            "[yellow]No llm_usage ledger yet — run mesh.cli init-db and a "
+            "pipeline first.[/yellow]"
+        )
+        conn.close()
+        return
+    conn.close()
+
+    if not totals:
+        console.print("[dim]No LLM usage recorded for that scope.[/dim]")
+        return
+
+    scope = field_slug or "all fields"
+    window = f" since {since}" if since else ""
+    table = Table(title=f"Routing stats — {scope}{window}")
+    table.add_column("Tier", style="cyan")
+    table.add_column("Model", style="dim")
+    table.add_column("Calls", justify="right")
+    table.add_column("Input", justify="right")
+    table.add_column("Output", justify="right")
+    table.add_column("Cost", justify="right")
+
+    tier_calls: dict[str, int] = {}
+    tier_cost: dict[str, float] = {}
+    grand_calls = 0
+    grand_cost = 0.0
+    # Sort by tier (cheap, strong, then the rest) so the split reads top-down.
+    tier_order = {"cheap": 0, "strong": 1}
+    rows = sorted(
+        totals,
+        key=lambda t: (tier_order.get(_tier_for_model(t.model), 2), -t.estimated_cost_usd),
+    )
+    for t in rows:
+        tier = _tier_for_model(t.model)
+        tier_calls[tier] = tier_calls.get(tier, 0) + t.calls
+        tier_cost[tier] = tier_cost.get(tier, 0.0) + t.estimated_cost_usd
+        grand_calls += t.calls
+        grand_cost += t.estimated_cost_usd
+        table.add_row(
+            tier,
+            t.model or "—",
+            str(t.calls),
+            f"{t.input_tokens:,}",
+            f"{t.output_tokens:,}",
+            _fmt_usd(t.estimated_cost_usd),
+        )
+
+    table.add_section()
+    for tier in sorted(tier_calls, key=lambda k: tier_order.get(k, 2)):
+        share = (tier_calls[tier] / grand_calls * 100) if grand_calls else 0.0
+        table.add_row(
+            f"[bold]{tier}[/bold]",
+            f"[dim]{share:.0f}% of calls[/dim]",
+            f"[bold]{tier_calls[tier]}[/bold]",
+            "",
+            "",
+            f"[bold]{_fmt_usd(tier_cost[tier])}[/bold]",
+        )
+    table.add_section()
+    table.add_row(
+        "[bold]TOTAL[/bold]", "", f"[bold]{grand_calls}[/bold]", "", "",
+        f"[bold]{_fmt_usd(grand_cost)}[/bold]",
+    )
+    console.print(table)
 
 
 @cli.command("show-recent-claims")

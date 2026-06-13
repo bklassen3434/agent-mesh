@@ -1,13 +1,17 @@
 """Phase 11a: llm_usage ledger DB layer."""
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from mesh_db.connection import MeshConnection
 from mesh_db.llm_usage import (
     LLMUsageRecord,
+    aggregate_usage_by_model,
     aggregate_usage_by_skill,
     create_llm_usage,
     list_llm_usage,
 )
+from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run
 
 
 def _rec(
@@ -85,3 +89,61 @@ def test_aggregate_scopes_to_run(tmp_db: MeshConnection) -> None:
 def test_empty_run_returns_no_rows(tmp_db: MeshConnection) -> None:
     assert aggregate_usage_by_skill(tmp_db, "nope") == []
     assert list_llm_usage(tmp_db, "nope") == []
+
+
+# ── Phase 20: aggregate_usage_by_model (routing-stats) ───────────────────────
+
+
+def _model_rec(run_id: str, model: str, *, cost: float) -> LLMUsageRecord:
+    return LLMUsageRecord(
+        run_id=run_id,
+        skill_id="extract_claims",
+        model=model,
+        input_tokens=10,
+        output_tokens=5,
+        estimated_cost_usd=cost,
+    )
+
+
+def test_aggregate_by_model_sums_and_orders(tmp_db: MeshConnection) -> None:
+    create_llm_usage(tmp_db, _model_rec("run-1", "claude-haiku-4-5", cost=0.001))
+    create_llm_usage(tmp_db, _model_rec("run-2", "claude-haiku-4-5", cost=0.001))
+    create_llm_usage(tmp_db, _model_rec("run-3", "claude-sonnet-4-6", cost=0.010))
+
+    totals = aggregate_usage_by_model(tmp_db)
+    by_model = {t.model: t for t in totals}
+    assert by_model["claude-haiku-4-5"].calls == 2
+    assert by_model["claude-haiku-4-5"].input_tokens == 20
+    assert by_model["claude-sonnet-4-6"].calls == 1
+    # ordered by cost descending — sonnet (0.010) before haiku (0.002)
+    assert totals[0].model == "claude-sonnet-4-6"
+
+
+def test_aggregate_by_model_since_filter(tmp_db: MeshConnection) -> None:
+    old = LLMUsageRecord(
+        run_id="old", skill_id="extract_claims", model="claude-haiku-4-5",
+        created_at=datetime.now(UTC) - timedelta(days=30),
+    )
+    new = LLMUsageRecord(
+        run_id="new", skill_id="extract_claims", model="claude-sonnet-4-6",
+    )
+    create_llm_usage(tmp_db, old)
+    create_llm_usage(tmp_db, new)
+
+    recent = aggregate_usage_by_model(
+        tmp_db, since=datetime.now(UTC) - timedelta(days=7)
+    )
+    assert {t.model for t in recent} == {"claude-sonnet-4-6"}
+
+
+def test_aggregate_by_model_field_filter(tmp_db: MeshConnection) -> None:
+    # A run in the seeded ai-robotics field; usage joins to it via run_id.
+    run = PipelineRun(id="run-field-1")
+    create_pipeline_run(tmp_db, run, field_id="ai-robotics")
+    create_llm_usage(tmp_db, _model_rec("run-field-1", "claude-haiku-4-5", cost=0.001))
+    # Usage for a run that isn't in the field-scoped join.
+    create_llm_usage(tmp_db, _model_rec("orphan-run", "claude-sonnet-4-6", cost=0.009))
+
+    scoped = aggregate_usage_by_model(tmp_db, field_id="ai-robotics")
+    assert {t.model for t in scoped} == {"claude-haiku-4-5"}
+    assert aggregate_usage_by_model(tmp_db, field_id="no-such-field") == []

@@ -37,3 +37,16 @@ class SourceConnector(Protocol):
 def connector_skill_id(slug: str) -> str:
     """The A2A scout skill that runs a connector (``scout_<slug>``)."""
     return f"scout_{slug}"
+
+
+# A connector's investigate skill is keyed by the *source-type name* the scout
+# advertises (``investigate_<name>``), which equals the connector slug for the
+# built-in scouts but diverges for the config-driven ones whose produced
+# ``SourceType`` differs from the slug. Phase 22b dispatch uses this to map a
+# field's enabled connectors → the investigate skills it may dispatch.
+_INVESTIGATE_SOURCE_OVERRIDES = {"web_search": "web", "rest_json": "rest"}
+
+
+def investigate_source_name(connector_id: str) -> str:
+    """The ``investigate_<name>`` source name a connector's scout advertises."""
+    return _INVESTIGATE_SOURCE_OVERRIDES.get(connector_id, connector_id)

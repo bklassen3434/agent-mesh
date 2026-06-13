@@ -13,6 +13,7 @@ its own module.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -20,6 +21,24 @@ from mesh_a2a.card_builder import SkillSpec
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def keywords_from_hypothesis(hypothesis: str) -> str:
+    """Reduce an investigation hypothesis to free-text keyword terms.
+
+    A reactive Curator hypothesis is phrased for humans, e.g. ``Is the belief
+    '<statement>' (topic: <topic>) still supported by recent evidence?``; the
+    signal lives in the quoted statement + the topic, not the boilerplate. A
+    proactive discovery hypothesis is already terse. So: pull the quoted
+    statement and ``(topic: …)`` when present, else fall back to the raw
+    hypothesis. Used by the keyword-search investigate handlers (arxiv keeps
+    its own private copy predating this; github reuses this one)."""
+    statement_match = re.search(r"'([^']+)'", hypothesis)
+    topic_match = re.search(r"\(topic:\s*([^)]+)\)", hypothesis)
+    statement = statement_match.group(1).strip() if statement_match else ""
+    topic = topic_match.group(1).strip() if topic_match else ""
+    terms = " ".join(t for t in (topic, statement) if t)
+    return terms or hypothesis.strip()
 
 
 class InvestigateSkillInput(BaseModel):

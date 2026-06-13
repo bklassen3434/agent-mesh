@@ -47,7 +47,7 @@ from mesh_agents.confidence import (
     ConfidenceWeights,
     compute_confidence,
 )
-from mesh_agents.connector import connector_skill_id
+from mesh_agents.connector import connector_skill_id, investigate_source_name
 from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
@@ -1072,6 +1072,13 @@ def build_coordinator_graph(
         investigations = _open_investigations(conn, field_id=field_id)
         if not investigations:
             return {}
+        # Phase 22b: dispatch only to sources backed by a connector ENABLED for
+        # this field — field isolation extends to the investigation path, and
+        # web_search (→ "web") is the universal fallback only where it's enabled.
+        enabled_sources = {
+            investigate_source_name(fc.connector_id)
+            for fc in list_field_connectors(conn, field_id, enabled_only=True)
+        }
         tp = state["traceparent"]
         errors: list[dict[str, Any]] = []
         investigation_papers: dict[str, list[str]] = {}
@@ -1086,9 +1093,11 @@ def build_coordinator_graph(
                 pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
             )
             for source_type in inv.suggested_source_types:
+                if source_type not in enabled_sources:
+                    continue  # not enabled for this field
                 skill_id = f"investigate_{source_type}"
                 if skill_id not in skill_map:
-                    continue
+                    continue  # connector advertises no investigate handler
                 result, err = await call_skill_node(
                     client,
                     skill_id,

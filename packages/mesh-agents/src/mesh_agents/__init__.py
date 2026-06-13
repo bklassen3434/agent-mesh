@@ -19,6 +19,11 @@ from mesh_agents.entity_resolution import (
     resolve_entity_semantic,
 )
 from mesh_agents.entity_tracker import EntityTrackerAgent, EntityTrackerInput, EntityTrackerOutput
+from mesh_agents.research_qa import (
+    ResearchQAAgent,
+    ResearchQAInput,
+    answer_question_pure,
+)
 from mesh_agents.sota_tracker import (
     BeliefUpdate,
     ResolvedClaim,
@@ -43,6 +48,8 @@ __all__ = [
     "EntityTrackerInput",
     "EntityTrackerOutput",
     "ExtractedClaim",
+    "ResearchQAAgent",
+    "ResearchQAInput",
     "ResolutionConfig",
     "ResolvedClaim",
     "ScoutedPaper",
@@ -50,6 +57,7 @@ __all__ = [
     "SotaTrackerInput",
     "SotaTrackerOutput",
     "adjudicate_same_entity",
+    "answer_question_pure",
     "build_adjudication_batch_items",
     "classify_pair",
     "resolve_entity_semantic",

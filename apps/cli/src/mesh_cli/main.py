@@ -837,6 +837,67 @@ def show_sota_beliefs() -> None:
     console.print(table)
 
 
+@cli.command("ask")
+@click.argument("question")
+@click.option("--field", default="ai-robotics", help="Field slug to scope the answer to")
+def ask(question: str, field: str) -> None:
+    """Ask a grounded question about a field's knowledge graph.
+
+    Retrieves field-scoped beliefs/claims/entities for QUESTION and synthesizes
+    a cited answer using only that evidence. Runs the ResearchQA agent in-process
+    against a read-only connection; nothing is written.
+    """
+    import asyncio
+
+    from mesh_agents.research_qa import ResearchQAAgent, ResearchQAInput
+    from mesh_llm import LLMProviderNotReadyError, make_routed_llm_client
+    from mesh_models.qa import Coverage
+    from rich.panel import Panel
+
+    q = question.strip()
+    if not q:
+        console.print("[red]Question must not be empty.[/red]")
+        raise SystemExit(1)
+
+    try:
+        llm = make_routed_llm_client(agent_name="research_qa")
+        llm.health_check()
+    except LLMProviderNotReadyError as exc:
+        console.print(f"[red]LLM provider not ready: {exc}[/red]")
+        raise SystemExit(1) from exc
+
+    conn = get_connection(read_only=True)
+    agent = ResearchQAAgent(llm=llm, db_conn=conn)
+    try:
+        answer = asyncio.run(agent.run(ResearchQAInput(question=q, field_id=field)))
+    finally:
+        conn.close()
+
+    coverage_style = {
+        Coverage.well_supported: "green",
+        Coverage.thin: "yellow",
+        Coverage.uncovered: "red",
+    }.get(answer.coverage, "white")
+    console.print(
+        Panel(
+            answer.answer_markdown,
+            title=f"Answer · [{coverage_style}]{answer.coverage.value}[/{coverage_style}]",
+        )
+    )
+    if answer.citations:
+        table = Table(title="Citations")
+        table.add_column("Kind", style="cyan")
+        table.add_column("ID", style="dim")
+        table.add_column("Quote")
+        for c in answer.citations:
+            table.add_row(c.kind, c.id, c.quote)
+        console.print(table)
+    if answer.caveats:
+        console.print("[bold]Caveats:[/bold]")
+        for cav in answer.caveats:
+            console.print(f"  • {cav}")
+
+
 @cli.command("ollama-check")
 def ollama_check() -> None:
     """Ping Ollama and verify the configured model is available."""

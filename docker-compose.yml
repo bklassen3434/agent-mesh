@@ -260,6 +260,45 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  research-qa:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.research_qa"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8016"
+      AGENT_PUBLIC_URL: "http://research-qa:8016"
+      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
+      # Grounded Q&A is a synthesis task; it opts into tiered routing
+      # (make_routed_llm_client) so hard questions escalate to the strong tier.
+      # Routing ships off by default — set MESH_ROUTE_RESEARCH_QA_ENABLED=true
+      # to turn it on, or pin MESH_LLM_MODEL_RESEARCH_QA to a fixed model.
+      MESH_ROUTE_ENABLED: ${MESH_ROUTE_ENABLED:-}
+      MESH_ROUTE_RESEARCH_QA_ENABLED: ${MESH_ROUTE_RESEARCH_QA_ENABLED:-}
+      MESH_LLM_MODEL_RESEARCH_QA: ${MESH_LLM_MODEL_RESEARCH_QA:-}
+      MESH_LLM_MODEL_RESEARCH_QA_STRONG: ${MESH_LLM_MODEL_RESEARCH_QA_STRONG:-claude-sonnet-4-6}
+      MESH_ROUTE_STRONG_MODEL: ${MESH_ROUTE_STRONG_MODEL:-}
+      MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # Read-only mesh access (mesh_reader role): the agent retrieves the
+      # field-scoped context pack itself. Never writes.
+      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
+    env_file:
+      - .env
+    ports:
+      - "8016:8016"
+    depends_on:
+      mesh-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8016/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   claim-extractor:
     build:
       context: .
@@ -358,6 +397,9 @@ services:
       # Phase 9: where to reach the scheduler's HTTP control surface. The API
       # proxies trigger/status/reload here; degrades gracefully if it's down.
       SCHEDULER_URL: "http://scheduler:9100"
+      # Phase 21: where to reach the ResearchQA agent for POST /api/v1/ask.
+      # Degrades to a clean "unavailable" answer if it's down.
+      MESH_ASK_AGENT_URLS: "http://research-qa:8016"
     env_file:
       - .env
     ports:

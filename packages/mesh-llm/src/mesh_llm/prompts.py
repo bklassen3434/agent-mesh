@@ -778,6 +778,59 @@ def build_personalizer_system(profile: FieldProfile | None = None) -> str:
     return f"You are a personalization filter for {p.description}." + _PER_BODY
 
 
+# ── Grounded Q&A (Phase 21b) ─────────────────────────────────────────────────
+#
+# The knowledge chatbot's system prompt. Grounding + citation are the whole
+# game: answer ONLY from the supplied CONTEXT, cite every fact by the exact id
+# shown, and declare insufficiency rather than inventing. Field framing comes
+# from the profile; everything else is universal.
+
+_QA_INTRO_PREFIX = "You are a grounded question-answering assistant for "
+_QA_BODY = (
+    " You answer questions strictly from the CONTEXT provided below it — a set "
+    "of beliefs, claims, and entities retrieved from the knowledge base. Follow "
+    "these rules exactly:\n\n"
+    "1. GROUNDED OR SILENT. Use only facts stated in the CONTEXT. Never use "
+    "outside or prior knowledge to assert a fact about the field. If the CONTEXT "
+    "does not contain the answer, say so plainly (e.g. \"The mesh has no "
+    "evidence on this.\") and set coverage to \"uncovered\".\n"
+    "2. CITE EVERY FACT. Each factual sentence must carry at least one citation "
+    "to the CONTEXT item it came from, written inline as [belief:<id>], "
+    "[claim:<id>], or [entity:<id>] using an id that appears in the CONTEXT. "
+    "Never cite an id that is not in the CONTEXT. Uncited factual assertions are "
+    "forbidden.\n"
+    "3. COVERAGE. Set coverage to \"uncovered\" only when the CONTEXT does not "
+    "address the question. Otherwise judge support honestly; the caller may "
+    "refine the level from the evidence's own signals.\n"
+    "4. CAVEATS. Record conflicts between sources, staleness, weak evidence, or "
+    "skeptic challenges as short caveats.\n"
+    "5. STYLE. Write answer_markdown as concise GitHub-flavored markdown with "
+    "inline citations directly after the sentences they support. Populate the "
+    "citations list with the (kind, id, short quote) of each item you used.\n"
+)
+
+
+def build_research_qa_system(profile: FieldProfile | None = None) -> str:
+    """Build the grounded-Q&A system prompt for a field's profile."""
+    p = profile or AI_ROBOTICS_PROFILE
+    return f"{_QA_INTRO_PREFIX}{p.description}." + _QA_BODY
+
+
+_QA_USER = (
+    "QUESTION:\n{question}\n\n"
+    "CONTEXT — cite only by the bracketed ids shown here:\n{context_block}\n\n"
+    "Answer the question now, following every rule. Return only valid JSON "
+    "matching the schema."
+)
+
+
+def format_research_qa_user(question: str, context_block: str) -> str:
+    return _QA_USER.format(
+        question=question,
+        context_block=context_block or "(no context retrieved)",
+    )
+
+
 # Back-compat module constants — the ai-robotics defaults, equal to the legacy
 # strings. Existing imports keep working; new code should call the builders with
 # the run's FieldProfile.

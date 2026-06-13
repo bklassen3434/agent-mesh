@@ -214,6 +214,7 @@ class _ExtractWork(TypedDict):
 
     paper: dict[str, Any]
     traceparent: str
+    field_id: str
 
 
 # ── DB-side helpers (coordinator owns all reads/writes) ──────────────────────
@@ -681,6 +682,7 @@ async def _extract_papers(
     papers: list[ScoutedPaper],
     traceparent: str,
     semaphore: asyncio.Semaphore,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[
     list[tuple[ScoutedPaper, list[ExtractedClaim]]],
     list[dict[str, Any]],
@@ -699,7 +701,7 @@ async def _extract_papers(
             result, err = await call_skill_node(
                 client,
                 "extract_claims",
-                {"paper": paper.model_dump(mode="json")},
+                {"paper": paper.model_dump(mode="json"), "field_id": field_id},
                 traceparent=traceparent,
                 context={"arxiv_id": paper.arxiv_id},
             )
@@ -917,8 +919,9 @@ def build_coordinator_graph(
         if not state["new_papers"] or "extract_claims" not in client.skill_map():
             return "finalize"
         tp = state["traceparent"]
+        fid = state["field_id"]
         return [
-            Send("extract_one", {"paper": p, "traceparent": tp})
+            Send("extract_one", {"paper": p, "traceparent": tp, "field_id": fid})
             for p in state["new_papers"]
         ]
 
@@ -929,7 +932,7 @@ def build_coordinator_graph(
             result, err = await call_skill_node(
                 client,
                 "extract_claims",
-                {"paper": paper},
+                {"paper": paper, "field_id": state["field_id"]},
                 traceparent=state["traceparent"],
                 context={"arxiv_id": arxiv_id},
             )
@@ -1086,7 +1089,7 @@ def build_coordinator_graph(
 
         new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
         pairs, extract_errors, usage_rows = await _extract_papers(
-            client, new_papers, tp, semaphore
+            client, new_papers, tp, semaphore, field_id=field_id
         )
         errors.extend(extract_errors)
         for row in usage_rows:

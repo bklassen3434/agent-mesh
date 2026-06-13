@@ -32,6 +32,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, TypedDict, cast
 
+import click
 import structlog
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
@@ -41,6 +42,7 @@ from mesh_a2a.node import call_skill_node
 from mesh_a2a.tracing import new_traceparent
 from mesh_agents.curator import BeliefForCuration, CuratorPick, InvestigationSuggestion
 from mesh_agents.memory import build_memory_block
+from mesh_agents.profiles import load_profile
 from mesh_agents.skeptic import (
     HydratedClaim,
     InScopeEntity,
@@ -55,6 +57,7 @@ from mesh_db.beliefs import get_belief_by_id, list_beliefs, update_belief
 from mesh_db.claims import create_claim, get_claims_by_ids
 from mesh_db.connection import get_connection
 from mesh_db.entities import get_entity_by_id
+from mesh_db.fields import get_field_by_slug
 from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import (
@@ -74,6 +77,7 @@ from mesh_llm.pricing import estimate_cost
 from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
+from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
 from mesh_tracing.tracing import trace_generation
@@ -195,11 +199,16 @@ def _build_curator_payload(
 
 
 async def _select_beliefs(
-    client: MeshA2AClient, conn: Any, traceparent: str
+    client: MeshA2AClient,
+    conn: Any,
+    traceparent: str,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[list[CuratorPick], int, dict[str, Any] | None]:
     """Dispatch the Curator over held beliefs. Returns (picks, n_investigations,
-    error). Persists any investigation suggestions as a side effect."""
-    held = list_beliefs(conn, currently_held=True, limit=1000)
+    error). Persists any investigation suggestions as a side effect. Scoped to
+    ``field_id`` (Phase 17b)."""
+    held = list_beliefs(conn, currently_held=True, limit=1000, field_id=field_id)
     now = datetime.now(UTC)
     payload = _build_curator_payload(conn, held, now)
     result, err = await call_skill_node(
@@ -301,21 +310,27 @@ def _counter_to_claim(cc: SkepticCounterClaim, source_id: str) -> Claim:
 
 
 def _persist_assessment(
-    conn: Any, belief: Belief, assessment: SkepticAssessment, now: datetime
+    conn: Any,
+    belief: Belief,
+    assessment: SkepticAssessment,
+    now: datetime,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
     """Insert source + counter-claims + revision, update belief. Returns
-    (n_claims, n_revisions)."""
+    (n_claims, n_revisions). The synthetic source + counter-claims are stamped
+    with ``field_id`` (Phase 17b)."""
     if not assessment.counter_claims:
         # No counter-claims = no trigger evidence; skip writing a phantom revision.
         return (0, 0)
 
     source = _make_skeptic_source(belief.id, assessment.rationale, now)
-    create_source(conn, source)
+    create_source(conn, source, field_id=field_id)
 
     new_claim_ids: list[str] = []
     for cc in assessment.counter_claims:
         claim = _counter_to_claim(cc, source.id)
-        create_claim(conn, claim)
+        create_claim(conn, claim, field_id=field_id)
         new_claim_ids.append(claim.id)
 
     # Update the belief FIRST, append the revision second — the FK rejects an
@@ -383,6 +398,7 @@ def _assessment_verdict(
     model: str,
     *,
     batch: bool,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> dict[str, Any]:
     """Apply the apply-threshold, persist counter-claims/revision, and build the
     verdict dict consumed by route_after_evaluate + finalize. Shared by the
@@ -393,7 +409,9 @@ def _assessment_verdict(
         assessment.verdict in {"weakened", "contradicted"}
         and assessment.confidence >= threshold
     ):
-        n_claims, n_revs = _persist_assessment(conn, belief, assessment, datetime.now(UTC))
+        n_claims, n_revs = _persist_assessment(
+            conn, belief, assessment, datetime.now(UTC), field_id=field_id
+        )
         applied = n_revs > 0
     return {
         "belief_id": belief.id,
@@ -413,6 +431,7 @@ def _assessment_verdict(
 
 class SweepState(TypedDict):
     run_id: str
+    field_id: str  # the field this sweep scopes all reads/writes to (Phase 17b)
     triggered_by: str
     traceparent: str
     started_at: str  # ISO-8601
@@ -432,6 +451,7 @@ class _BeliefWork(TypedDict):
 
     belief_id: str
     traceparent: str
+    field_id: str
 
 
 # ── graph construction ───────────────────────────────────────────────────────
@@ -447,7 +467,10 @@ def build_sweep_graph(
     threshold = _apply_threshold()
 
     async def load_beliefs(state: SweepState) -> dict[str, Any]:
-        held = list_beliefs(conn, currently_held=True, limit=1000)
+        field_id = state["field_id"]
+        held = list_beliefs(
+            conn, currently_held=True, limit=1000, field_id=field_id
+        )
         log.info("beliefs_considered", count=len(held))
         if not held:
             return {"beliefs_considered": 0, "beliefs_picked": 0}
@@ -465,7 +488,9 @@ def build_sweep_graph(
                     f"Discovered: {list(discovered.keys())}"
                 )
 
-        picks, n_inv, err = await _select_beliefs(client, conn, state["traceparent"])
+        picks, n_inv, err = await _select_beliefs(
+            client, conn, state["traceparent"], field_id=field_id
+        )
         patch: dict[str, Any] = {
             "beliefs_to_evaluate": [p.belief_id for p in picks],
             "beliefs_considered": len(held),
@@ -483,12 +508,17 @@ def build_sweep_graph(
         if batch_llm is not None:
             return "submit_batch"
         tp = state["traceparent"]
+        fid = state["field_id"]
         return [
-            Send("evaluate_one", {"belief_id": bid, "traceparent": tp})
+            Send(
+                "evaluate_one",
+                {"belief_id": bid, "traceparent": tp, "field_id": fid},
+            )
             for bid in state["beliefs_to_evaluate"]
         ]
 
     async def evaluate_one(state: _BeliefWork) -> dict[str, Any]:
+        field_id = state["field_id"]
         belief = get_belief_by_id(conn, state["belief_id"])
         if belief is None:
             log.warning("picked_belief_missing", belief_id=state["belief_id"])
@@ -510,6 +540,7 @@ def build_sweep_graph(
                 "supporting_claims": [c.model_dump(mode="json") for c in supporting],
                 "contradicting_claims": [c.model_dump(mode="json") for c in contradicting],
                 "in_scope_entities": [e.model_dump(mode="json") for e in in_scope],
+                "field_id": field_id,
             },
             traceparent=state["traceparent"],
             context={"belief_id": belief.id},
@@ -537,12 +568,14 @@ def build_sweep_graph(
         usage = LLMUsage(**(result.get("usage") or {}))
         verdict = _assessment_verdict(
             conn, belief, assessment, threshold, usage,
-            str(result.get("model") or ""), batch=False,
+            str(result.get("model") or ""), batch=False, field_id=field_id,
         )
         return {"verdicts": [verdict]}
 
     async def submit_batch(state: SweepState) -> dict[str, Any]:
         assert batch_llm is not None
+        field_id = state["field_id"]
+        profile = load_profile(field_id)
         items: list[BatchRequestItem] = []
         for bid in state["beliefs_to_evaluate"]:
             _, skeptic_input = _skeptic_input_for(conn, bid)
@@ -554,9 +587,9 @@ def build_sweep_graph(
             # sync path. Reuse the sweep's connection rather than opening a reader.
             memory_block = build_memory_block(
                 "skeptic", "challenge_belief", conn=conn,
-                topic=skeptic_input.belief.topic,
+                topic=skeptic_input.belief.topic, field_id=field_id,
             )
-            system, user = build_skeptic_prompt(skeptic_input, memory_block)
+            system, user = build_skeptic_prompt(skeptic_input, memory_block, profile)
             items.append(BatchRequestItem(custom_id=bid, system=system, user=user))
         if not items:
             return {"batch_id": None}
@@ -591,6 +624,8 @@ def build_sweep_graph(
 
     async def collect_results(state: SweepState) -> dict[str, Any]:
         assert batch_llm is not None
+        field_id = state["field_id"]
+        profile = load_profile(field_id)
         batch_id = state["batch_id"]
         if not batch_id:
             return {}
@@ -615,9 +650,9 @@ def build_sweep_graph(
             # Reconstruct the same prompt submit_batch sent (memory block included).
             memory_block = build_memory_block(
                 "skeptic", "challenge_belief", conn=conn,
-                topic=skeptic_input.belief.topic,
+                topic=skeptic_input.belief.topic, field_id=field_id,
             )
-            system, user = build_skeptic_prompt(skeptic_input, memory_block)
+            system, user = build_skeptic_prompt(skeptic_input, memory_block, profile)
             cost = estimate_cost(res.model, res.usage, batch=True)
             trace_generation(
                 name="challenge_belief",
@@ -642,7 +677,8 @@ def build_sweep_graph(
             )
             verdicts.append(
                 _assessment_verdict(
-                    conn, belief, assessment, threshold, res.usage, res.model, batch=True
+                    conn, belief, assessment, threshold, res.usage, res.model,
+                    batch=True, field_id=field_id,
                 )
             )
         return {"verdicts": verdicts}
@@ -654,7 +690,9 @@ def build_sweep_graph(
     async def trigger_curator(state: SweepState) -> dict[str, Any]:
         # A contradiction landed — re-run the Curator over the now-updated
         # beliefs so it can open investigations for the freshly-weakened ones.
-        _, n_inv, err = await _select_beliefs(client, conn, state["traceparent"])
+        _, n_inv, err = await _select_beliefs(
+            client, conn, state["traceparent"], field_id=state["field_id"]
+        )
         patch: dict[str, Any] = {
             "curator_triggered": True,
             "investigations_opened": state["investigations_opened"] + n_inv,
@@ -704,7 +742,7 @@ def build_sweep_graph(
             beliefs_revised=revisions,
             sources_inserted=revisions,  # one synthetic source per applied assessment
         )
-        create_pipeline_run(conn, run)
+        create_pipeline_run(conn, run, field_id=state["field_id"])
         log.info(
             "skeptic_sweep_complete",
             run_id=run.id,
@@ -760,18 +798,30 @@ def _sweep_result(state: SweepState) -> SkepticSweepResult:
     )
 
 
-async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
-    """Top-level entry point — `mesh-skeptic-sweep` console script calls this."""
-    log.info("skeptic_sweep_starting")
+async def run_skeptic_sweep(
+    db_path: str | None = None, field: str = DEFAULT_FIELD_SLUG
+) -> SkepticSweepResult:
+    """Top-level entry point — `mesh-skeptic-sweep` console script calls this.
+
+    ``field`` (slug) scopes every field-state read/write of this sweep to one
+    field (default ``ai-robotics`` — the seeded field that reproduces prior
+    behavior).
+    """
+    log.info("skeptic_sweep_starting", field=field)
 
     conn = get_connection(db_path)
     init_pg()
+
+    # Resolve the field slug → id (the seeded ai-robotics field's id == slug).
+    field_row = get_field_by_slug(conn, field)
+    field_id = field_row.id if field_row is not None else DEFAULT_FIELD_ID
 
     # A manual trigger from the API/scheduler can pin the run id (so the
     # returned id matches this run's pipeline_runs row + checkpoint thread).
     run_id = os.environ.get("MESH_RUN_ID") or str(uuid.uuid4())
     initial_state: SweepState = {
         "run_id": run_id,
+        "field_id": field_id,
         "triggered_by": os.environ.get("MESH_TRIGGERED_BY", "manual"),
         "traceparent": new_traceparent(),
         "started_at": datetime.now(UTC).isoformat(),
@@ -811,7 +861,20 @@ async def run_skeptic_sweep(db_path: str | None = None) -> SkepticSweepResult:
     return _sweep_result(cast(SweepState, final))
 
 
-def main() -> None:
+@click.command()
+@click.option(
+    "--db-path",
+    default=None,
+    envvar="MESH_DB_PATH",
+    help="(deprecated; ignored — the store is Postgres)",
+)
+@click.option(
+    "--field",
+    default=os.environ.get("MESH_SKEPTIC_FIELD", "ai-robotics"),
+    show_default=True,
+    help="Field slug to scope this sweep to",
+)
+def main(db_path: str | None, field: str) -> None:
     """Console-script entry point: `uv run mesh-skeptic-sweep`."""
     structlog.configure(
         processors=[
@@ -820,8 +883,7 @@ def main() -> None:
             structlog.dev.ConsoleRenderer(),
         ]
     )
-    db_path = os.environ.get("MESH_DB_PATH")
-    result = asyncio.run(run_skeptic_sweep(db_path=db_path))
+    result = asyncio.run(run_skeptic_sweep(db_path=db_path, field=field))
     print(f"\nSkeptic sweep {result.run_id}")
     print(f"  Beliefs considered: {result.beliefs_considered}")
     print(f"  Beliefs picked:     {result.beliefs_picked}")

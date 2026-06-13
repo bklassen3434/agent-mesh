@@ -21,12 +21,14 @@ from typing import Any
 from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
 from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError
-from mesh_llm.prompts import PERSONALIZER_SYSTEM, format_personalizer_user
+from mesh_llm.prompts import build_personalizer_system, format_personalizer_user
 from mesh_models.briefing import Briefing, BriefingSection
+from mesh_models.field import DEFAULT_FIELD_ID
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from mesh_agents.base import BaseAgent
+from mesh_agents.profiles import load_profile
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,9 @@ class PersonalizeDigestSkillInput(BaseModel):
     beliefs: list[BeliefCandidate] = Field(default_factory=list)
     revisions: list[RevisionCandidate] = Field(default_factory=list)
     claims: list[ClaimCandidate] = Field(default_factory=list)
+    # The mesh field this digest is for (drives the system-prompt framing). The
+    # default field resolves from cache with no DB read, keeping the agent pure.
+    field_id: str = DEFAULT_FIELD_ID
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +125,7 @@ def _personalize_sync(llm: LLMClient, payload: PersonalizeDigestSkillInput) -> B
     )
     result, _ = llm.complete_with_latency(
         name="personalize_digest",
-        system=PERSONALIZER_SYSTEM,
+        system=build_personalizer_system(load_profile(payload.field_id)),
         user=user_prompt,
         response_model=Briefing,
     )

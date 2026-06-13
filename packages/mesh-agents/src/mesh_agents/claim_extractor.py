@@ -12,13 +12,15 @@ from mesh_llm import (
     LLMResponseError,
     LLMUsage,
 )
-from mesh_llm.prompts import CLAIM_EXTRACTION_SYSTEM, format_extraction_user
+from mesh_llm.prompts import build_claim_extraction_system, format_extraction_user
+from mesh_models.field import DEFAULT_FIELD_ID, FieldProfile
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
 from mesh_agents.memory import build_memory_block
+from mesh_agents.profiles import load_profile
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ class ClaimExtractorOutput(BaseModel):
 
 class ExtractClaimsSkillInput(BaseModel):
     paper: dict[str, Any]  # ScoutedPaper as JSON dict
+    field_id: str = DEFAULT_FIELD_ID
 
 
 class ExtractClaimsSkillOutput(BaseModel):
@@ -82,17 +85,21 @@ class ExtractClaimsSkillOutput(BaseModel):
 
 
 def _extract_sync(
-    llm: Any, paper: ScoutedPaper, memory_block: str = ""
+    llm: Any,
+    paper: ScoutedPaper,
+    memory_block: str = "",
+    profile: FieldProfile | None = None,
 ) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
     user_prompt = format_extraction_user(title=paper.title, abstract=paper.abstract)
     # Phase 16a/d: fold the extractor's applicable heuristics + recent history
     # into the USER message, before the task content but after the cached system
-    # prefix (cache-prefix stability).
+    # prefix (cache-prefix stability). Phase 17b: the system prefix is built from
+    # the active field's profile (per-field-stable; never per-item).
     if memory_block:
         user_prompt = f"{memory_block}\n\n{user_prompt}"
     result, latency_ms, usage = llm.complete_with_usage(
         name="extract_claims",
-        system=CLAIM_EXTRACTION_SYSTEM,
+        system=build_claim_extraction_system(profile),
         user=user_prompt,
         response_model=ClaimExtractionResult,
     )
@@ -100,7 +107,7 @@ def _extract_sync(
 
 
 def _extract_with_memory(
-    llm: Any, paper: ScoutedPaper, agent_name: str
+    llm: Any, paper: ScoutedPaper, agent_name: str, field_id: str = DEFAULT_FIELD_ID
 ) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
     """Gather the extractor's applicable heuristics + recent history (off the
     event loop), then extract with that memory folded into the prompt.
@@ -108,11 +115,13 @@ def _extract_with_memory(
     Heuristics are scoped to this paper's source TYPE (so source-specific how-to
     like "forum scores are self-reported" applies); episodic recall is the
     extractor's broad recent track record (a freshly-scouted source has no prior
-    extraction to key on)."""
+    extraction to key on). All scoped to ``field_id``; the system prompt is built
+    from that field's profile."""
+    profile = load_profile(field_id)
     memory_block = build_memory_block(
-        agent_name, "extract_claims", source=paper.source.type.value
+        agent_name, "extract_claims", source=paper.source.type.value, field_id=field_id
     )
-    return _extract_sync(llm, paper, memory_block)
+    return _extract_sync(llm, paper, memory_block, profile)
 
 
 def _build_handler(llm: LLMClient, agent_name: str) -> Any:
@@ -121,7 +130,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
         paper = ScoutedPaper.model_validate(skill_input.paper)
         try:
             claims, latency_ms, usage, model = await asyncio.to_thread(
-                _extract_with_memory, llm, paper, agent_name
+                _extract_with_memory, llm, paper, agent_name, skill_input.field_id
             )
         except LLMProviderNotReadyError:
             raise

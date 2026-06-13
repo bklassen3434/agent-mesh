@@ -203,6 +203,7 @@ async def _run_personalizer(
     beliefs: list[dict[str, Any]],
     revisions: list[dict[str, Any]],
     claims: list[dict[str, Any]],
+    field: str = "ai-robotics",
 ) -> Briefing:
     payload = {
         "profile_text": profile_text,
@@ -210,6 +211,7 @@ async def _run_personalizer(
         "beliefs": beliefs,
         "revisions": revisions,
         "claims": claims,
+        "field_id": field,
     }
     async with MeshA2AClient() as client:
         discovered = await client.discover(_agent_urls())
@@ -299,7 +301,9 @@ async def get_briefing(
             _CACHE[cache_key] = empty
         return empty
 
-    briefing = await _run_personalizer(profile_text, target, beliefs, revisions, claims)
+    briefing = await _run_personalizer(
+        profile_text, target, beliefs, revisions, claims, field
+    )
 
     async with _CACHE_LOCK:
         _CACHE[cache_key] = briefing

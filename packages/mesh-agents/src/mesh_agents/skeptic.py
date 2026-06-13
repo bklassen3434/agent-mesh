@@ -15,13 +15,15 @@ from typing import Any, Literal
 from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
 from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError, LLMUsage
-from mesh_llm.prompts import SKEPTIC_SYSTEM, format_skeptic_user
+from mesh_llm.prompts import build_skeptic_system, format_skeptic_user
 from mesh_models.claim import FailureMode
+from mesh_models.field import DEFAULT_FIELD_ID, FieldProfile
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from mesh_agents.base import BaseAgent
 from mesh_agents.memory import build_memory_block
+from mesh_agents.profiles import load_profile
 from mesh_agents.sota_tracker import BeliefSummary
 
 logger = logging.getLogger(__name__)
@@ -86,6 +88,7 @@ class ChallengeBeliefSkillInput(BaseModel):
     supporting_claims: list[dict[str, Any]] = Field(default_factory=list)
     contradicting_claims: list[dict[str, Any]] = Field(default_factory=list)
     in_scope_entities: list[dict[str, Any]] = Field(default_factory=list)
+    field_id: str = DEFAULT_FIELD_ID
 
 
 class ChallengeBeliefSkillOutput(BaseModel):
@@ -160,7 +163,7 @@ def _filter_to_scope(
 
 
 def build_skeptic_prompt(
-    input: SkepticInput, memory_block: str = ""
+    input: SkepticInput, memory_block: str = "", profile: FieldProfile | None = None
 ) -> tuple[str, str]:
     """Return (system, user) for a skeptic assessment.
 
@@ -183,7 +186,7 @@ def build_skeptic_prompt(
     )
     if memory_block:
         user_prompt = f"{memory_block}\n\n{user_prompt}"
-    return SKEPTIC_SYSTEM, user_prompt
+    return build_skeptic_system(profile), user_prompt
 
 
 def filter_to_scope(
@@ -195,9 +198,12 @@ def filter_to_scope(
 
 
 def _assess_sync(
-    llm: LLMClient, input: SkepticInput, memory_block: str = ""
+    llm: LLMClient,
+    input: SkepticInput,
+    memory_block: str = "",
+    profile: FieldProfile | None = None,
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
-    system, user_prompt = build_skeptic_prompt(input, memory_block)
+    system, user_prompt = build_skeptic_prompt(input, memory_block, profile)
     result, _, usage = llm.complete_with_usage(
         name="challenge_belief",
         system=system,
@@ -209,16 +215,20 @@ def _assess_sync(
 
 
 def challenge_belief_pure(
-    llm: LLMClient, input: SkepticInput, memory_block: str = ""
+    llm: LLMClient,
+    input: SkepticInput,
+    memory_block: str = "",
+    profile: FieldProfile | None = None,
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
     """Synchronous pure entry point — used by both the agent and the A2A handler.
 
     Returns ``(assessment, usage, model)``; the agent path discards usage, the
     A2A handler threads it back to the coordinator for the cost ledger.
-    ``memory_block`` carries the skeptic's recent history (Phase 16a).
+    ``memory_block`` carries the skeptic's recent history (Phase 16a); ``profile``
+    drives the (per-field-stable) system prompt (Phase 17b).
     """
     try:
-        return _assess_sync(llm, input, memory_block)
+        return _assess_sync(llm, input, memory_block, profile)
     except LLMProviderNotReadyError:
         raise
     except LLMResponseError as exc:
@@ -230,15 +240,20 @@ def challenge_belief_pure(
 
 
 def _challenge_with_memory(
-    llm: LLMClient, agent_input: SkepticInput, agent_name: str
+    llm: LLMClient,
+    agent_input: SkepticInput,
+    agent_name: str,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
     """Gather the skeptic's applicable heuristics + challenge history on this
     belief's topic (off the event loop), then assess with that memory folded
-    into the prompt."""
+    into the prompt. Scoped to ``field_id``; the system prompt is built from that
+    field's profile."""
+    profile = load_profile(field_id)
     memory_block = build_memory_block(
-        agent_name, "challenge_belief", topic=agent_input.belief.topic
+        agent_name, "challenge_belief", topic=agent_input.belief.topic, field_id=field_id
     )
-    return challenge_belief_pure(llm, agent_input, memory_block)
+    return challenge_belief_pure(llm, agent_input, memory_block, profile)
 
 
 def _build_handler(llm: LLMClient, agent_name: str) -> Any:
@@ -257,7 +272,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
             ],
         )
         assessment, usage, model = await asyncio.to_thread(
-            _challenge_with_memory, llm, agent_input, agent_name
+            _challenge_with_memory, llm, agent_input, agent_name, skill_input.field_id
         )
         return ChallengeBeliefSkillOutput(
             verdict=assessment.verdict,

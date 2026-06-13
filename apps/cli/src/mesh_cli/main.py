@@ -1377,3 +1377,78 @@ def consolidate_beliefs_cmd(
         console.print(
             "[yellow]Dry run: re-run with --apply to perform these merges.[/yellow]"
         )
+
+
+@cli.group("beliefs")
+def beliefs() -> None:
+    """Phase 19 belief-consolidation inspection."""
+
+
+@beliefs.command("duplicates")
+@click.option(
+    "--field",
+    default="ai-robotics",
+    show_default=True,
+    help="Field slug to scope to (consolidation never crosses fields).",
+)
+@click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
+@click.option("--limit", default=50, type=int, show_default=True)
+def beliefs_duplicates(field: str, k: int, limit: int) -> None:
+    """List candidate duplicate belief pairs above the low band (read-only).
+
+    Embeds + blocks each held belief and shows pairs whose cosine similarity
+    clears the reject floor, with their band (merge / adjudicate), so pending
+    consolidation can be eyeballed without running the sweep.
+    """
+    from mesh_agents.belief_consolidation import BeliefMergeConfig, band
+    from mesh_agents.belief_reconcile import ensure_belief_embeddings
+    from mesh_db.beliefs import belief_family, find_candidate_duplicate_beliefs
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import belief_embed_text, make_embedder
+
+    cfg = BeliefMergeConfig.from_env()
+    embedder = make_embedder()
+    conn = get_connection()  # writer (embedding backfill may write)
+    try:
+        fld = get_field_by_slug(conn, field)
+        field_id = fld.id if fld is not None else field
+        ensure_belief_embeddings(conn, embedder, field_id)
+        held = list_beliefs(conn, currently_held=True, limit=100000, field_id=field_id)
+        seen: set[frozenset[str]] = set()
+        rows: list[tuple[str, str, str, str, float, str]] = []
+        for b in held:
+            vec = embedder.embed([belief_embed_text(b.topic, b.statement)])[0]
+            family = belief_family(b.topic)
+            for nb_id, nb_topic, _stmt, distance in find_candidate_duplicate_beliefs(
+                conn, vec, exclude_id=b.id, k=k, field_id=field_id, family=family
+            ):
+                pair = frozenset({b.id, nb_id})
+                if len(pair) < 2 or pair in seen:
+                    continue
+                similarity = 1.0 - distance
+                decision = band(similarity, cfg)
+                if decision == "reject":
+                    continue
+                seen.add(pair)
+                rows.append((b.id, b.topic, nb_id, nb_topic, similarity, decision))
+    finally:
+        conn.close()
+
+    rows.sort(key=lambda r: r[4], reverse=True)
+    rows = rows[:limit]
+    if not rows:
+        console.print("[dim]No candidate duplicate belief pairs above the low band.[/dim]")
+        return
+
+    table = Table(title=f"Candidate duplicate beliefs ({field})")
+    table.add_column("A", style="dim", max_width=8)
+    table.add_column("Topic A", overflow="fold")
+    table.add_column("B", style="dim", max_width=8)
+    table.add_column("Topic B", overflow="fold")
+    table.add_column("Cosine", justify="right")
+    table.add_column("Band", style="cyan")
+    for a_id, a_topic, b_id, b_topic, sim, dband in rows:
+        table.add_row(
+            a_id[:8], a_topic, b_id[:8], b_topic, f"{sim:.3f}", dband
+        )
+    console.print(table)

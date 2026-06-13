@@ -4,7 +4,11 @@ from datetime import datetime
 from typing import Any
 
 from mesh_models.field import DEFAULT_FIELD_ID
-from mesh_models.investigation import Investigation, InvestigationStatus
+from mesh_models.investigation import (
+    Investigation,
+    InvestigationOrigin,
+    InvestigationStatus,
+)
 
 from mesh_db.connection import MeshConnection
 
@@ -15,7 +19,8 @@ def _row_to_investigation(row: tuple[Any, ...]) -> Investigation:
         created_at, resolved_at, resolution_belief_id, assigned_scout_agents,
         target_entity_id, hypothesis, suggested_source_types,
         opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids,
-    ) = row[:15]
+        origin, trigger_rationale,
+    ) = row[:17]
     return Investigation(
         id=id_,
         question=question,
@@ -27,6 +32,8 @@ def _row_to_investigation(row: tuple[Any, ...]) -> Investigation:
         opened_by_belief_id=opened_by_belief_id,
         related_entity_ids=list(related_entity_ids) if related_entity_ids else [],
         status=InvestigationStatus(status),
+        origin=InvestigationOrigin(origin),
+        trigger_rationale=trigger_rationale,
         priority=float(priority),
         created_at=(
             created_at if isinstance(created_at, datetime)
@@ -47,7 +54,8 @@ _SELECT = (
     "SELECT id, question, related_entity_ids, status, priority, "
     "created_at, resolved_at, resolution_belief_id, assigned_scout_agents, "
     "target_entity_id, hypothesis, suggested_source_types, "
-    "opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids "
+    "opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids, "
+    "origin, trigger_rationale "
     "FROM investigations"
 )
 
@@ -60,8 +68,9 @@ def create_investigation(
         INSERT INTO investigations (id, field_id, question, related_entity_ids, status,
             priority, created_at, resolved_at, resolution_belief_id,
             assigned_scout_agents, target_entity_id, hypothesis, suggested_source_types,
-            opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids,
+            origin, trigger_rationale)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -80,6 +89,8 @@ def create_investigation(
             model.opened_by_belief_id,
             model.pipeline_runs_attempted,
             model.collected_claim_ids,
+            model.origin.value,
+            model.trigger_rationale,
         ],
     )
     return model
@@ -95,6 +106,7 @@ def list_investigations(
     status: InvestigationStatus | None = None,
     limit: int = 100,
     field_id: str | None = None,
+    origin: InvestigationOrigin | None = None,
 ) -> list[Investigation]:
     conditions: list[str] = []
     params: list[Any] = []
@@ -104,6 +116,9 @@ def list_investigations(
     if status is not None:
         conditions.append("status = %s")
         params.append(status.value)
+    if origin is not None:
+        conditions.append("origin = %s")
+        params.append(origin.value)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
     rows = conn.execute(

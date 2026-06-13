@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -22,7 +23,11 @@ from mesh_db.sources import create_source, get_source_by_id, list_sources
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus
 from mesh_models.entity import Entity, EntityType
-from mesh_models.investigation import Investigation, InvestigationStatus
+from mesh_models.investigation import (
+    Investigation,
+    InvestigationOrigin,
+    InvestigationStatus,
+)
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
 from rich.console import Console
@@ -837,6 +842,67 @@ def show_sota_beliefs() -> None:
     console.print(table)
 
 
+@cli.command("ask")
+@click.argument("question")
+@click.option("--field", default="ai-robotics", help="Field slug to scope the answer to")
+def ask(question: str, field: str) -> None:
+    """Ask a grounded question about a field's knowledge graph.
+
+    Retrieves field-scoped beliefs/claims/entities for QUESTION and synthesizes
+    a cited answer using only that evidence. Runs the ResearchQA agent in-process
+    against a read-only connection; nothing is written.
+    """
+    import asyncio
+
+    from mesh_agents.research_qa import ResearchQAAgent, ResearchQAInput
+    from mesh_llm import LLMProviderNotReadyError, make_routed_llm_client
+    from mesh_models.qa import Coverage
+    from rich.panel import Panel
+
+    q = question.strip()
+    if not q:
+        console.print("[red]Question must not be empty.[/red]")
+        raise SystemExit(1)
+
+    try:
+        llm = make_routed_llm_client(agent_name="research_qa")
+        llm.health_check()
+    except LLMProviderNotReadyError as exc:
+        console.print(f"[red]LLM provider not ready: {exc}[/red]")
+        raise SystemExit(1) from exc
+
+    conn = get_connection(read_only=True)
+    agent = ResearchQAAgent(llm=llm, db_conn=conn)
+    try:
+        answer = asyncio.run(agent.run(ResearchQAInput(question=q, field_id=field)))
+    finally:
+        conn.close()
+
+    coverage_style = {
+        Coverage.well_supported: "green",
+        Coverage.thin: "yellow",
+        Coverage.uncovered: "red",
+    }.get(answer.coverage, "white")
+    console.print(
+        Panel(
+            answer.answer_markdown,
+            title=f"Answer · [{coverage_style}]{answer.coverage.value}[/{coverage_style}]",
+        )
+    )
+    if answer.citations:
+        table = Table(title="Citations")
+        table.add_column("Kind", style="cyan")
+        table.add_column("ID", style="dim")
+        table.add_column("Quote")
+        for c in answer.citations:
+            table.add_row(c.kind, c.id, c.quote)
+        console.print(table)
+    if answer.caveats:
+        console.print("[bold]Caveats:[/bold]")
+        for cav in answer.caveats:
+            console.print(f"  • {cav}")
+
+
 @cli.command("ollama-check")
 def ollama_check() -> None:
     """Ping Ollama and verify the configured model is available."""
@@ -1071,6 +1137,7 @@ def investigations() -> None:
 
 
 _STATUS_CHOICES = click.Choice([s.value for s in InvestigationStatus])
+_ORIGIN_CHOICES = click.Choice([o.value for o in InvestigationOrigin])
 
 
 @investigations.command("list")
@@ -1081,17 +1148,26 @@ _STATUS_CHOICES = click.Choice([s.value for s in InvestigationStatus])
     default=None,
     help="Filter by status (open|in_progress|resolved|abandoned).",
 )
+@click.option(
+    "--origin",
+    "origin_filter",
+    type=_ORIGIN_CHOICES,
+    default=None,
+    help="Filter by origin (curator|skeptic|discovery|manual).",
+)
 @click.option("--limit", default=50, type=int, show_default=True)
-def investigations_list(status_filter: str | None, limit: int) -> None:
+def investigations_list(
+    status_filter: str | None, origin_filter: str | None, limit: int
+) -> None:
     """List investigations with attached-claim + run-attempt counts."""
     conn = _get_conn()
     try:
-        if status_filter:
-            rows = list_investigations(
-                conn, status=InvestigationStatus(status_filter), limit=limit
-            )
-        else:
-            rows = list_investigations(conn, limit=limit)
+        rows = list_investigations(
+            conn,
+            status=InvestigationStatus(status_filter) if status_filter else None,
+            origin=InvestigationOrigin(origin_filter) if origin_filter else None,
+            limit=limit,
+        )
     finally:
         conn.close()
 
@@ -1102,6 +1178,7 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
     table = Table(title="Investigations")
     table.add_column("ID", style="dim", max_width=8)
     table.add_column("Status", style="cyan")
+    table.add_column("Origin", style="magenta")
     table.add_column("Target entity", style="dim", max_width=8)
     table.add_column("Belief", style="dim", max_width=8)
     table.add_column("Sources")
@@ -1116,6 +1193,7 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
         table.add_row(
             inv.id[:8],
             inv.status.value,
+            inv.origin.value,
             (inv.target_entity_id or "—")[:8],
             (inv.opened_by_belief_id or "—")[:8],
             sources,
@@ -1123,6 +1201,116 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
             inv.hypothesis or inv.question,
         )
     console.print(table)
+
+
+@cli.command("discover")
+@click.option("--field", default="ai-robotics", show_default=True, help="Field slug.")
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    default=False,
+    help="Open discovery investigations + dispatch real search (default: dry-run).",
+)
+@click.option(
+    "--report-path",
+    default=None,
+    help="Write the dry-run report to this file (text).",
+)
+def discover(field: str, apply_: bool, report_path: str | None) -> None:
+    """Phase 22: autonomous discovery — analyze a field for gaps/trends and draft
+    investigation hypotheses. Dry-run by default (lists what it WOULD open);
+    --apply opens the investigations and dispatches real hypothesis-directed
+    search through the running scout stack."""
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import LLMProviderNotReadyError, make_routed_llm_client
+    from mesh_models.field import DEFAULT_FIELD_ID
+    from mesh_pipeline.discovery import _gap_limit, _max_new, plan_field_discovery
+    from rich.panel import Panel
+
+    if apply_:
+        from mesh_pipeline.discovery import run_discovery
+
+        result = asyncio.run(run_discovery(field))
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        f"[bold]Run:[/bold] {result.run_id}",
+                        f"[bold]Gaps found:[/bold] {result.gaps_found}",
+                        f"[bold]Hypotheses drafted:[/bold] {result.hypotheses_drafted}",
+                        f"[bold]Investigations opened:[/bold] {result.investigations_opened}",
+                        f"[bold]Fetches dispatched:[/bold] {result.fetches_dispatched}",
+                        f"[bold]Claims inserted:[/bold] {result.claims_inserted}",
+                    ]
+                ),
+                title=f"Discovery applied [{result.field_slug}]",
+            )
+        )
+        return
+
+    conn = _get_conn()
+    try:
+        field_row = get_field_by_slug(conn, field)
+        field_id = field_row.id if field_row is not None else DEFAULT_FIELD_ID
+        try:
+            llm: Any = make_routed_llm_client(agent_name="discovery")
+        except LLMProviderNotReadyError:
+            llm = None
+        gaps, proposals, built, _usage, _model = plan_field_discovery(
+            conn, llm, field_id, gap_limit=_gap_limit(), max_new=_max_new()
+        )
+    finally:
+        conn.close()
+
+    gap_table = Table(title=f"Discovery gaps/trends [{field}] (dry-run)")
+    gap_table.add_column("Kind", style="cyan")
+    gap_table.add_column("Subject", style="bold")
+    gap_table.add_column("Priority", justify="right")
+    gap_table.add_column("Why", overflow="fold")
+    for g in gaps:
+        gap_table.add_row(g.kind.value, g.subject, f"{g.priority:.2f}", g.rationale)
+
+    open_table = Table(title=f"Would open ({len(built)}, cap {_max_new()})")
+    open_table.add_column("Origin", style="magenta")
+    open_table.add_column("Sources")
+    open_table.add_column("Hypothesis", overflow="fold")
+    for inv in built:
+        open_table.add_row(
+            inv.origin.value,
+            ", ".join(inv.suggested_source_types) or "—",
+            inv.hypothesis or inv.question,
+        )
+
+    if gaps:
+        console.print(gap_table)
+    else:
+        console.print("[dim]No gaps detected — field looks saturated.[/dim]")
+    if built:
+        console.print(open_table)
+    elif gaps and llm is None:
+        console.print(
+            "[yellow]LLM unavailable — gaps detected but no hypotheses drafted "
+            "(set ANTHROPIC_API_KEY or MESH_LLM_PROVIDER=ollama).[/yellow]"
+        )
+    console.print(
+        f"[dim]{len(gaps)} gaps, {len(proposals)} hypotheses, "
+        f"{len(built)} investigations would open. Re-run with --apply to act.[/dim]"
+    )
+
+    if report_path:
+        lines = [f"Discovery dry-run report — field={field}", ""]
+        lines.append(f"Gaps ({len(gaps)}):")
+        for g in gaps:
+            lines.append(f"  [{g.kind.value}] {g.subject} (p={g.priority:.2f}) — {g.rationale}")
+        lines.append("")
+        lines.append(f"Would open ({len(built)}):")
+        for inv in built:
+            srcs = ", ".join(inv.suggested_source_types) or "—"
+            lines.append(f"  ({srcs}) {inv.hypothesis or inv.question}")
+        with open(report_path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        console.print(f"[green]Report written to {report_path}[/green]")
 
 
 @cli.group("heuristics")
@@ -1295,3 +1483,160 @@ def reconcile_entities_cmd(
         console.print(
             "[yellow]Dry run: re-run with --apply to perform these merges.[/yellow]"
         )
+
+
+@cli.command("consolidate-beliefs")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Perform merges + decay/archival (default: dry-run — compute + report).",
+)
+@click.option(
+    "--report-path",
+    "report_path",
+    default="docs/belief-consolidation-report.md",
+    show_default=True,
+)
+@click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
+@click.option(
+    "--field",
+    default="ai-robotics",
+    show_default=True,
+    help="Field slug to scope consolidation to (never crosses fields).",
+)
+@click.option(
+    "--no-decay",
+    "no_decay",
+    is_flag=True,
+    help="Skip the staleness decay + archival pass (merge only).",
+)
+def consolidate_beliefs_cmd(
+    apply_changes: bool, report_path: str, k: int, field: str, no_decay: bool
+) -> None:
+    """One-time belief consolidation over one field's held corpus (Phase 19).
+
+    Backfills statement_embedding for any held belief missing one, then
+    blocks → matches → merges semantic duplicates (middle band via the Anthropic
+    Batch API when available) and ages stale beliefs (decay + archival). Writes a
+    report (before/after counts, sample of merges) for false-merge review.
+    Read-only by default — pass --apply to write. Idempotent.
+    """
+    from pathlib import Path
+
+    from mesh_agents.belief_reconcile import reconcile_beliefs, render_report_markdown
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import make_embedder, make_llm_client
+
+    embedder = make_embedder()
+    llm: Any | None
+    try:
+        llm = make_llm_client(agent_name="belief_consolidator")
+        llm.health_check()
+    except Exception as exc:  # provider not ready → high-band auto-merges only
+        console.print(f"[yellow]LLM unavailable ({exc}); adjudicating none.[/yellow]")
+        llm = None
+
+    mode = "APPLY" if apply_changes else "dry-run"
+    console.print(f"Consolidating beliefs ([cyan]{mode}[/cyan])…")
+    conn = get_connection()  # writer
+    try:
+        fld = get_field_by_slug(conn, field)
+        field_id = fld.id if fld is not None else field
+        report = reconcile_beliefs(
+            conn, embedder, llm, k=k, dry_run=not apply_changes,
+            decay=not no_decay, field_id=field_id,
+        )
+    finally:
+        conn.close()
+
+    console.print(
+        f"[green]held before={report.beliefs_held_before} "
+        f"after={report.beliefs_held_after} merges={report.merges} "
+        f"auto={report.auto_merges} adjudicated={report.adjudications} "
+        f"decayed={report.decayed} archived={report.archived} "
+        f"embedded={report.embedded_now}[/green]"
+    )
+    out = Path(report_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_report_markdown(report))
+    console.print(f"Report written to [cyan]{out}[/cyan]")
+    if not apply_changes and report.merges:
+        console.print(
+            "[yellow]Dry run: re-run with --apply to perform these merges.[/yellow]"
+        )
+
+
+@cli.group("beliefs")
+def beliefs() -> None:
+    """Phase 19 belief-consolidation inspection."""
+
+
+@beliefs.command("duplicates")
+@click.option(
+    "--field",
+    default="ai-robotics",
+    show_default=True,
+    help="Field slug to scope to (consolidation never crosses fields).",
+)
+@click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
+@click.option("--limit", default=50, type=int, show_default=True)
+def beliefs_duplicates(field: str, k: int, limit: int) -> None:
+    """List candidate duplicate belief pairs above the low band (read-only).
+
+    Embeds + blocks each held belief and shows pairs whose cosine similarity
+    clears the reject floor, with their band (merge / adjudicate), so pending
+    consolidation can be eyeballed without running the sweep.
+    """
+    from mesh_agents.belief_consolidation import BeliefMergeConfig, band
+    from mesh_agents.belief_reconcile import ensure_belief_embeddings
+    from mesh_db.beliefs import belief_family, find_candidate_duplicate_beliefs
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import belief_embed_text, make_embedder
+
+    cfg = BeliefMergeConfig.from_env()
+    embedder = make_embedder()
+    conn = get_connection()  # writer (embedding backfill may write)
+    try:
+        fld = get_field_by_slug(conn, field)
+        field_id = fld.id if fld is not None else field
+        ensure_belief_embeddings(conn, embedder, field_id)
+        held = list_beliefs(conn, currently_held=True, limit=100000, field_id=field_id)
+        seen: set[frozenset[str]] = set()
+        rows: list[tuple[str, str, str, str, float, str]] = []
+        for b in held:
+            vec = embedder.embed([belief_embed_text(b.topic, b.statement)])[0]
+            family = belief_family(b.topic)
+            for nb_id, nb_topic, _stmt, distance in find_candidate_duplicate_beliefs(
+                conn, vec, exclude_id=b.id, k=k, field_id=field_id, family=family
+            ):
+                pair = frozenset({b.id, nb_id})
+                if len(pair) < 2 or pair in seen:
+                    continue
+                similarity = 1.0 - distance
+                decision = band(similarity, cfg)
+                if decision == "reject":
+                    continue
+                seen.add(pair)
+                rows.append((b.id, b.topic, nb_id, nb_topic, similarity, decision))
+    finally:
+        conn.close()
+
+    rows.sort(key=lambda r: r[4], reverse=True)
+    rows = rows[:limit]
+    if not rows:
+        console.print("[dim]No candidate duplicate belief pairs above the low band.[/dim]")
+        return
+
+    table = Table(title=f"Candidate duplicate beliefs ({field})")
+    table.add_column("A", style="dim", max_width=8)
+    table.add_column("Topic A", overflow="fold")
+    table.add_column("B", style="dim", max_width=8)
+    table.add_column("Topic B", overflow="fold")
+    table.add_column("Cosine", justify="right")
+    table.add_column("Band", style="cyan")
+    for a_id, a_topic, b_id, b_topic, sim, dband in rows:
+        table.add_row(
+            a_id[:8], a_topic, b_id[:8], b_topic, f"{sim:.3f}", dband
+        )
+    console.print(table)

@@ -32,8 +32,10 @@ from starlette.applications import Starlette
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
 from mesh_agents.investigation import (
+    InvestigateSkillInput,
+    InvestigateSkillOutput,
     investigate_skill_spec,
-    make_empty_investigate_handler,
+    keywords_from_hypothesis,
 )
 
 logger = logging.getLogger(__name__)
@@ -319,6 +321,93 @@ async def _handle_scout_github(payload: dict[str, Any]) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+# ── Phase 22b investigation ────────────────────────────────────────────────
+
+
+def _fetch_repos_by_query(query: str, max_results: int) -> list[ScoutedPaper]:
+    """Hypothesis-directed variant of the trending lane: a free-text repo
+    search (GitHub's search API accepts free text in ``q``) sorted by stars,
+    enriched with each repo's README — the same ``ScoutedPaper`` shape the
+    trending lane emits."""
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{_GITHUB_API}/search/repositories",
+                params={
+                    "q": query,
+                    "sort": "stars",
+                    "order": "desc",
+                    "per_page": min(max_results, 30),
+                },
+                headers=_auth_headers(),
+                timeout=_HTTP_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("github_investigate_fetch_failed", extra={"error": str(exc)})
+            return []
+
+        items = resp.json().get("items", [])
+        papers: list[ScoutedPaper] = []
+        for item in items[:max_results]:
+            owner = item["owner"]["login"]
+            repo = item["name"]
+            full = item["full_name"]
+            url = item["html_url"]
+            description = (item.get("description") or "").strip()
+            topics_list = item.get("topics") or []
+            pushed_at = item.get("pushed_at")
+            try:
+                published_at = (
+                    datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+                    if pushed_at
+                    else datetime.now(UTC)
+                )
+            except ValueError:
+                published_at = datetime.now(UTC)
+
+            readme = _fetch_readme(client, owner, repo)
+            abstract_parts: list[str] = []
+            if description:
+                abstract_parts.append(description)
+            if topics_list:
+                abstract_parts.append("Topics: " + ", ".join(topics_list))
+            if readme:
+                abstract_parts.append(readme)
+            abstract = "\n\n".join(abstract_parts).strip() or full
+            if not abstract:
+                continue
+
+            source = Source(
+                type=SourceType.github,
+                url=url,
+                author=owner,
+                published_at=published_at,
+                raw_content_hash=_make_hash(abstract),
+            )
+            papers.append(
+                ScoutedPaper(
+                    source=source,
+                    title=full,
+                    abstract=abstract,
+                    arxiv_id=full.replace("/", "_"),
+                )
+            )
+    return papers
+
+
+async def _handle_investigate_github(payload: dict[str, Any]) -> dict[str, Any]:
+    skill_input = InvestigateSkillInput.model_validate(payload)
+    query = keywords_from_hypothesis(skill_input.hypothesis)
+    papers = await asyncio.to_thread(
+        _fetch_repos_by_query, query, skill_input.max_results
+    )
+    return InvestigateSkillOutput(
+        investigation_id=skill_input.investigation_id,
+        source_records=[p.model_dump(mode="json") for p in papers],
+    ).model_dump(mode="json")
+
+
 class GitHubScoutAgent(BaseAgent):
     name = "github_scout"
 
@@ -353,7 +442,7 @@ class GitHubScoutAgent(BaseAgent):
             agent_card=card,
             skill_handlers={
                 "scout_github": _handle_scout_github,
-                "investigate_github": make_empty_investigate_handler("github"),
+                "investigate_github": _handle_investigate_github,
             },
             agent_name="github_scout",
         )

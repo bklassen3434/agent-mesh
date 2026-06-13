@@ -301,6 +301,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask a grounded question about a field
+         * @description Answers a natural-language question using only the requested field's knowledge graph. The answer is grounded strictly in retrieved mesh rows with inline citations to beliefs/claims/entities, carries a coverage signal derived from the evidence, and returns 'uncovered' when the mesh has no relevant evidence. Read-only; nothing is persisted.
+         */
+        post: operations["ask_api_v1_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -787,6 +807,25 @@ export interface components {
             /** Last Run Id */
             last_run_id?: string | null;
         };
+        /**
+         * Answer
+         * @description A grounded, cited answer to a single field-scoped question.
+         */
+        Answer: {
+            /** Answer Markdown */
+            answer_markdown: string;
+            /** Citations */
+            citations?: components["schemas"]["Citation"][];
+            /** @default uncovered */
+            coverage: components["schemas"]["Coverage"];
+            /** Caveats */
+            caveats?: string[];
+        };
+        /** AskRequest */
+        AskRequest: {
+            /** Question */
+            question: string;
+        };
         /** Belief */
         Belief: {
             /** Id */
@@ -924,6 +963,28 @@ export interface components {
             /** Items */
             items?: components["schemas"]["PersonalizedItem"][];
         };
+        /**
+         * Citation
+         * @description A pointer from an asserted fact to the mesh row it came from.
+         *
+         *     ``id`` always references a row present in the retrieved context pack — the
+         *     agent drops any id the LLM invents — so the wiki can link it to an existing
+         *     detail page (``/knowledge/{beliefs,claims,entities}/<id>``).
+         */
+        Citation: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "belief" | "claim" | "entity";
+            /** Id */
+            id: string;
+            /**
+             * Quote
+             * @default
+             */
+            quote: string;
+        };
         /** Claim */
         Claim: {
             /** Id */
@@ -1002,6 +1063,14 @@ export interface components {
             source: components["schemas"]["Source"] | null;
             subject_entity: components["schemas"]["Entity"] | null;
         };
+        /**
+         * Coverage
+         * @description How well the retrieved mesh evidence supports the answer.
+         *
+         *     Evidence-derived (the mesh's signals), never a number the model invented.
+         * @enum {string}
+         */
+        Coverage: "well_supported" | "thin" | "uncovered";
         /** Entity */
         Entity: {
             /** Id */
@@ -1937,6 +2006,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Briefing"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_api_v1_ask_post: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope the answer to */
+                field?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Answer"];
                 };
             };
             /** @description Validation Error */

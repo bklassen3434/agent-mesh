@@ -49,7 +49,7 @@ from mesh_agents.confidence import (
     ConfidenceWeights,
     compute_confidence,
 )
-from mesh_agents.connector import connector_skill_id
+from mesh_agents.connector import connector_skill_id, investigate_source_name
 from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.memory import DEBUG_ENVELOPE_KEY
@@ -68,6 +68,7 @@ from mesh_db.beliefs import (
     get_belief_by_id,
     get_belief_signals,
     list_beliefs,
+    set_belief_embedding,
     update_belief,
 )
 from mesh_db.claims import create_claim, list_claims
@@ -97,7 +98,7 @@ from mesh_db.processed_items import (
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
-from mesh_llm import Embedder
+from mesh_llm import Embedder, belief_embed_text
 from mesh_llm.pricing import estimate_cost
 from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
@@ -439,6 +440,24 @@ def _insert_claims(
     return resolved_claims, inserted
 
 
+def _embed_belief(
+    conn: Any, embedder: Embedder | None, belief_id: str, topic: str, statement: str
+) -> None:
+    """Populate a belief's ``statement_embedding`` from (topic, statement) so the
+    Phase-19 consolidation sweep can block on it (Phase 19a).
+
+    A local fastembed call — NOT an LLM — so the no-hot-path-LLM principle holds.
+    No-ops when no embedder is wired (tests / minimal setups). Best-effort: an
+    embedding failure must never abort synthesis (the backfill catches misses)."""
+    if embedder is None:
+        return
+    try:
+        vec = embedder.embed([belief_embed_text(topic, statement)])[0]
+        set_belief_embedding(conn, belief_id, vec)
+    except Exception:  # never let embedding bookkeeping abort a synthesis write
+        log.warning("belief_embed_failed", belief_id=belief_id)
+
+
 def _belief_confidence(
     conn: Any, belief_id: str, weights: ConfidenceWeights
 ) -> float:
@@ -458,6 +477,7 @@ async def _run_sota(
     resolved_claims: list[ResolvedClaim],
     traceparent: str,
     weights: ConfidenceWeights,
+    embedder: Embedder | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
     run_id: str,
@@ -515,6 +535,7 @@ async def _run_sota(
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
+            _embed_belief(conn, embedder, belief.id, belief.topic, belief.statement)
             created += 1
         else:
             assert update.existing_belief_id is not None
@@ -543,6 +564,11 @@ async def _run_sota(
                 last_revised_at=revision.revised_at,
                 revision_count=existing_b.revision_count + 1,
             )
+            # Statement changed → re-embed so blocking tracks the live statement.
+            _embed_belief(
+                conn, embedder, update.existing_belief_id,
+                existing_b.topic, update.new_statement,
+            )
             revised += 1
     return created, revised
 
@@ -551,6 +577,7 @@ def _run_capability(
     conn: Any,
     resolved_claims: list[ResolvedClaim],
     weights: ConfidenceWeights,
+    embedder: Embedder | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
@@ -630,6 +657,7 @@ def _run_capability(
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
+            _embed_belief(conn, embedder, belief.id, belief.topic, belief.statement)
             created += 1
         else:
             assert update.existing_belief_id is not None
@@ -651,6 +679,11 @@ def _run_capability(
                 conn, update.existing_belief_id, weights
             )
             update_belief(conn, update.existing_belief_id, confidence=new_confidence)
+            # Statement changed → re-embed so blocking tracks the live statement.
+            _embed_belief(
+                conn, embedder, update.existing_belief_id,
+                existing_full.topic, update.new_statement,
+            )
             create_revision(
                 conn,
                 BeliefRevision(
@@ -1030,6 +1063,135 @@ def _avg_latency(extractions: list[dict[str, Any]]) -> int:
     return int(sum(latencies) / len(latencies)) if latencies else 0
 
 
+# ── shared investigation dispatch ─────────────────────────────────────────────
+
+
+async def dispatch_open_investigations(
+    *,
+    client: MeshA2AClient,
+    conn: Any,
+    embedder: Embedder | None,
+    llm: LLMClient | None,
+    semaphore: asyncio.Semaphore,
+    resolution_config: ResolutionConfig,
+    field_id: str,
+    traceparent: str,
+    run_id: str,
+    investigations: list[Any],
+    max_fetch: int | None = None,
+) -> dict[str, Any]:
+    """Run hypothesis-directed search for a set of open investigations, then feed
+    the gathered sources through extract → resolve → insert-claims — the exact
+    path the pipeline's ``dispatch_investigations`` node uses. Factored out
+    (Phase 22d) so the proactive discovery sweep reuses it instead of forking the
+    Investigation plumbing. ``max_fetch`` optionally caps total source records
+    gathered this call (``MESH_DISCOVER_MAX_FETCH``); ``None`` means uncapped.
+
+    Field-scoped: only dispatches to investigate sources backed by a connector
+    ENABLED for ``field_id``. Fetch failures record into the returned ``errors``
+    and never raise — one bad search never aborts the run."""
+    skill_map = client.skill_map()
+    enabled_sources = {
+        investigate_source_name(fc.connector_id)
+        for fc in list_field_connectors(conn, field_id, enabled_only=True)
+    }
+    errors: list[dict[str, Any]] = []
+    # Observability (Phase 23a): one AgentInvocation per skill dispatch. The
+    # pipeline node spreads this into CoordinatorState (operator.add) and writes
+    # it at finalize; the discovery sweep nests the whole summary under
+    # state["dispatch"], so the extra key is harmless there.
+    invocations: list[dict[str, Any]] = []
+    investigation_papers: dict[str, list[str]] = {}
+    gathered: list[ScoutedPaper] = []
+    dispatched = 0
+
+    for inv in investigations:
+        if max_fetch is not None and dispatched >= max_fetch:
+            break
+        update_investigation(
+            conn,
+            inv.id,
+            status=InvestigationStatus.in_progress,
+            pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
+        )
+        for source_type in inv.suggested_source_types:
+            if max_fetch is not None and dispatched >= max_fetch:
+                break
+            if source_type not in enabled_sources:
+                continue  # not enabled for this field
+            skill_id = f"investigate_{source_type}"
+            if skill_id not in skill_map:
+                continue  # connector advertises no investigate handler
+            result, err, invocation = await _dispatch(
+                client,
+                skill_id,
+                {
+                    "investigation_id": inv.id,
+                    "hypothesis": inv.hypothesis or inv.question,
+                    "target_entity_id": inv.target_entity_id,
+                    "suggested_source_types": inv.suggested_source_types,
+                    "max_results": 10,
+                },
+                run_id=run_id,
+                field_id=field_id,
+                traceparent=traceparent,
+                context={"investigation_id": inv.id},
+            )
+            invocations.append(invocation)
+            if err is not None or result is None:
+                if err is not None:
+                    errors.append(err.model_dump())
+                continue
+            for raw in result.get("source_records", []):
+                paper = ScoutedPaper.model_validate(raw)
+                gathered.append(paper)
+                investigation_papers.setdefault(inv.id, []).append(paper.source.url)
+                dispatched += 1
+
+    new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
+    pairs, extract_errors, usage_rows = await _extract_papers(
+        client, new_papers, traceparent, semaphore, field_id=field_id,
+        run_id=run_id, invocations=invocations,
+    )
+    errors.extend(extract_errors)
+    for row in usage_rows:
+        _persist_llm_usage(
+            conn,
+            run_id,
+            "extract_claims",
+            "claim_extractor",
+            row.get("usage"),
+            str(row.get("model") or ""),
+        )
+
+    names = {ec.subject_name for _, claims in pairs for ec in claims}
+    entity_map, created, _resolved = await _resolve_and_persist(
+        conn, client, embedder, llm, list(names), traceparent, resolution_config,
+        field_id=field_id, run_id=run_id, invocations=invocations,
+    )
+    url_to_inv = {
+        url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
+    }
+    _, inserted = _insert_claims(conn, pairs, entity_map, url_to_inv, field_id=field_id)
+    resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
+    log.info(
+        "investigations_dispatched",
+        dispatched=dispatched,
+        claims=inserted,
+        resolved=resolved_count,
+        abandoned=abandoned_count,
+    )
+    return {
+        "investigations_dispatched": dispatched,
+        "investigation_claims_inserted": inserted,
+        "investigation_entities_created": created,
+        "investigations_resolved": resolved_count,
+        "investigations_abandoned": abandoned_count,
+        "errors": errors,
+        "agent_invocations": invocations,
+    }
+
+
 # ── graph construction ───────────────────────────────────────────────────────
 
 
@@ -1239,10 +1401,10 @@ def build_coordinator_graph(
         invocations: list[dict[str, Any]] = []
         sota_created, sota_revised = await _run_sota(
             conn, client, resolved_claims, state["traceparent"], confidence_weights,
-            field_id=field_id, run_id=state["run_id"], invocations=invocations,
+            embedder, field_id=field_id, run_id=state["run_id"], invocations=invocations,
         )
         cap_created, cap_revised = _run_capability(
-            conn, resolved_claims, confidence_weights, field_id=field_id
+            conn, resolved_claims, confidence_weights, embedder, field_id=field_id
         )
         log.info(
             "beliefs_synthesized",
@@ -1272,99 +1434,24 @@ def build_coordinator_graph(
 
     async def dispatch_investigations(state: CoordinatorState) -> dict[str, Any]:
         field_id = state["field_id"]
-        skill_map = client.skill_map()
         investigations = _open_investigations(conn, field_id=field_id)
         if not investigations:
             return {}
-        tp = state["traceparent"]
-        run_id = state["run_id"]
-        errors: list[dict[str, Any]] = []
-        invocations: list[dict[str, Any]] = []
-        investigation_papers: dict[str, list[str]] = {}
-        gathered: list[ScoutedPaper] = []
-        dispatched = 0
-
-        for inv in investigations:
-            update_investigation(
-                conn,
-                inv.id,
-                status=InvestigationStatus.in_progress,
-                pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
-            )
-            for source_type in inv.suggested_source_types:
-                skill_id = f"investigate_{source_type}"
-                if skill_id not in skill_map:
-                    continue
-                result, err, invocation = await _dispatch(
-                    client,
-                    skill_id,
-                    {
-                        "investigation_id": inv.id,
-                        "hypothesis": inv.hypothesis or inv.question,
-                        "target_entity_id": inv.target_entity_id,
-                        "suggested_source_types": inv.suggested_source_types,
-                        "max_results": 10,
-                    },
-                    run_id=run_id,
-                    field_id=field_id,
-                    traceparent=tp,
-                    context={"investigation_id": inv.id},
-                )
-                invocations.append(invocation)
-                if err is not None or result is None:
-                    if err is not None:
-                        errors.append(err.model_dump())
-                    continue
-                for raw in result.get("source_records", []):
-                    paper = ScoutedPaper.model_validate(raw)
-                    gathered.append(paper)
-                    investigation_papers.setdefault(inv.id, []).append(paper.source.url)
-                    dispatched += 1
-
-        new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
-        pairs, extract_errors, usage_rows = await _extract_papers(
-            client, new_papers, tp, semaphore, field_id=field_id,
-            run_id=run_id, invocations=invocations,
+        # Delegate to the shared dispatcher (Phase 22d) — it now also captures an
+        # AgentInvocation per investigate dispatch (Phase 23a) and returns them
+        # under "agent_invocations", which this node spreads into state.
+        return await dispatch_open_investigations(
+            client=client,
+            conn=conn,
+            embedder=embedder,
+            llm=llm,
+            semaphore=semaphore,
+            resolution_config=resolution_config,
+            field_id=field_id,
+            traceparent=state["traceparent"],
+            run_id=state["run_id"],
+            investigations=investigations,
         )
-        errors.extend(extract_errors)
-        for row in usage_rows:
-            _persist_llm_usage(
-                conn,
-                state["run_id"],
-                "extract_claims",
-                "claim_extractor",
-                row.get("usage"),
-                str(row.get("model") or ""),
-            )
-
-        names = {ec.subject_name for _, claims in pairs for ec in claims}
-        entity_map, created, _resolved = await _resolve_and_persist(
-            conn, client, embedder, llm, list(names), tp, resolution_config,
-            field_id=field_id, run_id=run_id, invocations=invocations,
-        )
-        url_to_inv = {
-            url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
-        }
-        _, inserted = _insert_claims(
-            conn, pairs, entity_map, url_to_inv, field_id=field_id
-        )
-        resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
-        log.info(
-            "investigations_dispatched",
-            dispatched=dispatched,
-            claims=inserted,
-            resolved=resolved_count,
-            abandoned=abandoned_count,
-        )
-        return {
-            "investigations_dispatched": dispatched,
-            "investigation_claims_inserted": inserted,
-            "investigation_entities_created": created,
-            "investigations_resolved": resolved_count,
-            "investigations_abandoned": abandoned_count,
-            "errors": errors,
-            "agent_invocations": invocations,
-        }
 
     async def finalize(state: CoordinatorState) -> dict[str, Any]:
         avg = _avg_latency(state["extractions"])

@@ -15,7 +15,11 @@ from mesh_db.beliefs import get_belief_by_id
 from mesh_db.claims import get_claims_by_ids
 from mesh_db.investigations import create_investigation, list_investigations
 from mesh_models.belief import Belief
-from mesh_models.investigation import Investigation, InvestigationStatus
+from mesh_models.investigation import (
+    Investigation,
+    InvestigationOrigin,
+    InvestigationStatus,
+)
 
 
 def target_entity_for_belief(conn: Any, belief: Belief) -> str | None:
@@ -63,6 +67,8 @@ def persist_investigation_suggestions(
                 suggested_source_types=s.suggested_source_types,
                 opened_by_belief_id=s.belief_id,
                 related_entity_ids=[target] if target else [],
+                origin=InvestigationOrigin.curator,
+                trigger_rationale=s.rationale,
             ),
         )
         n += 1

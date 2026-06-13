@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -22,7 +23,11 @@ from mesh_db.sources import create_source, get_source_by_id, list_sources
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus
 from mesh_models.entity import Entity, EntityType
-from mesh_models.investigation import Investigation, InvestigationStatus
+from mesh_models.investigation import (
+    Investigation,
+    InvestigationOrigin,
+    InvestigationStatus,
+)
 from mesh_models.revision import BeliefRevision
 from mesh_models.source import Source, SourceType
 from rich.console import Console
@@ -1132,6 +1137,7 @@ def investigations() -> None:
 
 
 _STATUS_CHOICES = click.Choice([s.value for s in InvestigationStatus])
+_ORIGIN_CHOICES = click.Choice([o.value for o in InvestigationOrigin])
 
 
 @investigations.command("list")
@@ -1142,17 +1148,26 @@ _STATUS_CHOICES = click.Choice([s.value for s in InvestigationStatus])
     default=None,
     help="Filter by status (open|in_progress|resolved|abandoned).",
 )
+@click.option(
+    "--origin",
+    "origin_filter",
+    type=_ORIGIN_CHOICES,
+    default=None,
+    help="Filter by origin (curator|skeptic|discovery|manual).",
+)
 @click.option("--limit", default=50, type=int, show_default=True)
-def investigations_list(status_filter: str | None, limit: int) -> None:
+def investigations_list(
+    status_filter: str | None, origin_filter: str | None, limit: int
+) -> None:
     """List investigations with attached-claim + run-attempt counts."""
     conn = _get_conn()
     try:
-        if status_filter:
-            rows = list_investigations(
-                conn, status=InvestigationStatus(status_filter), limit=limit
-            )
-        else:
-            rows = list_investigations(conn, limit=limit)
+        rows = list_investigations(
+            conn,
+            status=InvestigationStatus(status_filter) if status_filter else None,
+            origin=InvestigationOrigin(origin_filter) if origin_filter else None,
+            limit=limit,
+        )
     finally:
         conn.close()
 
@@ -1163,6 +1178,7 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
     table = Table(title="Investigations")
     table.add_column("ID", style="dim", max_width=8)
     table.add_column("Status", style="cyan")
+    table.add_column("Origin", style="magenta")
     table.add_column("Target entity", style="dim", max_width=8)
     table.add_column("Belief", style="dim", max_width=8)
     table.add_column("Sources")
@@ -1177,6 +1193,7 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
         table.add_row(
             inv.id[:8],
             inv.status.value,
+            inv.origin.value,
             (inv.target_entity_id or "—")[:8],
             (inv.opened_by_belief_id or "—")[:8],
             sources,
@@ -1184,6 +1201,116 @@ def investigations_list(status_filter: str | None, limit: int) -> None:
             inv.hypothesis or inv.question,
         )
     console.print(table)
+
+
+@cli.command("discover")
+@click.option("--field", default="ai-robotics", show_default=True, help="Field slug.")
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    default=False,
+    help="Open discovery investigations + dispatch real search (default: dry-run).",
+)
+@click.option(
+    "--report-path",
+    default=None,
+    help="Write the dry-run report to this file (text).",
+)
+def discover(field: str, apply_: bool, report_path: str | None) -> None:
+    """Phase 22: autonomous discovery — analyze a field for gaps/trends and draft
+    investigation hypotheses. Dry-run by default (lists what it WOULD open);
+    --apply opens the investigations and dispatches real hypothesis-directed
+    search through the running scout stack."""
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import LLMProviderNotReadyError, make_routed_llm_client
+    from mesh_models.field import DEFAULT_FIELD_ID
+    from mesh_pipeline.discovery import _gap_limit, _max_new, plan_field_discovery
+    from rich.panel import Panel
+
+    if apply_:
+        from mesh_pipeline.discovery import run_discovery
+
+        result = asyncio.run(run_discovery(field))
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        f"[bold]Run:[/bold] {result.run_id}",
+                        f"[bold]Gaps found:[/bold] {result.gaps_found}",
+                        f"[bold]Hypotheses drafted:[/bold] {result.hypotheses_drafted}",
+                        f"[bold]Investigations opened:[/bold] {result.investigations_opened}",
+                        f"[bold]Fetches dispatched:[/bold] {result.fetches_dispatched}",
+                        f"[bold]Claims inserted:[/bold] {result.claims_inserted}",
+                    ]
+                ),
+                title=f"Discovery applied [{result.field_slug}]",
+            )
+        )
+        return
+
+    conn = _get_conn()
+    try:
+        field_row = get_field_by_slug(conn, field)
+        field_id = field_row.id if field_row is not None else DEFAULT_FIELD_ID
+        try:
+            llm: Any = make_routed_llm_client(agent_name="discovery")
+        except LLMProviderNotReadyError:
+            llm = None
+        gaps, proposals, built, _usage, _model = plan_field_discovery(
+            conn, llm, field_id, gap_limit=_gap_limit(), max_new=_max_new()
+        )
+    finally:
+        conn.close()
+
+    gap_table = Table(title=f"Discovery gaps/trends [{field}] (dry-run)")
+    gap_table.add_column("Kind", style="cyan")
+    gap_table.add_column("Subject", style="bold")
+    gap_table.add_column("Priority", justify="right")
+    gap_table.add_column("Why", overflow="fold")
+    for g in gaps:
+        gap_table.add_row(g.kind.value, g.subject, f"{g.priority:.2f}", g.rationale)
+
+    open_table = Table(title=f"Would open ({len(built)}, cap {_max_new()})")
+    open_table.add_column("Origin", style="magenta")
+    open_table.add_column("Sources")
+    open_table.add_column("Hypothesis", overflow="fold")
+    for inv in built:
+        open_table.add_row(
+            inv.origin.value,
+            ", ".join(inv.suggested_source_types) or "—",
+            inv.hypothesis or inv.question,
+        )
+
+    if gaps:
+        console.print(gap_table)
+    else:
+        console.print("[dim]No gaps detected — field looks saturated.[/dim]")
+    if built:
+        console.print(open_table)
+    elif gaps and llm is None:
+        console.print(
+            "[yellow]LLM unavailable — gaps detected but no hypotheses drafted "
+            "(set ANTHROPIC_API_KEY or MESH_LLM_PROVIDER=ollama).[/yellow]"
+        )
+    console.print(
+        f"[dim]{len(gaps)} gaps, {len(proposals)} hypotheses, "
+        f"{len(built)} investigations would open. Re-run with --apply to act.[/dim]"
+    )
+
+    if report_path:
+        lines = [f"Discovery dry-run report — field={field}", ""]
+        lines.append(f"Gaps ({len(gaps)}):")
+        for g in gaps:
+            lines.append(f"  [{g.kind.value}] {g.subject} (p={g.priority:.2f}) — {g.rationale}")
+        lines.append("")
+        lines.append(f"Would open ({len(built)}):")
+        for inv in built:
+            srcs = ", ".join(inv.suggested_source_types) or "—"
+            lines.append(f"  ({srcs}) {inv.hypothesis or inv.question}")
+        with open(report_path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        console.print(f"[green]Report written to {report_path}[/green]")
 
 
 @cli.group("heuristics")

@@ -1,4 +1,4 @@
-.PHONY: up down logs pipeline skeptic consolidate belief-consolidate smoke wiki api types \
+.PHONY: up down logs pipeline skeptic consolidate belief-consolidate discover smoke wiki api types \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
@@ -46,6 +46,16 @@ belief-consolidate:
 	docker compose --profile skeptic build skeptic-sweep
 	docker compose --profile skeptic run --rm --no-deps \
 		--entrypoint "uv run mesh-belief-consolidate" skeptic-sweep
+
+# Run one autonomous-discovery cycle — analyzes each active field for knowledge
+# gaps/trends, opens discovery investigations, and dispatches real search through
+# the scouts. Reuses the coordinator image (it has the scout agent URLs + LLM
+# env) with the entry point overridden and --no-deps, so it needs the agent
+# stack already up (`make up`). No new container.
+discover:
+	docker compose build coordinator
+	docker compose run --rm --no-deps \
+		--entrypoint "uv run mesh-discover" coordinator
 
 # Smoke test: bring up the stack, run one pipeline cycle, check row counts.
 smoke: up

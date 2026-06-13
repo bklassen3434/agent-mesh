@@ -33,6 +33,8 @@ DEFAULT_INTERVALS: dict[str, int] = {
     # Phase 19: belief consolidation (semantic dedup/merge + decay) runs daily,
     # offline (batch API).
     "belief_consolidation": 24,
+    # Phase 22d: autonomous discovery runs daily.
+    "discovery": 24,
 }
 
 

@@ -29,8 +29,9 @@ from starlette.applications import Starlette
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
 from mesh_agents.investigation import (
+    InvestigateSkillInput,
+    InvestigateSkillOutput,
     investigate_skill_spec,
-    make_empty_investigate_handler,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,25 @@ async def _handle_scout_leaderboards(payload: dict[str, Any]) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+# ── Phase 22b investigation ────────────────────────────────────────────────
+
+
+async def _handle_investigate_leaderboard(payload: dict[str, Any]) -> dict[str, Any]:
+    """Hypothesis-directed leaderboard fetch. Leaderboards aren't keyword-
+    searchable, so the "search" is a fresh snapshot of all three lanes — the
+    current SOTA numbers are exactly the evidence an investigation about a
+    model/benchmark belief needs. Extraction downstream surfaces whatever rows
+    bear on the hypothesis."""
+    skill_input = InvestigateSkillInput.model_validate(payload)
+    papers = await asyncio.to_thread(
+        _fetch_leaderboards, list(_LANE_FETCHERS.keys()), skill_input.max_results
+    )
+    return InvestigateSkillOutput(
+        investigation_id=skill_input.investigation_id,
+        source_records=[p.model_dump(mode="json") for p in papers],
+    ).model_dump(mode="json")
+
+
 class LeaderboardScoutAgent(BaseAgent):
     name = "leaderboard_scout"
 
@@ -292,7 +312,7 @@ class LeaderboardScoutAgent(BaseAgent):
             agent_card=card,
             skill_handlers={
                 "scout_leaderboards": _handle_scout_leaderboards,
-                "investigate_leaderboard": make_empty_investigate_handler("leaderboard"),
+                "investigate_leaderboard": _handle_investigate_leaderboard,
             },
             agent_name="leaderboard_scout",
         )

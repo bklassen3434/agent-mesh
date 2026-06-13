@@ -4,6 +4,11 @@ Phase 7a turned the mesh from purely reactive (scout → extract → believe)
 into something that can ask its own follow-up questions. Investigations
 are the mechanism.
 
+> The Curator opens investigations **reactively**, one belief at a time. Phase 22
+> adds a **proactive**, whole-field counterpart — the discovery sweep — that
+> feeds the same `Investigation` table. See
+> [Autonomous Discovery](autonomous-discovery.md).
+
 ## Lifecycle
 
 ```
@@ -51,14 +56,16 @@ are the mechanism.
 
 ## Scouts
 
-Each of the seven scouts advertises an `investigate_<source>` skill
-alongside its existing `scout_<source>`. Only `investigate_arxiv` runs
-a real hypothesis-directed query in 7a — it uses arxiv's free-text
-search API with the hypothesis as the query. The other six advertise
-the skill via `make_empty_investigate_handler` so capability discovery
-sees them but they return zero results. Filling in deeper search per
-scout is a follow-up; the arxiv path is enough to demonstrate
-end-to-end lifecycle.
+Each scout advertises an `investigate_<source>` skill alongside its existing
+`scout_<source>`. As of Phase 22b, `investigate_arxiv`, `investigate_github`,
+`investigate_leaderboard`, and `investigate_web` run real hypothesis-directed
+searches; hn/reddit/blog/bluesky still advertise the skill via
+`make_empty_investigate_handler` (capability-discoverable, return empty), and
+the config-driven `rss`/`rest_json` connectors expose no investigate (a single
+fixed feed/endpoint has no hypothesis-search semantics). The coordinator's
+dispatch is tolerant of a connector that advertises no investigate skill, and —
+also Phase 22b — only dispatches to sources backed by a connector **enabled for
+the run's field**, so the investigation path is field-isolated too.
 
 ## Inspecting
 
@@ -66,11 +73,14 @@ end-to-end lifecycle.
 uv run mesh.cli investigations list
 uv run mesh.cli investigations list --status open
 uv run mesh.cli investigations list --status resolved
+uv run mesh.cli investigations list --origin discovery   # Phase 22
 ```
 
-Each row shows status, target_entity_id, opened_by_belief_id,
+Each row shows status, origin, target_entity_id, opened_by_belief_id,
 suggested source types, `pipeline_runs_attempted`,
-`len(collected_claim_ids)`, and the hypothesis.
+`len(collected_claim_ids)`, and the hypothesis. Phase 22a added an `origin`
+(`curator | skeptic | discovery | manual`) + a `trigger_rationale` to every
+investigation, so who opened it — and why — is always inspectable.
 
 ## Configuration
 

@@ -778,6 +778,35 @@ def build_personalizer_system(profile: FieldProfile | None = None) -> str:
     return f"You are a personalization filter for {p.description}." + _PER_BODY
 
 
+_DISCOVERY_BODY = (
+    " Your job is autonomous discovery: given a list of machine-detected"
+    " knowledge GAPS and TRENDS in the field's knowledge base, draft concrete,"
+    " testable investigation hypotheses that say WHAT TO SEARCH FOR to close each"
+    " gap.\n\n"
+    "Hard rules:\n"
+    "1. You PROPOSE evidence-gathering, never facts. Never assert an answer,"
+    " score, or conclusion — only what a scout should go look for.\n"
+    "2. Each hypothesis must be specific and searchable: name the entity,"
+    " benchmark, capability, or comparison at issue, phrased so a keyword/web"
+    " search would surface relevant sources.\n"
+    "3. Choose suggested_source_types only from the ALLOWED SOURCES given in the"
+    " user message — these are the connectors enabled for this field. Never"
+    " invent a source type.\n"
+    "4. Address each gap by its gap_id. Skip a gap rather than emit a vague or"
+    " untestable hypothesis. Returning fewer, sharper proposals is better.\n"
+    "5. Keep the rationale to one sentence: why this search closes that gap.\n"
+    "Return only valid JSON matching the schema."
+)
+
+
+def build_discovery_system(profile: FieldProfile | None = None) -> str:
+    """Build the discovery hypothesis-drafting system prompt for a field's
+    profile (Phase 22c). Field-framed like the Phase-17 builders; proposes what
+    to search for, never asserts answers."""
+    p = profile or AI_ROBOTICS_PROFILE
+    return f"You are a research discovery planner for {p.description}." + _DISCOVERY_BODY
+
+
 # ── Grounded Q&A (Phase 21b) ─────────────────────────────────────────────────
 #
 # The knowledge chatbot's system prompt. Grounding + citation are the whole

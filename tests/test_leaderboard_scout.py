@@ -11,6 +11,7 @@ from mesh_agents.leaderboard_scout import (
     _fetch_hf_open_llm,
     _fetch_leaderboards,
     _fetch_paperswithcode,
+    _handle_investigate_leaderboard,
     _handle_scout_leaderboards,
 )
 from mesh_models.source import SourceType
@@ -133,6 +134,31 @@ def test_handle_returns_dict() -> None:
     with patch("mesh_agents.leaderboard_scout.httpx.Client", lambda: fake):
         out = asyncio.run(_handle_scout_leaderboards({"lanes": ["hf_open_llm"]}))
     assert "papers" in out
+
+
+def test_handle_investigate_snapshots_lanes() -> None:
+    fake = MagicMock()
+    fake.__enter__ = MagicMock(return_value=fake)
+    fake.__exit__ = MagicMock(return_value=False)
+    fake.get.side_effect = lambda *a, **kw: _ok(
+        json_body={"rows": [{"row": {"model": "ModelA", "average": 80.1}}]}
+    )
+    with patch("mesh_agents.leaderboard_scout.httpx.Client", lambda: fake):
+        out = asyncio.run(
+            _handle_investigate_leaderboard(
+                {
+                    "investigation_id": "inv-9",
+                    "hypothesis": "Is ModelA still leading the Open LLM board?",
+                    "max_results": 5,
+                }
+            )
+        )
+    assert out["investigation_id"] == "inv-9"
+    # At least the HF lane produces a snapshot source record.
+    assert any(
+        r["source"]["type"] == SourceType.leaderboard.value
+        for r in out["source_records"]
+    )
 
 
 @patch("mesh_agents.leaderboard_scout.build_multi_skill_card")

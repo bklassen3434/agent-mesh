@@ -109,6 +109,11 @@ class BeliefConsolidationState(TypedDict):
     triggered_by: str
     traceparent: str
     started_at: str  # ISO-8601
+    # confirmed-same pairs to merge (high band + adjudication-confirmed middle).
+    # ALL merges are deferred to a single apply_merges node so high + middle
+    # cluster together — a belief in both a high pair and a middle pair is then
+    # folded onto one canonical once, never merged twice across phases.
+    confirmed_pairs: Annotated[list[dict[str, str]], operator.add]
     # middle-band pairs awaiting batch/sync adjudication
     middle_pairs: list[_MiddlePair]
     batch_id: str | None
@@ -164,12 +169,13 @@ def build_belief_consolidation_graph(
 
     async def load_candidates(state: BeliefConsolidationState) -> dict[str, Any]:
         # Per active field: backfill embeddings, block + band the candidate set,
-        # apply high-band merges immediately, and stage middle pairs for
-        # adjudication. Field isolation is absolute — blocking never crosses
-        # fields (find_candidate_duplicate_beliefs filters field_id).
+        # stage high-band pairs (confirmed) and middle pairs (to adjudicate). No
+        # merge happens here — all merges are deferred to apply_merges so high +
+        # middle cluster together. Field isolation is absolute — blocking never
+        # crosses fields (find_candidate_duplicate_beliefs filters field_id).
         fields = list_fields(conn, active_only=True)
         middle_pairs: list[_MiddlePair] = []
-        merged = 0
+        confirmed_pairs: list[dict[str, str]] = []
         for fld in fields:
             embedded = ensure_belief_embeddings(conn, embedder, fld.id)
             candidates, total_held = load_candidate_beliefs(conn, fld.id)
@@ -177,13 +183,9 @@ def build_belief_consolidation_graph(
             confirmed, middle = block_and_band(
                 conn, embedder, candidates, config=cfg, field_id=fld.id
             )
-            # Apply the high-confidence merges now (no LLM needed).
-            high = [
-                {"a_id": a, "b_id": b}
-                for pair in confirmed
-                for a, b in [sorted(pair)]
-            ]
-            merged += _apply_confirmed(conn, high, confidence_fn)
+            for pair in confirmed:
+                a, b = sorted(pair)
+                confirmed_pairs.append({"a_id": a, "b_id": b})
             for ep in middle.values():
                 middle_pairs.append(
                     {
@@ -203,27 +205,27 @@ def build_belief_consolidation_graph(
                 auto_merges=len(confirmed), middle=len(middle),
             )
         return {
+            "confirmed_pairs": confirmed_pairs,
             "middle_pairs": middle_pairs,
             "fields_processed": len(fields),
-            "beliefs_merged": merged,
         }
 
     def route_after_load(state: BeliefConsolidationState) -> str:
         if not state["middle_pairs"]:
-            return "decay"
+            return "apply_merges"
         if batch_llm is not None:
             return "submit_batch"
         return "adjudicate_sync"
 
     async def adjudicate_sync(state: BeliefConsolidationState) -> dict[str, Any]:
         # Synchronous fallback (non-anthropic provider or batch disabled). With no
-        # LLM at all the middle band defaults to not-same (conservative) — no merge.
+        # LLM at all the middle band defaults to not-same (conservative). Only
+        # stages confirmed pairs; apply_merges does the actual folding.
         from mesh_agents.belief_consolidation import adjudicate_beliefs
 
         if sync_llm is None:
             return {}
         llm = sync_llm
-        merged = 0
         confirmed: list[dict[str, str]] = []
         for mp in state["middle_pairs"]:
             a = BeliefForMatch(topic=mp["a_topic"], statement=mp["a_statement"])
@@ -231,8 +233,7 @@ def build_belief_consolidation_graph(
             same = await asyncio.to_thread(adjudicate_beliefs, llm, a, b)
             if same:
                 confirmed.append({"a_id": mp["a_id"], "b_id": mp["b_id"]})
-        merged += _apply_confirmed(conn, confirmed, confidence_fn)
-        return {"beliefs_merged": merged}
+        return {"confirmed_pairs": confirmed}
 
     async def submit_batch(state: BeliefConsolidationState) -> dict[str, Any]:
         assert batch_llm is not None
@@ -259,7 +260,7 @@ def build_belief_consolidation_graph(
         return {"batch_id": batch_id}
 
     def route_after_submit(state: BeliefConsolidationState) -> str:
-        return "poll_batch" if state.get("batch_id") else "decay"
+        return "poll_batch" if state.get("batch_id") else "apply_merges"
 
     async def poll_batch(state: BeliefConsolidationState) -> dict[str, Any]:
         assert batch_llm is not None
@@ -320,8 +321,14 @@ def build_belief_consolidation_graph(
             usages.append(_usage_row(res.usage, res.model, batch=True))
             if parsed.same_proposition:
                 confirmed.append({"a_id": mp["a_id"], "b_id": mp["b_id"]})
-        merged = _apply_confirmed(conn, confirmed, confidence_fn)
-        return {"beliefs_merged": merged, "usages": usages}
+        return {"confirmed_pairs": confirmed, "usages": usages}
+
+    async def apply_merges(state: BeliefConsolidationState) -> dict[str, Any]:
+        # Single fold of ALL confirmed pairs (high band + adjudicated middle),
+        # clustered together so a belief in two pairs merges onto one canonical
+        # exactly once — never twice across phases.
+        merged = _apply_confirmed(conn, state["confirmed_pairs"], confidence_fn)
+        return {"beliefs_merged": merged}
 
     async def decay(state: BeliefConsolidationState) -> dict[str, Any]:
         # LLM-free staleness pass across every active field (Phase 19e).
@@ -387,18 +394,22 @@ def build_belief_consolidation_graph(
     g.add_node("submit_batch", submit_batch)
     g.add_node("poll_batch", poll_batch)
     g.add_node("collect_results", collect_results)
+    g.add_node("apply_merges", apply_merges)
     g.add_node("decay", decay)
     g.add_node("finalize", finalize)
 
     g.add_edge(START, "load_candidates")
     g.add_conditional_edges(
         "load_candidates", route_after_load,
-        ["submit_batch", "adjudicate_sync", "decay"],
+        ["submit_batch", "adjudicate_sync", "apply_merges"],
     )
-    g.add_edge("adjudicate_sync", "decay")
-    g.add_conditional_edges("submit_batch", route_after_submit, ["poll_batch", "decay"])
+    g.add_edge("adjudicate_sync", "apply_merges")
+    g.add_conditional_edges(
+        "submit_batch", route_after_submit, ["poll_batch", "apply_merges"]
+    )
     g.add_edge("poll_batch", "collect_results")
-    g.add_edge("collect_results", "decay")
+    g.add_edge("collect_results", "apply_merges")
+    g.add_edge("apply_merges", "decay")
     g.add_edge("decay", "finalize")
     g.add_edge("finalize", END)
     return g
@@ -439,6 +450,7 @@ async def run_belief_consolidation(
         "triggered_by": os.environ.get("MESH_TRIGGERED_BY", "manual"),
         "traceparent": new_traceparent(),
         "started_at": datetime.now(UTC).isoformat(),
+        "confirmed_pairs": [],
         "middle_pairs": [],
         "batch_id": None,
         "fields_processed": 0,

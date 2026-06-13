@@ -157,6 +157,38 @@ def list_entities(
     return [_row_to_entity(r) for r in rows]
 
 
+def under_evidenced_entities(
+    conn: MeshConnection,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+    max_claims: int = 1,
+    limit: int = 50,
+) -> list[tuple[Entity, int]]:
+    """Entities the mesh barely knows anything about (Phase 22c gap signal).
+
+    Returns ``(entity, claim_count)`` for entities in ``field_id`` whose number
+    of claims (any claim whose ``subject_entity_id`` is the entity) is at most
+    ``max_claims`` — i.e. zero/one supporting claim. Thinnest-first. A single
+    aggregate (no N+1). Field-scoped: the entity filter pins the field, and a
+    claim's subject is an entity in the same field by construction."""
+    rows = conn.execute(
+        """
+        SELECT e.id, e.canonical_name, e.aliases, e.type, e.attributes,
+               e.created_at, e.last_seen_at, COUNT(c.id) AS claim_count
+        FROM entities e
+        LEFT JOIN claims c ON c.subject_entity_id = e.id
+        WHERE e.field_id = %s
+        GROUP BY e.id, e.canonical_name, e.aliases, e.type, e.attributes,
+                 e.created_at, e.last_seen_at
+        HAVING COUNT(c.id) <= %s
+        ORDER BY claim_count ASC, e.last_seen_at DESC
+        LIMIT %s
+        """,
+        [field_id, max(int(max_claims), 0), max(int(limit), 0)],
+    ).fetchall()
+    return [(_row_to_entity(r), int(r[7])) for r in rows]
+
+
 def count_entities(
     conn: MeshConnection,
     type: EntityType | None = None,

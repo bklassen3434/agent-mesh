@@ -155,6 +155,34 @@ def count_claims(
     return int(row[0]) if row else 0
 
 
+def recent_claim_counts_by_entity(
+    conn: MeshConnection,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+    since_days: int = 30,
+    limit: int = 20,
+) -> list[tuple[str, int]]:
+    """Claim velocity per entity over a recent window (Phase 22c trend signal).
+
+    Returns ``(subject_entity_id, claim_count)`` for claims extracted in the
+    last ``since_days``, busiest entity first — a rising-topic signal the mesh
+    may be under-sampling relative to the attention it's drawing. One aggregate,
+    field-scoped."""
+    rows = conn.execute(
+        """
+        SELECT subject_entity_id, COUNT(*) AS claim_count
+        FROM claims
+        WHERE field_id = %s
+          AND extracted_at > (now() - make_interval(days => %s))
+        GROUP BY subject_entity_id
+        ORDER BY claim_count DESC
+        LIMIT %s
+        """,
+        [field_id, max(int(since_days), 0), max(int(limit), 0)],
+    ).fetchall()
+    return [(str(r[0]), int(r[1])) for r in rows]
+
+
 def get_claims_by_ids(
     conn: MeshConnection, ids: list[str]
 ) -> list[Claim]:

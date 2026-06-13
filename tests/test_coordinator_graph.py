@@ -279,6 +279,82 @@ def test_capability_claims_produce_entity_anchored_belief(tmp_path: Path) -> Non
     conn.close()
 
 
+def test_records_one_agent_invocation_per_dispatch(tmp_path: Path) -> None:
+    """Phase 23a: every coordinator skill dispatch is captured as an
+    AgentInvocation — field-scoped, with status/trace/latency/input summary."""
+    db = str(tmp_path / "coord.db")
+    conn = get_connection(db)
+    conn.close()
+
+    _run(db, _full_responses())
+
+    from mesh_db.agent_invocations import (
+        agent_graph,
+        agent_roster,
+        list_agent_invocations,
+    )
+
+    conn = get_connection(db)
+    invs = list_agent_invocations(conn, field_id="ai-robotics", limit=100)
+    by_skill = {i.skill for i in invs}
+    # the happy path dispatches all four skills exactly once
+    assert {"scout_arxiv", "extract_claims", "resolve_entities", "update_sota"} <= by_skill
+    # skill→agent mapping (derived for scouts, table for the rest)
+    by_agent = {i.skill: i.agent for i in invs}
+    assert by_agent["extract_claims"] == "claim_extractor"
+    assert by_agent["resolve_entities"] == "entity_tracker"
+    assert by_agent["update_sota"] == "sota_tracker"
+    assert by_agent["scout_arxiv"] == "arxiv_scout"
+    for i in invs:
+        assert i.status == "ok"
+        assert i.trace_id is not None  # extracted from the run traceparent
+        assert i.latency_ms is not None
+        assert i.input_summary is not None
+    # all share the one run id, which is the recorded pipeline run
+    runs = list_pipeline_runs(conn, limit=1, run_type="pipeline")
+    assert {i.run_id for i in invs} == {runs[0].id}
+
+    # roster + graph derive from the rows
+    roster = {e.agent for e in agent_roster(conn, field_id="ai-robotics")}
+    assert "claim_extractor" in roster
+    graph = agent_graph(conn, field_id="ai-robotics")
+    assert any(n.id == "coordinator" for n in graph.nodes)
+    assert {e.source for e in graph.edges} == {"coordinator"}
+    conn.close()
+
+
+def test_failed_dispatch_records_error_invocation(tmp_path: Path) -> None:
+    """A skill that errors still records an invocation, with status=error — and
+    the run still completes (capture never aborts a run)."""
+    db = str(tmp_path / "coord.db")
+    conn = get_connection(db)
+    conn.close()
+
+    def _boom(_payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("extractor exploded")
+
+    responses = {
+        "scout_arxiv": {"papers": [_paper("2401.0009", "hash-err")]},
+        "extract_claims": _boom,
+        "resolve_entities": _RESOLVE_RESP,
+        "update_sota": {"belief_updates": []},
+    }
+    _run(db, responses)
+
+    from mesh_db.agent_invocations import list_agent_invocations
+
+    conn = get_connection(db)
+    invs = list_agent_invocations(conn, field_id="ai-robotics", limit=100)
+    extract = [i for i in invs if i.skill == "extract_claims"]
+    assert len(extract) == 1
+    assert extract[0].status == "error"
+    assert extract[0].error_type is not None
+    # the run still finalized despite the failed dispatch
+    runs = list_pipeline_runs(conn, limit=1, run_type="pipeline")
+    assert len(runs) == 1 and runs[0].finished_at is not None
+    conn.close()
+
+
 def test_zero_claims_skips_entity_and_sota(tmp_path: Path) -> None:
     """Conditional edge: extract→finalize when no claims, so no entity
     resolution and no sota tracking happen."""

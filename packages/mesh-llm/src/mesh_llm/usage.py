@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LLMUsage(BaseModel):
@@ -16,6 +16,14 @@ class LLMUsage(BaseModel):
     computation in :mod:`mesh_llm.pricing` accounts for that.
     """
 
+    #: The model that actually served the call. Carried on the per-call usage
+    #: object (rather than read off the client) so a RoutedLLMClient that
+    #: escalates cheap→strong reports the realized tier model, and so concurrent
+    #: callers sharing one client never read a clobbered value. Excluded from
+    #: serialization: the token-usage dicts that flow into skill outputs are
+    #: typed ``dict[str, int]``, and the realized model is carried separately on
+    #: each skill output's own ``model`` field.
+    model: str = Field(default="", exclude=True)
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -32,6 +40,8 @@ class LLMUsage(BaseModel):
 
     def __add__(self, other: LLMUsage) -> LLMUsage:
         return LLMUsage(
+            # A summed total spans calls; keep the model only when both agree.
+            model=self.model if self.model == other.model else "",
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,

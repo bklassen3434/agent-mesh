@@ -65,6 +65,12 @@ JOB_COMMANDS: dict[str, list[str]] = {
     # Phase 16c: offline memory consolidation (distills episodic history into
     # procedural heuristics). Fired by the existing scheduler — no new container.
     "consolidation": ["uv", "run", "mesh-consolidate"],
+    # Phase 19: offline belief consolidation (semantic dedup/merge + staleness
+    # decay/archival). Iterates active fields internally — no --field flag.
+    "belief_consolidation": ["uv", "run", "mesh-belief-consolidate"],
+    # Phase 22d: proactive autonomous discovery (gap/trend analysis → opens
+    # discovery investigations → dispatches real search). No new container.
+    "discovery": ["uv", "run", "mesh-discover"],
 }
 
 _RECONCILE_JOB_ID = "_reconcile"

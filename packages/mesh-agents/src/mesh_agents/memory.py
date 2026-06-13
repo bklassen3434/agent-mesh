@@ -19,7 +19,9 @@ block rather than raising — memory is soft context, never a hard dependency.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+from typing import Any
 
 from mesh_db.connection import MeshConnection, get_connection
 from mesh_db.episodic import EpisodicEntry, recall_history
@@ -107,6 +109,56 @@ def recall_block(
     return format_episodic_block(entries, limit)
 
 
+def build_memory_capture(
+    agent: str,
+    skill: str,
+    *,
+    conn: MeshConnection | None = None,
+    entity_id: str | None = None,
+    source: str | None = None,
+    source_id: str | None = None,
+    topic: str | None = None,
+    recall_limit: int = DEFAULT_RECALL_LIMIT,
+    heuristic_limit: int = DEFAULT_HEURISTIC_LIMIT,
+    field_id: str = DEFAULT_FIELD_ID,
+) -> tuple[str, list[str]]:
+    """Like :func:`build_memory_block`, but also returns the ids of the applied
+    heuristics — so an agent can report exactly which procedural memory it
+    injected (Phase 23 observability) without a second read.
+
+    Returns ``(memory_block, applied_heuristic_ids)``. Both are empty on any
+    failure / no reachable DB — memory is soft context, never a hard dependency."""
+    owned = conn is None
+    c = conn if conn is not None else _open_reader()
+    if c is None:
+        return "", []
+    parts: list[str] = []
+    heuristic_ids: list[str] = []
+    try:
+        heuristics = list_applicable_heuristics(
+            c, agent, skill, source=source, entity_id=entity_id,
+            limit=heuristic_limit, field_id=field_id,
+        )
+        hblock = format_heuristic_block(heuristics, heuristic_limit)
+        if hblock:
+            parts.append(hblock)
+            heuristic_ids = [h.id for h in heuristics[:heuristic_limit]]
+        entries = recall_history(
+            c, agent, entity_id=entity_id, source_id=source_id, topic=topic,
+            limit=recall_limit, field_id=field_id,
+        )
+        rblock = format_episodic_block(entries, recall_limit)
+        if rblock:
+            parts.append(rblock)
+    except Exception as exc:  # a memory read must never break a skill
+        logger.debug("memory_block_failed", extra={"agent": agent, "error": str(exc)})
+        return "", []
+    finally:
+        if owned:
+            c.close()
+    return "\n\n".join(parts), heuristic_ids
+
+
 def build_memory_block(
     agent: str,
     skill: str,
@@ -129,30 +181,33 @@ def build_memory_block(
     Episodic scope = (agent) with optional ``entity_id`` / ``source_id`` / ``topic``.
     Both reads are scoped to ``field_id`` — memory never crosses fields (17a).
     Returns ``""`` when both are empty or no DB is reachable."""
-    owned = conn is None
-    c = conn if conn is not None else _open_reader()
-    if c is None:
-        return ""
-    parts: list[str] = []
-    try:
-        heuristics = list_applicable_heuristics(
-            c, agent, skill, source=source, entity_id=entity_id,
-            limit=heuristic_limit, field_id=field_id,
-        )
-        hblock = format_heuristic_block(heuristics, heuristic_limit)
-        if hblock:
-            parts.append(hblock)
-        entries = recall_history(
-            c, agent, entity_id=entity_id, source_id=source_id, topic=topic,
-            limit=recall_limit, field_id=field_id,
-        )
-        rblock = format_episodic_block(entries, recall_limit)
-        if rblock:
-            parts.append(rblock)
-    except Exception as exc:  # a memory read must never break a skill
-        logger.debug("memory_block_failed", extra={"agent": agent, "error": str(exc)})
-        return ""
-    finally:
-        if owned:
-            c.close()
-    return "\n\n".join(parts)
+    block, _ids = build_memory_capture(
+        agent, skill, conn=conn, entity_id=entity_id, source=source,
+        source_id=source_id, topic=topic, recall_limit=recall_limit,
+        heuristic_limit=heuristic_limit, field_id=field_id,
+    )
+    return block
+
+
+# Reserved key under which agents attach their optional observability debug
+# envelope to a skill output. The coordinator folds it into the invocation
+# record (Phase 23a); any consumer that doesn't care ignores it.
+DEBUG_ENVELOPE_KEY = "debug"
+
+
+def debug_envelope(
+    *,
+    agent: str,
+    memory_block: str,
+    applied_heuristic_ids: list[str],
+    system_prefix: str,
+) -> dict[str, Any]:
+    """Build the additive observability envelope an agent attaches to its skill
+    output: the rendered memory block, the ids of the heuristics it applied, and
+    a stable hash of the (cached) system prefix it ran under (Phase 23a)."""
+    return {
+        "agent": agent,
+        "memory_block": memory_block,
+        "applied_heuristic_ids": list(applied_heuristic_ids),
+        "system_prefix_hash": hashlib.sha256(system_prefix.encode()).hexdigest(),
+    }

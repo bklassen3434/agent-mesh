@@ -48,6 +48,9 @@ export function NavBar({ statusHref }: { statusHref: string }) {
           <Link href="/briefing" className={linkCls(isActive('/briefing'))}>
             Daily Brief
           </Link>
+          <Link href="/ask" className={linkCls(isActive('/ask'))}>
+            Ask
+          </Link>
           <DropdownMenu>
             <DropdownMenuTrigger
               className={cn('inline-flex items-center gap-1 outline-none', linkCls(knowledgeActive))}
@@ -65,6 +68,9 @@ export function NavBar({ statusHref }: { statusHref: string }) {
           </DropdownMenu>
           <Link href="/graph" className={linkCls(isActive('/graph'))}>
             Graph
+          </Link>
+          <Link href="/agents" className={linkCls(isActive('/agents'))}>
+            Agents
           </Link>
           <Link href="/pipelines" className={linkCls(isActive('/pipelines'))}>
             Pipelines
@@ -84,6 +90,7 @@ export function NavBar({ statusHref }: { statusHref: string }) {
               <SheetTitle className="text-sm font-semibold">Agent Mesh</SheetTitle>
               <div className="mt-4 flex flex-col gap-0.5 text-sm">
                 <DrawerLink href="/briefing" label="Daily Brief" active={isActive('/briefing')} />
+                <DrawerLink href="/ask" label="Ask" active={isActive('/ask')} />
                 <div className="mt-3 px-2 text-xs uppercase tracking-wide text-muted-foreground">
                   Knowledge
                 </div>
@@ -92,6 +99,7 @@ export function NavBar({ statusHref }: { statusHref: string }) {
                 ))}
                 <div className="mt-3" />
                 <DrawerLink href="/graph" label="Graph" active={isActive('/graph')} />
+                <DrawerLink href="/agents" label="Agents" active={isActive('/agents')} />
                 <DrawerLink href="/pipelines" label="Pipelines" active={isActive('/pipelines')} />
                 <a
                   href={statusHref}

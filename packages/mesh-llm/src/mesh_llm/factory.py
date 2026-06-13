@@ -51,3 +51,37 @@ def make_llm_client(
     raise ValueError(
         f"Unknown MESH_LLM_PROVIDER: {name!r}. Expected 'anthropic' or 'ollama'."
     )
+
+
+def make_routed_llm_client(
+    provider: str | None = None,
+    agent_name: str | None = None,
+) -> LLMClient:
+    """Return a tier-routing client when routing is enabled, else a plain one.
+
+    Additive companion to :func:`make_llm_client` (Phase 20). An agent opts in
+    by switching its single construction line to this factory; nothing else
+    changes. Routing is returned only when **both** hold:
+
+    1. No static model pin exists for the agent
+       (:func:`mesh_llm.routing.has_static_model_override`) — an explicit
+       operator pin via ``MESH_LLM_MODEL_<AGENT>`` / ``MESH_LLM_MODEL_DEFAULT``
+       / ``MESH_LLM_MODEL`` always wins and is never downgraded.
+    2. Routing is enabled for the agent (``MESH_ROUTE_ENABLED`` /
+       ``MESH_ROUTE_<AGENT>_ENABLED``).
+
+    In every other case this delegates to :func:`make_llm_client`, so with
+    routing off the behaviour is byte-for-byte today's.
+    """
+    from mesh_llm.routing import (
+        RoutedLLMClient,
+        RoutingConfig,
+        has_static_model_override,
+    )
+
+    if has_static_model_override(agent_name):
+        return make_llm_client(provider, agent_name)
+    config = RoutingConfig.from_env(agent_name, provider_default=provider)
+    if not config.enabled:
+        return make_llm_client(provider, agent_name)
+    return RoutedLLMClient(config, agent_name=agent_name)

@@ -178,4 +178,6 @@ def distill_pure(
         )
         return ConsolidationResult(), LLMUsage(), getattr(llm, "model", "")
     assert isinstance(result, ConsolidationResult)
-    return result, usage, getattr(llm, "model", "")
+    # usage.model is the realized model (correct under cheap→strong routing
+    # escalation); fall back to the client attribute if unset.
+    return result, usage, usage.model or getattr(llm, "model", "")

@@ -30,6 +30,17 @@ def entity_embed_text(name: str, entity_type: str) -> str:
     return f"{name.strip()} ({entity_type})"
 
 
+def belief_embed_text(topic: str, statement: str) -> str:
+    """Normalized text that represents a belief for embedding (Phase 19a).
+
+    The ``topic`` + ``statement`` are the fields a semantic near-duplicate would
+    share, so they carry the blocking signal. Belief synthesis, the consolidation
+    sweep, and the one-time backfill MUST all embed via this function — if the
+    representation diverges, blocking silently degrades (mirrors the contract on
+    ``entity_embed_text``)."""
+    return f"{topic.strip()}: {statement.strip()}"
+
+
 @runtime_checkable
 class Embedder(Protocol):
     """Maps texts to fixed-dimension vectors. Implementations must batch."""

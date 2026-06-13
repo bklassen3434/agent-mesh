@@ -301,6 +301,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask a grounded question about a field
+         * @description Answers a natural-language question using only the requested field's knowledge graph. The answer is grounded strictly in retrieved mesh rows with inline citations to beliefs/claims/entities, carries a coverage signal derived from the evidence, and returns 'uncovered' when the mesh has no relevant evidence. Read-only; nothing is persisted.
+         */
+        post: operations["ask_api_v1_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -441,10 +461,371 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent roster
+         * @description Per-agent aggregates for a field, busiest first: invocation count, error rate, avg latency, total tokens + cost, last-active + last run.
+         */
+        get: operations["get_roster_api_v1_agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent-interaction graph
+         * @description Cytoscape-shaped who-dispatches-whom graph: a single coordinator hub dispatches every agent. Node size = invocation volume, color = error rate; edge width = dispatch volume.
+         */
+        get: operations["get_agent_graph_api_v1_agents_graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/invocations/{invocation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One invocation, full bounded detail
+         * @description The full bounded input/output, the memory block + applied heuristic ids (resolved to their current text), model/tokens/cost, and a Langfuse deep-link to the raw prompt (when Langfuse is configured).
+         */
+        get: operations["get_invocation_api_v1_agents_invocations__invocation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent}/invocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An agent's recent invocations
+         * @description Recent invocations for one agent in a field, newest first.
+         */
+        get: operations["get_agent_invocations_api_v1_agents__agent__invocations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An agent's current learned memory
+         * @description What this agent knows now: its active, unexpired heuristics and its recent episodic history (reconstructed from its artifacts).
+         */
+        get: operations["get_agent_memory_api_v1_agents__agent__memory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AgentGraph
+         * @description Cytoscape-shaped agent-interaction graph for one field.
+         */
+        AgentGraph: {
+            /** Nodes */
+            nodes: components["schemas"]["AgentGraphNode"][];
+            /** Edges */
+            edges: components["schemas"]["AgentGraphEdge"][];
+        };
+        /**
+         * AgentGraphEdge
+         * @description A who-dispatches-whom edge; ``call_count`` drives stroke width.
+         */
+        AgentGraphEdge: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /**
+             * Call Count
+             * @default 0
+             */
+            call_count: number;
+            /**
+             * Error Count
+             * @default 0
+             */
+            error_count: number;
+        };
+        /**
+         * AgentGraphNode
+         * @description A node in the agent-interaction graph.
+         *
+         *     ``role`` distinguishes the dispatching ``coordinator`` hub from the
+         *     dispatched ``agent`` nodes; ``invocation_count`` drives node size and
+         *     ``error_rate`` drives node color in the cytoscape view.
+         */
+        AgentGraphNode: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Role */
+            role: string;
+            /**
+             * Invocation Count
+             * @default 0
+             */
+            invocation_count: number;
+            /**
+             * Error Rate
+             * @default 0
+             */
+            error_rate: number;
+        };
+        /** AgentHeuristic */
+        AgentHeuristic: {
+            /** Id */
+            id?: string;
+            /** Agent */
+            agent: string;
+            /** Skill */
+            skill: string;
+            /** Source */
+            source?: string | null;
+            /** Entity Id */
+            entity_id?: string | null;
+            /** Heuristic */
+            heuristic: string;
+            /**
+             * Confidence
+             * @default 0.3
+             */
+            confidence: number;
+            /** Provenance Run Ids */
+            provenance_run_ids?: string[];
+            /** Provenance Claim Ids */
+            provenance_claim_ids?: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Last Revised At
+             * Format: date-time
+             */
+            last_revised_at?: string;
+            /**
+             * Revision Count
+             * @default 0
+             */
+            revision_count: number;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at?: string;
+            /**
+             * Is Currently Active
+             * @default true
+             */
+            is_currently_active: boolean;
+        };
+        /**
+         * AgentInvocation
+         * @description One coordinator skill dispatch, captured for observability.
+         *
+         *     Bounded by construction: ``input_summary`` / ``output_summary`` /
+         *     ``memory_block`` are capped summaries written by the coordinator — the raw
+         *     prompt/output lives in Langfuse, reachable via ``trace_id``.
+         */
+        AgentInvocation: {
+            /** Id */
+            id?: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Field Id
+             * @default ai-robotics
+             */
+            field_id: string;
+            /** Agent */
+            agent: string;
+            /** Skill */
+            skill: string;
+            /** Traceparent */
+            traceparent?: string | null;
+            /** Trace Id */
+            trace_id?: string | null;
+            /**
+             * Status
+             * @default ok
+             */
+            status: string;
+            /** Error Type */
+            error_type?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Input Summary */
+            input_summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Output Summary */
+            output_summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Memory Block */
+            memory_block?: string | null;
+            /** Applied Heuristic Ids */
+            applied_heuristic_ids?: string[];
+            /** System Prefix Hash */
+            system_prefix_hash?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+        };
+        /**
+         * AgentInvocationDetail
+         * @description One invocation's full bounded detail + resolved memory + Langfuse link.
+         */
+        AgentInvocationDetail: {
+            invocation: components["schemas"]["AgentInvocation"];
+            /** Applied Heuristics */
+            applied_heuristics: components["schemas"]["ResolvedHeuristic"][];
+            /** Langfuse Url */
+            langfuse_url?: string | null;
+        };
+        /**
+         * AgentMemory
+         * @description An agent's *current* learned state: active heuristics + recent history.
+         */
+        AgentMemory: {
+            /** Agent */
+            agent: string;
+            /** Heuristics */
+            heuristics: components["schemas"]["AgentHeuristic"][];
+            /** Episodic */
+            episodic: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * AgentRosterEntry
+         * @description Per-agent aggregate over a field's invocations — the roster row.
+         */
+        AgentRosterEntry: {
+            /** Agent */
+            agent: string;
+            /**
+             * Invocations
+             * @default 0
+             */
+            invocations: number;
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /**
+             * Error Rate
+             * @default 0
+             */
+            error_rate: number;
+            /**
+             * Avg Latency Ms
+             * @default 0
+             */
+            avg_latency_ms: number;
+            /**
+             * Total Input Tokens
+             * @default 0
+             */
+            total_input_tokens: number;
+            /**
+             * Total Output Tokens
+             * @default 0
+             */
+            total_output_tokens: number;
+            /**
+             * Total Cost Usd
+             * @default 0
+             */
+            total_cost_usd: number;
+            /** Last Active */
+            last_active?: string | null;
+            /** Last Run Id */
+            last_run_id?: string | null;
+        };
+        /**
+         * Answer
+         * @description A grounded, cited answer to a single field-scoped question.
+         */
+        Answer: {
+            /** Answer Markdown */
+            answer_markdown: string;
+            /** Citations */
+            citations?: components["schemas"]["Citation"][];
+            /** @default uncovered */
+            coverage: components["schemas"]["Coverage"];
+            /** Caveats */
+            caveats?: string[];
+        };
+        /** AskRequest */
+        AskRequest: {
+            /** Question */
+            question: string;
+        };
         /** Belief */
         Belief: {
             /** Id */
@@ -582,6 +963,28 @@ export interface components {
             /** Items */
             items?: components["schemas"]["PersonalizedItem"][];
         };
+        /**
+         * Citation
+         * @description A pointer from an asserted fact to the mesh row it came from.
+         *
+         *     ``id`` always references a row present in the retrieved context pack — the
+         *     agent drops any id the LLM invents — so the wiki can link it to an existing
+         *     detail page (``/knowledge/{beliefs,claims,entities}/<id>``).
+         */
+        Citation: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "belief" | "claim" | "entity";
+            /** Id */
+            id: string;
+            /**
+             * Quote
+             * @default
+             */
+            quote: string;
+        };
         /** Claim */
         Claim: {
             /** Id */
@@ -660,6 +1063,14 @@ export interface components {
             source: components["schemas"]["Source"] | null;
             subject_entity: components["schemas"]["Entity"] | null;
         };
+        /**
+         * Coverage
+         * @description How well the retrieved mesh evidence supports the answer.
+         *
+         *     Evidence-derived (the mesh's signals), never a number the model invented.
+         * @enum {string}
+         */
+        Coverage: "well_supported" | "thin" | "uncovered";
         /** Entity */
         Entity: {
             /** Id */
@@ -934,6 +1345,18 @@ export interface components {
             confidence: number;
         };
         /**
+         * ResolvedHeuristic
+         * @description An applied heuristic id resolved to its text (for the invocation view).
+         */
+        ResolvedHeuristic: {
+            /** Id */
+            id: string;
+            /** Heuristic */
+            heuristic: string;
+            /** Confidence */
+            confidence: number;
+        };
+        /**
          * RevisionWithTriggers
          * @description Revision joined with its trigger claims for the timeline view.
          */
@@ -1047,7 +1470,7 @@ export interface components {
          * SourceType
          * @enum {string}
          */
-        SourceType: "arxiv" | "hn_post" | "hn_comment" | "github" | "twitter" | "bluesky" | "reddit" | "blog" | "leaderboard" | "agent_reasoning";
+        SourceType: "arxiv" | "hn_post" | "hn_comment" | "github" | "twitter" | "bluesky" | "reddit" | "blog" | "leaderboard" | "web" | "rss" | "rest" | "agent_reasoning";
         /** SourceWithCount */
         SourceWithCount: {
             source: components["schemas"]["Source"];
@@ -1596,6 +2019,42 @@ export interface operations {
             };
         };
     };
+    ask_api_v1_ask_post: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope the answer to */
+                field?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Answer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     status_page_status_get: {
         parameters: {
             query?: never;
@@ -1788,6 +2247,171 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SchedulerJobStatus"][];
+                };
+            };
+        };
+    };
+    get_roster_api_v1_agents_get: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRosterEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_graph_api_v1_agents_graph_get: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentGraph"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_invocation_api_v1_agents_invocations__invocation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInvocationDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_invocations_api_v1_agents__agent__invocations_get: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInvocation"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_memory_api_v1_agents__agent__memory_get: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentMemory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

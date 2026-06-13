@@ -158,6 +158,9 @@ class AnthropicClient:
         options: dict[str, Any] | None = None,
     ) -> tuple[str | T, int, LLMUsage]:
         max_tokens = (options or {}).get("max_tokens", self._max_tokens)
+        # Routing decision metadata (Phase 20), if a RoutedLLMClient wrapped this
+        # call. Reserved, namespaced key; harmless/absent on direct calls.
+        route_meta = (options or {}).get("_route")
 
         # System prompt is cached on the assumption it's identical across calls
         # within a 5-minute window. Below the model's minimum cacheable prefix
@@ -216,6 +219,7 @@ class AnthropicClient:
 
         raw_usage = getattr(message, "usage", None)
         usage = LLMUsage(
+            model=self.model,
             input_tokens=int(getattr(raw_usage, "input_tokens", 0) or 0),
             output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
             cache_read_tokens=int(
@@ -251,6 +255,7 @@ class AnthropicClient:
             usage=usage.model_dump(),
             cost_usd=cost.total_cost if is_priced(self.model) else None,
             agent_name=self.agent_name,
+            metadata=route_meta if isinstance(route_meta, dict) else None,
         )
 
         if response_model is not None:
@@ -311,6 +316,7 @@ class AnthropicClient:
             msg = result.message
             raw_usage = msg.usage
             usage = LLMUsage(
+                model=self.model,
                 input_tokens=int(getattr(raw_usage, "input_tokens", 0) or 0),
                 output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
                 cache_read_tokens=int(getattr(raw_usage, "cache_read_input_tokens", 0) or 0),

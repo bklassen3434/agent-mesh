@@ -166,6 +166,73 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # ── Config-driven connectors (Phase 18a) ───────────────────────────────────
+  # One service per kind; arbitrarily many instances are field_connectors rows.
+  # Not enabled for ai-robotics — discoverable, dispatched only where enabled.
+  web-search-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.web_search_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8017"
+      AGENT_PUBLIC_URL: "http://web-search-scout:8017"
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+    env_file:
+      - .env
+    ports:
+      - "8017:8017"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8017/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  rss-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.rss_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8014"
+      AGENT_PUBLIC_URL: "http://rss-scout:8014"
+    env_file:
+      - .env
+    ports:
+      - "8014:8014"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8014/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  rest-json-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.rest_json_scout"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8015"
+      AGENT_PUBLIC_URL: "http://rest-json-scout:8015"
+    env_file:
+      - .env
+    ports:
+      - "8015:8015"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8015/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   personalizer:
     build:
       context: .
@@ -187,6 +254,45 @@ services:
       - "8013:8013"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  research-qa:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.research_qa"]
+    environment:
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8016"
+      AGENT_PUBLIC_URL: "http://research-qa:8016"
+      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
+      # Grounded Q&A is a synthesis task; it opts into tiered routing
+      # (make_routed_llm_client) so hard questions escalate to the strong tier.
+      # Routing ships off by default — set MESH_ROUTE_RESEARCH_QA_ENABLED=true
+      # to turn it on, or pin MESH_LLM_MODEL_RESEARCH_QA to a fixed model.
+      MESH_ROUTE_ENABLED: ${MESH_ROUTE_ENABLED:-}
+      MESH_ROUTE_RESEARCH_QA_ENABLED: ${MESH_ROUTE_RESEARCH_QA_ENABLED:-}
+      MESH_LLM_MODEL_RESEARCH_QA: ${MESH_LLM_MODEL_RESEARCH_QA:-}
+      MESH_LLM_MODEL_RESEARCH_QA_STRONG: ${MESH_LLM_MODEL_RESEARCH_QA_STRONG:-claude-sonnet-4-6}
+      MESH_ROUTE_STRONG_MODEL: ${MESH_ROUTE_STRONG_MODEL:-}
+      MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # Read-only mesh access (mesh_reader role): the agent retrieves the
+      # field-scoped context pack itself. Never writes.
+      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
+    env_file:
+      - .env
+    ports:
+      - "8016:8016"
+    depends_on:
+      mesh-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8016/healthz')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -291,6 +397,9 @@ services:
       # Phase 9: where to reach the scheduler's HTTP control surface. The API
       # proxies trigger/status/reload here; degrades gracefully if it's down.
       SCHEDULER_URL: "http://scheduler:9100"
+      # Phase 21: where to reach the ResearchQA agent for POST /api/v1/ask.
+      # Degrades to a clean "unavailable" answer if it's down.
+      MESH_ASK_AGENT_URLS: "http://research-qa:8016"
     env_file:
       - .env
     ports:
@@ -394,7 +503,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
       # Phase 12: owner DSN applies the schema + roles on startup; the
       # coordinator's knowledge writes go through the writer role.
       MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
@@ -426,6 +535,12 @@ services:
       blog-scout:
         condition: service_healthy
       leaderboard-scout:
+        condition: service_healthy
+      web-search-scout:
+        condition: service_healthy
+      rss-scout:
+        condition: service_healthy
+      rest-json-scout:
         condition: service_healthy
     profiles:
       - pipeline
@@ -470,7 +585,7 @@ services:
     entrypoint: ["uv", "run", "mesh-scheduler"]
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
       # Phase 12: the scheduler shells out to mesh-pipeline / mesh-skeptic-sweep,
       # which inherit this env — owner DSN to apply schema, writer role for the

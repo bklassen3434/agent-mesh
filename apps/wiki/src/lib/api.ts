@@ -34,6 +34,20 @@ export type SkepticActivityItem = Schemas['SkepticActivityItem'];
 export type Briefing = Schemas['Briefing'];
 export type BriefingSection = Schemas['BriefingSection'];
 export type PersonalizedItem = Schemas['PersonalizedItem'];
+export type Answer = Schemas['Answer'];
+export type Citation = Schemas['Citation'];
+export type Coverage = Schemas['Coverage'];
+
+// Agent observability (Phase 23)
+export type AgentRosterEntry = Schemas['AgentRosterEntry'];
+export type AgentInvocation = Schemas['AgentInvocation'];
+export type AgentInvocationDetail = Schemas['AgentInvocationDetail'];
+export type AgentMemory = Schemas['AgentMemory'];
+export type AgentHeuristic = Schemas['AgentHeuristic'];
+export type AgentGraph = Schemas['AgentGraph'];
+export type AgentGraphNode = Schemas['AgentGraphNode'];
+export type AgentGraphEdge = Schemas['AgentGraphEdge'];
+export type ResolvedHeuristic = Schemas['ResolvedHeuristic'];
 
 export type PageEntity = Schemas['Page_Entity_'];
 export type PageClaim = Schemas['Page_Claim_'];
@@ -155,6 +169,23 @@ export const api = {
     return apiGet<BeliefSignalSummary[]>(`/api/v1/beliefs/signals${qs ? `?${qs}` : ''}`);
   },
 
+  // Agents page (Phase 23) --------------------------------------------------
+  agentRoster: (field?: string) =>
+    apiGet<AgentRosterEntry[]>('/api/v1/agents', { query: { field } }),
+  agentGraph: (field?: string) =>
+    apiGet<AgentGraph>('/api/v1/agents/graph', { query: { field } }),
+  agentInvocations: (agent: string, field?: string, limit = 50) =>
+    apiGet<AgentInvocation[]>(
+      `/api/v1/agents/${encodeURIComponent(agent)}/invocations`,
+      { query: { field, limit } },
+    ),
+  agentInvocation: (id: string) =>
+    apiGet<AgentInvocationDetail>(`/api/v1/agents/invocations/${encodeURIComponent(id)}`),
+  agentMemory: (agent: string, field?: string) =>
+    apiGet<AgentMemory>(`/api/v1/agents/${encodeURIComponent(agent)}/memory`, {
+      query: { field },
+    }),
+
   // Pipelines page (Phase 9) ------------------------------------------------
   schedules: () => apiGet<Schedule[]>('/api/v1/schedules'),
   schedulerStatus: () => apiGet<SchedulerJobStatus[]>('/api/v1/scheduler/status'),
@@ -162,4 +193,12 @@ export const api = {
     apiSend<Schedule>('PATCH', `/api/v1/schedules/${encodeURIComponent(jobId)}`, body),
   triggerPipeline: (jobId: string) =>
     apiSend<TriggerResult>('POST', `/api/v1/pipelines/${encodeURIComponent(jobId)}/trigger`),
+
+  // Ask page (Phase 21) -----------------------------------------------------
+  ask: (question: string, field?: string) =>
+    apiSend<Answer>(
+      'POST',
+      `/api/v1/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`,
+      { question },
+    ),
 };

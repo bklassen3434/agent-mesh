@@ -27,8 +27,10 @@ access).
 from __future__ import annotations
 
 import asyncio
+import json
 import operator
 import os
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, TypedDict, cast
@@ -38,8 +40,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from mesh_a2a.checkpoint import open_checkpointer, thread_config
 from mesh_a2a.client import MeshA2AClient
-from mesh_a2a.node import call_skill_node
-from mesh_a2a.tracing import new_traceparent
+from mesh_a2a.node import TaskError, call_skill_node
+from mesh_a2a.tracing import extract_trace_id, new_traceparent
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.claim_extractor import ExtractedClaim
 from mesh_agents.confidence import (
@@ -47,9 +49,10 @@ from mesh_agents.confidence import (
     ConfidenceWeights,
     compute_confidence,
 )
-from mesh_agents.connector import connector_skill_id
+from mesh_agents.connector import connector_skill_id, investigate_source_name
 from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
+from mesh_agents.memory import DEBUG_ENVELOPE_KEY
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
 from mesh_agents.synthesis import (
     CAPABILITY_TOPIC_PREFIX,
@@ -59,11 +62,13 @@ from mesh_agents.synthesis import (
     edge_for_claim,
     synthesize_capability_belief,
 )
+from mesh_db.agent_invocations import create_agent_invocation
 from mesh_db.beliefs import (
     create_belief,
     get_belief_by_id,
     get_belief_signals,
     list_beliefs,
+    set_belief_embedding,
     update_belief,
 )
 from mesh_db.claims import create_claim, list_claims
@@ -93,10 +98,11 @@ from mesh_db.processed_items import (
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
-from mesh_llm import Embedder
+from mesh_llm import Embedder, belief_embed_text
 from mesh_llm.pricing import estimate_cost
 from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
+from mesh_models.agent_invocation import AgentInvocation
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus, ClaimType, claim_type_for_predicate
 from mesh_models.entity import Entity, EntityType
@@ -159,6 +165,12 @@ def _investigation_max_runs() -> int:
     return int(os.environ.get("MESH_INVESTIGATION_MAX_RUNS", "5"))
 
 
+def _capture_max_chars() -> int:
+    """Cap on each stored input/output summary preview (Phase 23a). Bounded by
+    construction — the raw prompt/output lives in Langfuse, not Postgres."""
+    return int(os.environ.get("MESH_OBS_CAPTURE_MAX_CHARS", "2000"))
+
+
 # ── graph state ──────────────────────────────────────────────────────────────
 
 
@@ -203,6 +215,10 @@ class CoordinatorState(TypedDict):
     investigation_entities_created: int
     # cross-cutting
     errors: Annotated[list[dict[str, Any]], operator.add]
+    # observability: one AgentInvocation (as a json dict) per skill dispatch,
+    # accumulated across fan-out + sequential nodes, written best-effort at
+    # finalize (Phase 23a).
+    agent_invocations: Annotated[list[dict[str, Any]], operator.add]
     finalized: bool
 
 
@@ -212,6 +228,9 @@ class _ScoutWork(TypedDict):
     skill_id: str
     payload: dict[str, Any]
     traceparent: str
+    # carried so the worker can record its invocation (Phase 23a)
+    run_id: str
+    field_id: str
 
 
 class _ExtractWork(TypedDict):
@@ -220,6 +239,7 @@ class _ExtractWork(TypedDict):
     paper: dict[str, Any]
     traceparent: str
     field_id: str
+    run_id: str  # carried so the worker can record its invocation (Phase 23a)
 
 
 # ── DB-side helpers (coordinator owns all reads/writes) ──────────────────────
@@ -256,10 +276,13 @@ async def _resolve_entities(
     traceparent: str,
     *,
     field_id: str = DEFAULT_FIELD_ID,
+    run_id: str,
+    invocations: list[dict[str, Any]],
 ) -> list[ResolvedEntityInfo]:
     """Resolve candidate names via the resolve_entities skill, falling back to
     pure local resolution when the skill is absent or errors. The existing-entity
-    context is scoped to ``field_id`` so resolution never sees another field."""
+    context is scoped to ``field_id`` so resolution never sees another field.
+    Each skill dispatch appends an invocation record to ``invocations`` (23a)."""
     if not names:
         return []
     existing = [
@@ -272,15 +295,18 @@ async def _resolve_entities(
         for e in list_entities(conn, limit=10000, field_id=field_id)
     ]
     if "resolve_entities" in client.skill_map():
-        result, err = await call_skill_node(
+        result, err, inv = await _dispatch(
             client,
             "resolve_entities",
             {
                 "candidate_names": names,
                 "existing_entities": [s.model_dump(mode="json") for s in existing],
             },
+            run_id=run_id,
+            field_id=field_id,
             traceparent=traceparent,
         )
+        invocations.append(inv)
         if result is not None:
             return [
                 ResolvedEntityInfo.model_validate(r) for r in result.get("resolved", [])
@@ -327,16 +353,20 @@ async def _resolve_and_persist(
     config: ResolutionConfig | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
+    run_id: str,
+    invocations: list[dict[str, Any]],
 ) -> tuple[dict[str, str], int, list[ResolvedEntityInfo]]:
     """Resolve + persist candidate names, returning (name→id, created, infos).
 
     With an embedder (the live pipeline) this is the Phase 13 semantic path:
     alias fast-path → block → match, creating entities with embeddings. Without
     one (tests / no-embedder setups) it falls back to the exact-match A2A skill.
-    All resolution + creation is scoped to ``field_id`` (Phase 17a).
+    All resolution + creation is scoped to ``field_id`` (Phase 17a). Skill
+    dispatches append invocation records to ``invocations`` (23a).
     """
     resolved = await _resolve_entities(
-        conn, client, names, traceparent, field_id=field_id
+        conn, client, names, traceparent, field_id=field_id,
+        run_id=run_id, invocations=invocations,
     )
     if embedder is None:
         # No embedder → exact-match only (tests / minimal setups).
@@ -410,6 +440,24 @@ def _insert_claims(
     return resolved_claims, inserted
 
 
+def _embed_belief(
+    conn: Any, embedder: Embedder | None, belief_id: str, topic: str, statement: str
+) -> None:
+    """Populate a belief's ``statement_embedding`` from (topic, statement) so the
+    Phase-19 consolidation sweep can block on it (Phase 19a).
+
+    A local fastembed call — NOT an LLM — so the no-hot-path-LLM principle holds.
+    No-ops when no embedder is wired (tests / minimal setups). Best-effort: an
+    embedding failure must never abort synthesis (the backfill catches misses)."""
+    if embedder is None:
+        return
+    try:
+        vec = embedder.embed([belief_embed_text(topic, statement)])[0]
+        set_belief_embedding(conn, belief_id, vec)
+    except Exception:  # never let embedding bookkeeping abort a synthesis write
+        log.warning("belief_embed_failed", belief_id=belief_id)
+
+
 def _belief_confidence(
     conn: Any, belief_id: str, weights: ConfidenceWeights
 ) -> float:
@@ -429,10 +477,14 @@ async def _run_sota(
     resolved_claims: list[ResolvedClaim],
     traceparent: str,
     weights: ConfidenceWeights,
+    embedder: Embedder | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
+    run_id: str,
+    invocations: list[dict[str, Any]],
 ) -> tuple[int, int]:
-    """Update SOTA beliefs from the resolved claims. Returns (created, revised)."""
+    """Update SOTA beliefs from the resolved claims. Returns (created, revised).
+    The update_sota dispatch appends an invocation record to ``invocations``."""
     existing_sota = [
         BeliefSummary(
             belief_id=b.id, topic=b.topic, statement=b.statement, confidence=b.confidence
@@ -442,15 +494,18 @@ async def _run_sota(
     ]
     belief_updates: list[BeliefUpdate]
     if "update_sota" in client.skill_map():
-        result, err = await call_skill_node(
+        result, err, inv = await _dispatch(
             client,
             "update_sota",
             {
                 "claims": [c.model_dump(mode="json") for c in resolved_claims],
                 "existing_sota_beliefs": [b.model_dump(mode="json") for b in existing_sota],
             },
+            run_id=run_id,
+            field_id=field_id,
             traceparent=traceparent,
         )
+        invocations.append(inv)
         if result is not None:
             belief_updates = [
                 BeliefUpdate.model_validate(u) for u in result.get("belief_updates", [])
@@ -480,6 +535,7 @@ async def _run_sota(
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
+            _embed_belief(conn, embedder, belief.id, belief.topic, belief.statement)
             created += 1
         else:
             assert update.existing_belief_id is not None
@@ -508,6 +564,11 @@ async def _run_sota(
                 last_revised_at=revision.revised_at,
                 revision_count=existing_b.revision_count + 1,
             )
+            # Statement changed → re-embed so blocking tracks the live statement.
+            _embed_belief(
+                conn, embedder, update.existing_belief_id,
+                existing_b.topic, update.new_statement,
+            )
             revised += 1
     return created, revised
 
@@ -516,6 +577,7 @@ def _run_capability(
     conn: Any,
     resolved_claims: list[ResolvedClaim],
     weights: ConfidenceWeights,
+    embedder: Embedder | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
@@ -595,6 +657,7 @@ def _run_capability(
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
+            _embed_belief(conn, embedder, belief.id, belief.topic, belief.statement)
             created += 1
         else:
             assert update.existing_belief_id is not None
@@ -616,6 +679,11 @@ def _run_capability(
                 conn, update.existing_belief_id, weights
             )
             update_belief(conn, update.existing_belief_id, confidence=new_confidence)
+            # Statement changed → re-embed so blocking tracks the live statement.
+            _embed_belief(
+                conn, embedder, update.existing_belief_id,
+                existing_full.topic, update.new_statement,
+            )
             create_revision(
                 conn,
                 BeliefRevision(
@@ -688,6 +756,9 @@ async def _extract_papers(
     traceparent: str,
     semaphore: asyncio.Semaphore,
     field_id: str = DEFAULT_FIELD_ID,
+    *,
+    run_id: str,
+    invocations: list[dict[str, Any]],
 ) -> tuple[
     list[tuple[ScoutedPaper, list[ExtractedClaim]]],
     list[dict[str, Any]],
@@ -697,29 +768,35 @@ async def _extract_papers(
     path fans out through the graph instead).
 
     Returns (pairs, errors, usage_rows) where each usage row is
-    ``{"usage": {...}, "model": "..."}`` for the coordinator to ledger."""
+    ``{"usage": {...}, "model": "..."}`` for the coordinator to ledger. Each
+    extraction's invocation record is appended to ``invocations`` (23a)."""
 
     async def _one(
         paper: ScoutedPaper,
-    ) -> tuple[ScoutedPaper, list[ExtractedClaim], Any, dict[str, Any] | None]:
+    ) -> tuple[ScoutedPaper, list[ExtractedClaim], Any, dict[str, Any] | None, dict[str, Any]]:
         async with semaphore:
-            result, err = await call_skill_node(
+            result, err, inv = await _dispatch(
                 client,
                 "extract_claims",
                 {"paper": paper.model_dump(mode="json"), "field_id": field_id},
+                run_id=run_id,
+                field_id=field_id,
                 traceparent=traceparent,
                 context={"arxiv_id": paper.arxiv_id},
             )
         if result is not None:
             claims = [ExtractedClaim.model_validate(c) for c in result.get("claims", [])]
             usage_row = {"usage": result.get("usage") or {}, "model": result.get("model") or ""}
-            return paper, claims, None, usage_row
-        return paper, [], err, None
+            return paper, claims, None, usage_row, inv
+        return paper, [], err, None, inv
 
     pairs: list[tuple[ScoutedPaper, list[ExtractedClaim]]] = []
     errors: list[dict[str, Any]] = []
     usage_rows: list[dict[str, Any]] = []
-    for paper, claims, err, usage_row in await asyncio.gather(*(_one(p) for p in papers)):
+    for paper, claims, err, usage_row, inv in await asyncio.gather(
+        *(_one(p) for p in papers)
+    ):
+        invocations.append(inv)
         if err is not None:
             errors.append(err.model_dump())
         else:
@@ -840,9 +917,279 @@ def _persist_llm_usage(
     )
 
 
+# ── observability: per-dispatch invocation capture (Phase 23a) ───────────────
+
+# Best-effort skill→agent map for the agents the coordinator dispatches. New
+# agents need no entry: scout_*/investigate_* derive their name, and any agent
+# that returns the debug envelope overrides this with its own self-reported name
+# — so the view stays extensible by construction.
+_SKILL_TO_AGENT = {
+    "extract_claims": "claim_extractor",
+    "resolve_entities": "entity_tracker",
+    "update_sota": "sota_tracker",
+    "challenge_belief": "skeptic",
+    "select_beliefs_to_challenge": "curator",
+    "personalize_digest": "personalizer",
+}
+
+
+def _agent_for_skill(skill_id: str) -> str:
+    if skill_id in _SKILL_TO_AGENT:
+        return _SKILL_TO_AGENT[skill_id]
+    if skill_id.startswith("scout_"):
+        return skill_id[len("scout_"):] + "_scout"
+    if skill_id.startswith("investigate_"):
+        return skill_id[len("investigate_"):] + "_scout"
+    return skill_id
+
+
+def _summarize(obj: Any) -> dict[str, Any] | None:
+    """Bounded capture of a skill input/output for the invocation record.
+
+    Never an unbounded blob: serialized then capped to MESH_OBS_CAPTURE_MAX_CHARS.
+    The raw content lives in Langfuse (reached via trace_id), not here."""
+    if obj is None:
+        return None
+    try:
+        text = json.dumps(obj, default=str, ensure_ascii=False)
+    except Exception:
+        text = str(obj)
+    cap = _capture_max_chars()
+    if len(text) > cap:
+        return {"truncated": True, "chars": len(text), "preview": text[:cap]}
+    out: dict[str, Any] = {"truncated": False, "preview": text}
+    if isinstance(obj, dict):
+        out["keys"] = sorted(str(k) for k in obj)
+    return out
+
+
+def _make_invocation(
+    *,
+    run_id: str,
+    field_id: str,
+    skill_id: str,
+    traceparent: str | None,
+    payload: dict[str, Any],
+    result: dict[str, Any] | None,
+    err: TaskError | None,
+    latency_ms: int,
+) -> dict[str, Any]:
+    """Build one AgentInvocation (as a json dict) from a completed dispatch.
+
+    Folds the agent's optional debug envelope (memory block + applied heuristic
+    ids + system-prefix hash + self-reported agent name) when present, and carries
+    the realized model/tokens/cost from the skill result."""
+    debug = (result or {}).get(DEBUG_ENVELOPE_KEY) or {}
+    agent = str(debug.get("agent") or _agent_for_skill(skill_id))
+    usage = LLMUsage(**((result or {}).get("usage") or {}))
+    model = (result or {}).get("model") or None
+    cost = estimate_cost(model or "", usage).total_cost if usage.total_tokens else 0.0
+    # Strip the debug envelope from the output summary (captured into columns).
+    result_for_summary = (
+        {k: v for k, v in result.items() if k != DEBUG_ENVELOPE_KEY}
+        if result is not None
+        else None
+    )
+    inv = AgentInvocation(
+        run_id=run_id,
+        field_id=field_id,
+        agent=agent,
+        skill=skill_id,
+        traceparent=traceparent,
+        trace_id=extract_trace_id(traceparent) if traceparent else None,
+        status="ok" if err is None else "error",
+        error_type=err.error_type if err is not None else None,
+        error_message=err.error_message if err is not None else None,
+        input_summary=_summarize(payload),
+        output_summary=_summarize(result_for_summary),
+        memory_block=debug.get("memory_block") or None,
+        applied_heuristic_ids=list(debug.get("applied_heuristic_ids") or []),
+        system_prefix_hash=debug.get("system_prefix_hash") or None,
+        model=model,
+        latency_ms=latency_ms,
+        input_tokens=usage.input_tokens or None,
+        output_tokens=usage.output_tokens or None,
+        cost_usd=cost or None,
+    )
+    return inv.model_dump(mode="json")
+
+
+async def _dispatch(
+    client: MeshA2AClient,
+    skill_id: str,
+    payload: dict[str, Any],
+    *,
+    run_id: str,
+    field_id: str,
+    traceparent: str | None,
+    context: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, TaskError | None, dict[str, Any]]:
+    """call_skill_node + timing + invocation capture, in one place.
+
+    Returns ``(result, err, invocation_dict)``. Capture never alters the
+    dispatch's own success/failure — it only observes it."""
+    start = time.monotonic()
+    result, err = await call_skill_node(
+        client, skill_id, payload, traceparent=traceparent, context=context
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+    inv = _make_invocation(
+        run_id=run_id,
+        field_id=field_id,
+        skill_id=skill_id,
+        traceparent=traceparent,
+        payload=payload,
+        result=result,
+        err=err,
+        latency_ms=latency_ms,
+    )
+    return result, err, inv
+
+
+def _persist_agent_invocations(conn: Any, rows: list[dict[str, Any]]) -> None:
+    """Write accumulated invocation rows (coordinator-owned, best-effort).
+
+    A recording failure must never abort a run (the observability principle): each
+    row is written independently and a failure is logged, not raised."""
+    for d in rows:
+        try:
+            create_agent_invocation(conn, AgentInvocation.model_validate(d))
+        except Exception as exc:  # never let observability break the pipeline
+            log.warning("agent_invocation_record_failed", error=str(exc))
+
+
 def _avg_latency(extractions: list[dict[str, Any]]) -> int:
     latencies = [int(e["latency_ms"]) for e in extractions if e.get("latency_ms")]
     return int(sum(latencies) / len(latencies)) if latencies else 0
+
+
+# ── shared investigation dispatch ─────────────────────────────────────────────
+
+
+async def dispatch_open_investigations(
+    *,
+    client: MeshA2AClient,
+    conn: Any,
+    embedder: Embedder | None,
+    llm: LLMClient | None,
+    semaphore: asyncio.Semaphore,
+    resolution_config: ResolutionConfig,
+    field_id: str,
+    traceparent: str,
+    run_id: str,
+    investigations: list[Any],
+    max_fetch: int | None = None,
+) -> dict[str, Any]:
+    """Run hypothesis-directed search for a set of open investigations, then feed
+    the gathered sources through extract → resolve → insert-claims — the exact
+    path the pipeline's ``dispatch_investigations`` node uses. Factored out
+    (Phase 22d) so the proactive discovery sweep reuses it instead of forking the
+    Investigation plumbing. ``max_fetch`` optionally caps total source records
+    gathered this call (``MESH_DISCOVER_MAX_FETCH``); ``None`` means uncapped.
+
+    Field-scoped: only dispatches to investigate sources backed by a connector
+    ENABLED for ``field_id``. Fetch failures record into the returned ``errors``
+    and never raise — one bad search never aborts the run."""
+    skill_map = client.skill_map()
+    enabled_sources = {
+        investigate_source_name(fc.connector_id)
+        for fc in list_field_connectors(conn, field_id, enabled_only=True)
+    }
+    errors: list[dict[str, Any]] = []
+    # Observability (Phase 23a): one AgentInvocation per skill dispatch. The
+    # pipeline node spreads this into CoordinatorState (operator.add) and writes
+    # it at finalize; the discovery sweep nests the whole summary under
+    # state["dispatch"], so the extra key is harmless there.
+    invocations: list[dict[str, Any]] = []
+    investigation_papers: dict[str, list[str]] = {}
+    gathered: list[ScoutedPaper] = []
+    dispatched = 0
+
+    for inv in investigations:
+        if max_fetch is not None and dispatched >= max_fetch:
+            break
+        update_investigation(
+            conn,
+            inv.id,
+            status=InvestigationStatus.in_progress,
+            pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
+        )
+        for source_type in inv.suggested_source_types:
+            if max_fetch is not None and dispatched >= max_fetch:
+                break
+            if source_type not in enabled_sources:
+                continue  # not enabled for this field
+            skill_id = f"investigate_{source_type}"
+            if skill_id not in skill_map:
+                continue  # connector advertises no investigate handler
+            result, err, invocation = await _dispatch(
+                client,
+                skill_id,
+                {
+                    "investigation_id": inv.id,
+                    "hypothesis": inv.hypothesis or inv.question,
+                    "target_entity_id": inv.target_entity_id,
+                    "suggested_source_types": inv.suggested_source_types,
+                    "max_results": 10,
+                },
+                run_id=run_id,
+                field_id=field_id,
+                traceparent=traceparent,
+                context={"investigation_id": inv.id},
+            )
+            invocations.append(invocation)
+            if err is not None or result is None:
+                if err is not None:
+                    errors.append(err.model_dump())
+                continue
+            for raw in result.get("source_records", []):
+                paper = ScoutedPaper.model_validate(raw)
+                gathered.append(paper)
+                investigation_papers.setdefault(inv.id, []).append(paper.source.url)
+                dispatched += 1
+
+    new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
+    pairs, extract_errors, usage_rows = await _extract_papers(
+        client, new_papers, traceparent, semaphore, field_id=field_id,
+        run_id=run_id, invocations=invocations,
+    )
+    errors.extend(extract_errors)
+    for row in usage_rows:
+        _persist_llm_usage(
+            conn,
+            run_id,
+            "extract_claims",
+            "claim_extractor",
+            row.get("usage"),
+            str(row.get("model") or ""),
+        )
+
+    names = {ec.subject_name for _, claims in pairs for ec in claims}
+    entity_map, created, _resolved = await _resolve_and_persist(
+        conn, client, embedder, llm, list(names), traceparent, resolution_config,
+        field_id=field_id, run_id=run_id, invocations=invocations,
+    )
+    url_to_inv = {
+        url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
+    }
+    _, inserted = _insert_claims(conn, pairs, entity_map, url_to_inv, field_id=field_id)
+    resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
+    log.info(
+        "investigations_dispatched",
+        dispatched=dispatched,
+        claims=inserted,
+        resolved=resolved_count,
+        abandoned=abandoned_count,
+    )
+    return {
+        "investigations_dispatched": dispatched,
+        "investigation_claims_inserted": inserted,
+        "investigation_entities_created": created,
+        "investigations_resolved": resolved_count,
+        "investigations_abandoned": abandoned_count,
+        "errors": errors,
+        "agent_invocations": invocations,
+    }
 
 
 # ── graph construction ───────────────────────────────────────────────────────
@@ -899,19 +1246,27 @@ def build_coordinator_graph(
             sends.append(
                 Send(
                     "scout_one",
-                    {"skill_id": sid, "payload": payload, "traceparent": tp},
+                    {
+                        "skill_id": sid,
+                        "payload": payload,
+                        "traceparent": tp,
+                        "run_id": state["run_id"],
+                        "field_id": state["field_id"],
+                    },
                 )
             )
         return sends
 
     async def scout_one(state: _ScoutWork) -> dict[str, Any]:
-        result, err = await call_skill_node(
+        result, err, inv = await _dispatch(
             client,
             state["skill_id"],
             state["payload"],
+            run_id=state["run_id"],
+            field_id=state["field_id"],
             traceparent=state["traceparent"],
         )
-        patch: dict[str, Any] = {}
+        patch: dict[str, Any] = {"agent_invocations": [inv]}
         if result is not None:
             patch["raw_papers"] = list(result.get("papers", []))
         if err is not None:
@@ -945,8 +1300,12 @@ def build_coordinator_graph(
             return "finalize"
         tp = state["traceparent"]
         fid = state["field_id"]
+        rid = state["run_id"]
         return [
-            Send("extract_one", {"paper": p, "traceparent": tp, "field_id": fid})
+            Send(
+                "extract_one",
+                {"paper": p, "traceparent": tp, "field_id": fid, "run_id": rid},
+            )
             for p in state["new_papers"]
         ]
 
@@ -954,14 +1313,16 @@ def build_coordinator_graph(
         paper = state["paper"]
         arxiv_id = paper.get("arxiv_id") or (paper.get("source") or {}).get("url", "")
         async with semaphore:
-            result, err = await call_skill_node(
+            result, err, inv = await _dispatch(
                 client,
                 "extract_claims",
                 {"paper": paper, "field_id": state["field_id"]},
+                run_id=state["run_id"],
+                field_id=state["field_id"],
                 traceparent=state["traceparent"],
                 context={"arxiv_id": arxiv_id},
             )
-        patch: dict[str, Any] = {}
+        patch: dict[str, Any] = {"agent_invocations": [inv]}
         if result is not None:
             patch["extractions"] = [
                 {
@@ -993,9 +1354,11 @@ def build_coordinator_graph(
             # resolve those too so 14c can ground edges on real nodes.
             names.update(_edge_target_names(claims))
         field_id = state["field_id"]
+        invocations: list[dict[str, Any]] = []
         entity_map, created, resolved = await _resolve_and_persist(
             conn, client, embedder, llm, list(names),
             state["traceparent"], resolution_config, field_id=field_id,
+            run_id=state["run_id"], invocations=invocations,
         )
         resolved_claims, inserted = _insert_claims(
             conn, pairs, entity_map, {}, field_id=field_id
@@ -1017,6 +1380,7 @@ def build_coordinator_graph(
             "resolved_claims": [rc.model_dump(mode="json") for rc in resolved_claims],
             "has_model_or_benchmark_entity": has_mb,
             "relationships_created": relationships_created,
+            "agent_invocations": invocations,
         }
 
     def route_after_entities(state: CoordinatorState) -> str:
@@ -1034,12 +1398,13 @@ def build_coordinator_graph(
             ResolvedClaim.model_validate(rc) for rc in state["resolved_claims"]
         ]
         field_id = state["field_id"]
+        invocations: list[dict[str, Any]] = []
         sota_created, sota_revised = await _run_sota(
             conn, client, resolved_claims, state["traceparent"], confidence_weights,
-            field_id=field_id,
+            embedder, field_id=field_id, run_id=state["run_id"], invocations=invocations,
         )
         cap_created, cap_revised = _run_capability(
-            conn, resolved_claims, confidence_weights, field_id=field_id
+            conn, resolved_claims, confidence_weights, embedder, field_id=field_id
         )
         log.info(
             "beliefs_synthesized",
@@ -1051,6 +1416,7 @@ def build_coordinator_graph(
         return {
             "beliefs_created": sota_created + cap_created,
             "beliefs_revised": sota_revised + cap_revised,
+            "agent_invocations": invocations,
         }
 
     async def curate(state: CoordinatorState) -> dict[str, Any]:
@@ -1068,92 +1434,24 @@ def build_coordinator_graph(
 
     async def dispatch_investigations(state: CoordinatorState) -> dict[str, Any]:
         field_id = state["field_id"]
-        skill_map = client.skill_map()
         investigations = _open_investigations(conn, field_id=field_id)
         if not investigations:
             return {}
-        tp = state["traceparent"]
-        errors: list[dict[str, Any]] = []
-        investigation_papers: dict[str, list[str]] = {}
-        gathered: list[ScoutedPaper] = []
-        dispatched = 0
-
-        for inv in investigations:
-            update_investigation(
-                conn,
-                inv.id,
-                status=InvestigationStatus.in_progress,
-                pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
-            )
-            for source_type in inv.suggested_source_types:
-                skill_id = f"investigate_{source_type}"
-                if skill_id not in skill_map:
-                    continue
-                result, err = await call_skill_node(
-                    client,
-                    skill_id,
-                    {
-                        "investigation_id": inv.id,
-                        "hypothesis": inv.hypothesis or inv.question,
-                        "target_entity_id": inv.target_entity_id,
-                        "suggested_source_types": inv.suggested_source_types,
-                        "max_results": 10,
-                    },
-                    traceparent=tp,
-                    context={"investigation_id": inv.id},
-                )
-                if err is not None or result is None:
-                    if err is not None:
-                        errors.append(err.model_dump())
-                    continue
-                for raw in result.get("source_records", []):
-                    paper = ScoutedPaper.model_validate(raw)
-                    gathered.append(paper)
-                    investigation_papers.setdefault(inv.id, []).append(paper.source.url)
-                    dispatched += 1
-
-        new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
-        pairs, extract_errors, usage_rows = await _extract_papers(
-            client, new_papers, tp, semaphore, field_id=field_id
-        )
-        errors.extend(extract_errors)
-        for row in usage_rows:
-            _persist_llm_usage(
-                conn,
-                state["run_id"],
-                "extract_claims",
-                "claim_extractor",
-                row.get("usage"),
-                str(row.get("model") or ""),
-            )
-
-        names = {ec.subject_name for _, claims in pairs for ec in claims}
-        entity_map, created, _resolved = await _resolve_and_persist(
-            conn, client, embedder, llm, list(names), tp, resolution_config,
+        # Delegate to the shared dispatcher (Phase 22d) — it now also captures an
+        # AgentInvocation per investigate dispatch (Phase 23a) and returns them
+        # under "agent_invocations", which this node spreads into state.
+        return await dispatch_open_investigations(
+            client=client,
+            conn=conn,
+            embedder=embedder,
+            llm=llm,
+            semaphore=semaphore,
+            resolution_config=resolution_config,
             field_id=field_id,
+            traceparent=state["traceparent"],
+            run_id=state["run_id"],
+            investigations=investigations,
         )
-        url_to_inv = {
-            url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
-        }
-        _, inserted = _insert_claims(
-            conn, pairs, entity_map, url_to_inv, field_id=field_id
-        )
-        resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
-        log.info(
-            "investigations_dispatched",
-            dispatched=dispatched,
-            claims=inserted,
-            resolved=resolved_count,
-            abandoned=abandoned_count,
-        )
-        return {
-            "investigations_dispatched": dispatched,
-            "investigation_claims_inserted": inserted,
-            "investigation_entities_created": created,
-            "investigations_resolved": resolved_count,
-            "investigations_abandoned": abandoned_count,
-            "errors": errors,
-        }
 
     async def finalize(state: CoordinatorState) -> dict[str, Any]:
         avg = _avg_latency(state["extractions"])
@@ -1163,6 +1461,10 @@ def build_coordinator_graph(
         if pipeline_run_exists(conn, state["run_id"]):
             log.info("finalize_already_done", run_id=state["run_id"])
             return {"finalized": True, "avg_extraction_latency_ms": avg}
+        # Persist the run's accumulated agent-invocation records (Phase 23a).
+        # Best-effort + idempotent with finalize: behind the same run-exists guard
+        # as the llm_usage ledger, so a re-ticked superstep never double-writes.
+        _persist_agent_invocations(conn, state.get("agent_invocations", []))
         # Persist per-call token usage for every extraction (main fan-out path).
         # Investigation re-extraction usage is recorded in dispatch_investigations.
         # Record each extracted item in the dedup ledger now that it has been
@@ -1251,12 +1553,12 @@ def _make_resolution_deps() -> tuple[Embedder | None, LLMClient | None]:
     """Build the entity-resolution embedder + (best-effort) adjudication LLM for
     the live pipeline. A missing/unready LLM degrades to high-band/exact-only
     resolution (no middle-band adjudication) rather than aborting the run."""
-    from mesh_llm import make_embedder, make_llm_client
+    from mesh_llm import make_embedder, make_routed_llm_client
 
     embedder = make_embedder()
     llm: LLMClient | None
     try:
-        llm = make_llm_client(agent_name="entity_resolution")
+        llm = make_routed_llm_client(agent_name="entity_resolution")
         llm.health_check()
     except Exception as exc:
         log.warning("entity_resolution_llm_unavailable", error=str(exc))
@@ -1350,6 +1652,7 @@ async def run_pipeline(
         "investigation_claims_inserted": 0,
         "investigation_entities_created": 0,
         "errors": [],
+        "agent_invocations": [],
         "finalized": False,
     }
 

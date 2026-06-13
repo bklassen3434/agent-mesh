@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from mesh_db.pg_migrations import init_pg
 
 from mesh_api.routers import (
+    agents,
+    ask,
     beliefs,
     briefing,
     claims,
@@ -89,10 +91,12 @@ def create_app() -> FastAPI:
     app.include_router(beliefs.router)
     app.include_router(skeptic.router)
     app.include_router(briefing.router)
+    app.include_router(ask.router)
     app.include_router(status_router.router)
     app.include_router(graph.router)
     app.include_router(schedules.router)
     app.include_router(pipelines.router)
+    app.include_router(agents.router)
     return app
 
 

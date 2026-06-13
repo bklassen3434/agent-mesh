@@ -211,7 +211,10 @@ def _assess_sync(
         response_model=SkepticAssessment,
     )
     assert isinstance(result, SkepticAssessment)
-    return _filter_to_scope(result, input.in_scope_entities), usage, getattr(llm, "model", "")
+    # usage.model is the realized model (correct under cheap→strong routing
+    # escalation); fall back to the client attribute if unset.
+    model = usage.model or getattr(llm, "model", "")
+    return _filter_to_scope(result, input.in_scope_entities), usage, model
 
 
 def challenge_belief_pure(

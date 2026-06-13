@@ -9,6 +9,8 @@ from mesh_agents.github_scout import (
     GitHubScoutAgent,
     ScoutGithubSkillInput,
     _fetch_github,
+    _fetch_repos_by_query,
+    _handle_investigate_github,
     _handle_scout_github,
     _parse_atom_entries,
     _resolve_topics,
@@ -158,6 +160,39 @@ def test_handle_scout_github_returns_dict(fake_client: MagicMock) -> None:
     assert "papers" in out
     assert len(out["papers"]) == 1
     assert out["papers"][0]["source"]["type"] == "github"
+
+
+def test_investigate_searches_repos_by_hypothesis(fake_client: MagicMock) -> None:
+    fake_client.get.side_effect = [
+        _search_response([_SEARCH_HIT]),
+        _readme_response("# vllm\n\nPagedAttention for fast LLM serving."),
+    ]
+    papers = _fetch_repos_by_query("paged attention llm serving", max_results=5)
+    assert len(papers) == 1
+    assert papers[0].source.type == SourceType.github
+    assert "PagedAttention" in papers[0].abstract
+    # The query is passed straight to GitHub's free-text repo search.
+    search_params = fake_client.get.call_args_list[0].kwargs["params"]
+    assert search_params["q"] == "paged attention llm serving"
+
+
+def test_investigate_github_handler_returns_source_records(fake_client: MagicMock) -> None:
+    fake_client.get.side_effect = [
+        _search_response([_SEARCH_HIT]),
+        _readme_response("README"),
+    ]
+    out = asyncio.run(
+        _handle_investigate_github(
+            {
+                "investigation_id": "inv-1",
+                "hypothesis": "Is vLLM still SOTA for inference throughput?",
+                "max_results": 3,
+            }
+        )
+    )
+    assert out["investigation_id"] == "inv-1"
+    assert len(out["source_records"]) == 1
+    assert out["source_records"][0]["source"]["type"] == "github"
 
 
 @patch("mesh_agents.github_scout.build_multi_skill_card")

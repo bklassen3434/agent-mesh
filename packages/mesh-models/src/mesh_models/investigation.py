@@ -22,6 +22,21 @@ class InvestigationStatus(StrEnum):
     abandoned = "abandoned"
 
 
+class InvestigationOrigin(StrEnum):
+    """Who opened an Investigation (Phase 22a).
+
+    curator   — the reactive, per-belief Curator path (default; pre-Phase-22).
+    skeptic   — opened during a falsification sweep.
+    discovery — the proactive, whole-field discovery sweep (Phase 22).
+    manual    — opened by a human.
+    """
+
+    curator = "curator"
+    skeptic = "skeptic"
+    discovery = "discovery"
+    manual = "manual"
+
+
 class Investigation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     # Phase 7a structured fields. `question` stays for backwards compat
@@ -34,6 +49,9 @@ class Investigation(BaseModel):
     opened_by_belief_id: str | None = None
     related_entity_ids: list[str] = Field(default_factory=list)
     status: InvestigationStatus = InvestigationStatus.open
+    # Phase 22a provenance: who opened this and the human-readable "why".
+    origin: InvestigationOrigin = InvestigationOrigin.curator
+    trigger_rationale: str | None = None
     priority: float = Field(default=0.5, ge=0.0, le=1.0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     resolved_at: datetime | None = None

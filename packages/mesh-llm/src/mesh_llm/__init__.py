@@ -13,12 +13,21 @@ from mesh_llm.embeddings import (
     EMBED_DIM,
     Embedder,
     FastEmbedEmbedder,
+    belief_embed_text,
     entity_embed_text,
     make_embedder,
 )
-from mesh_llm.factory import make_llm_client
+from mesh_llm.factory import make_llm_client, make_routed_llm_client
 from mesh_llm.pricing import CostBreakdown, estimate_cost, is_priced
 from mesh_llm.protocol import LLMClient
+from mesh_llm.routing import (
+    RoutedLLMClient,
+    RoutingConfig,
+    RoutingDecision,
+    Tier,
+    classify_difficulty,
+    has_static_model_override,
+)
 from mesh_llm.usage import LLMUsage
 
 __all__ = [
@@ -37,9 +46,17 @@ __all__ = [
     "LLMUsage",
     "OllamaClient",
     "OllamaNotReadyError",
+    "RoutedLLMClient",
+    "RoutingConfig",
+    "RoutingDecision",
+    "Tier",
+    "belief_embed_text",
+    "classify_difficulty",
     "entity_embed_text",
     "estimate_cost",
+    "has_static_model_override",
     "is_priced",
     "make_embedder",
     "make_llm_client",
+    "make_routed_llm_client",
 ]

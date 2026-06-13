@@ -19,7 +19,7 @@ from starlette.applications import Starlette
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.base import BaseAgent
-from mesh_agents.memory import build_memory_block
+from mesh_agents.memory import build_memory_capture, debug_envelope
 from mesh_agents.profiles import load_profile
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,10 @@ class ExtractClaimsSkillOutput(BaseModel):
     latency_ms: int = 0
     usage: dict[str, int] = Field(default_factory=dict)
     model: str = ""
+    # Optional, additive observability envelope (Phase 23a): the memory block +
+    # applied heuristic ids + system-prefix hash this run injected. Ignored by
+    # every consumer except the coordinator's invocation recorder.
+    debug: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +107,14 @@ def _extract_sync(
         user=user_prompt,
         response_model=ClaimExtractionResult,
     )
-    return result.claims, latency_ms, usage, getattr(llm, "model", "")
+    # usage.model is the realized model (correct even when a RoutedLLMClient
+    # escalated cheap→strong); fall back to the client attribute if unset.
+    return result.claims, latency_ms, usage, usage.model or getattr(llm, "model", "")
 
 
 def _extract_with_memory(
     llm: Any, paper: ScoutedPaper, agent_name: str, field_id: str = DEFAULT_FIELD_ID
-) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
+) -> tuple[list[ExtractedClaim], int, LLMUsage, str, dict[str, Any]]:
     """Gather the extractor's applicable heuristics + recent history (off the
     event loop), then extract with that memory folded into the prompt.
 
@@ -116,20 +122,32 @@ def _extract_with_memory(
     like "forum scores are self-reported" applies); episodic recall is the
     extractor's broad recent track record (a freshly-scouted source has no prior
     extraction to key on). All scoped to ``field_id``; the system prompt is built
-    from that field's profile."""
+    from that field's profile.
+
+    Returns the usual ``(claims, latency_ms, usage, model)`` plus the additive
+    observability ``debug`` envelope (the memory it injected) for the coordinator
+    to record (Phase 23a)."""
     profile = load_profile(field_id)
-    memory_block = build_memory_block(
+    memory_block, heuristic_ids = build_memory_capture(
         agent_name, "extract_claims", source=paper.source.type.value, field_id=field_id
     )
-    return _extract_sync(llm, paper, memory_block, profile)
+    claims, latency_ms, usage, model = _extract_sync(llm, paper, memory_block, profile)
+    debug = debug_envelope(
+        agent=agent_name,
+        memory_block=memory_block,
+        applied_heuristic_ids=heuristic_ids,
+        system_prefix=build_claim_extraction_system(profile),
+    )
+    return claims, latency_ms, usage, model, debug
 
 
 def _build_handler(llm: LLMClient, agent_name: str) -> Any:
     async def _handle_extract_claims(payload: dict[str, Any]) -> dict[str, Any]:
         skill_input = ExtractClaimsSkillInput.model_validate(payload)
         paper = ScoutedPaper.model_validate(skill_input.paper)
+        debug: dict[str, Any] | None
         try:
-            claims, latency_ms, usage, model = await asyncio.to_thread(
+            claims, latency_ms, usage, model, debug = await asyncio.to_thread(
                 _extract_with_memory, llm, paper, agent_name, skill_input.field_id
             )
         except LLMProviderNotReadyError:
@@ -140,6 +158,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
                 extra={"arxiv_id": paper.arxiv_id, "error": str(exc)},
             )
             claims, latency_ms, usage, model = [], 0, LLMUsage(), getattr(llm, "model", "")
+            debug = None
         entities_referenced = list({c.subject_name for c in claims})
         return ExtractClaimsSkillOutput(
             claims=[c.model_dump(mode="json") for c in claims],
@@ -147,6 +166,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
             latency_ms=latency_ms,
             usage=usage.model_dump(),
             model=model,
+            debug=debug,
         ).model_dump(mode="json")
 
     return _handle_extract_claims

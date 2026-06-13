@@ -23,7 +23,7 @@ boundary.
    assembles a **context pack** by:
    - **Full-text search** over `beliefs(topic+statement)`,
      `claims(raw_excerpt)`, and `entities(canonical_name+aliases)` — GIN
-     `tsvector` indexes (migration 011), OR-semantics, ranked by `ts_rank`,
+     `tsvector` indexes (migration 012), OR-semantics, ranked by `ts_rank`,
      every query filtered by `field_id`.
    - **Structured expansion** from the top anchors: the supporting/contradicting
      claims and `belief_signals` for the top beliefs, and one hop of

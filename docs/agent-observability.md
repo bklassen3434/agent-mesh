@@ -31,7 +31,7 @@ raw prompt.
 
 ## The record
 
-`knowledge.agent_invocations` (migration `013_agent_invocations.sql`) is one row
+`knowledge.agent_invocations` (migration `014_agent_invocations.sql`) is one row
 per coordinator skill dispatch:
 
 | column | meaning |

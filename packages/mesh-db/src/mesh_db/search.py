@@ -5,7 +5,7 @@ Two layers, both reader-safe (only SELECTs, no writes):
 1. ``search_beliefs`` / ``search_claims`` / ``search_entities`` — Postgres
    full-text search over the corpus, each filtered by ``field_id`` and ranked
    by ``ts_rank``. The ``to_tsvector`` expressions here are byte-identical to
-   the GIN expression indexes in migration 011 so the planner uses them.
+   the GIN expression indexes in migration 012 so the planner uses them.
 
 2. ``gather_context`` — the retrieval orchestrator for the knowledge chatbot.
    It runs FTS over the three tables for a question, does a bounded structured
@@ -39,7 +39,7 @@ from mesh_db.relationships import list_relationships
 
 logger = logging.getLogger(__name__)
 
-# tsvector expressions — MUST stay byte-identical to migration 011's GIN indexes
+# tsvector expressions — MUST stay byte-identical to migration 012's GIN indexes
 # so the planner can use them. The query string is bound once via a derived
 # ``websearch_to_tsquery`` column (``q``) and referenced in both the ``@@`` test
 # and ``ts_rank``.

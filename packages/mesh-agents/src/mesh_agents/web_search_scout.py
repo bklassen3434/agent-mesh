@@ -158,6 +158,11 @@ async def _handle_scout_web_search(payload: dict[str, Any]) -> dict[str, Any]:
     cutoff: datetime | None = None
     if skill_input.since:
         cutoff = datetime.fromisoformat(skill_input.since)
+        # Result timestamps are normalized to tz-aware (see _result_published);
+        # a bare/offset-less `since` would raise on the `published < cutoff`
+        # comparison, so normalize it to UTC.
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=UTC)
     papers = await asyncio.to_thread(
         _search, skill_input.web_seed_queries, skill_input.max_results, cutoff
     )

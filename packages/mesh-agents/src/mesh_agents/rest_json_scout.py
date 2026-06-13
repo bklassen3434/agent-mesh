@@ -182,6 +182,11 @@ async def _handle_scout_rest_json(payload: dict[str, Any]) -> dict[str, Any]:
     cutoff: datetime | None = None
     if skill_input.since:
         cutoff = datetime.fromisoformat(skill_input.since)
+        # Parsed timestamps are normalized to tz-aware (see _parse_dt); a
+        # bare/offset-less `since` would raise on the `published < cutoff`
+        # comparison, so normalize it to UTC.
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=UTC)
     papers = await asyncio.to_thread(_fetch_rest, skill_input, cutoff)
     return ScoutRestJsonSkillOutput(
         papers=[p.model_dump(mode="json") for p in papers]

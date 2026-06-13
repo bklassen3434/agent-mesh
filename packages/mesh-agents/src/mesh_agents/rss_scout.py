@@ -158,6 +158,11 @@ async def _handle_scout_rss(payload: dict[str, Any]) -> dict[str, Any]:
     cutoff: datetime | None = None
     if skill_input.since:
         cutoff = datetime.fromisoformat(skill_input.since)
+        # Published timestamps are always tz-aware (see _entry_published); a
+        # bare/offset-less `since` would raise on the `published < cutoff`
+        # comparison, so normalize it to UTC.
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=UTC)
     papers = await asyncio.to_thread(
         _fetch_feed,
         skill_input.feed_url,

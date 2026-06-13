@@ -42,6 +42,16 @@ consolidate:
 	docker compose --profile skeptic run --rm --no-deps \
 		--entrypoint "uv run mesh-consolidate" skeptic-sweep
 
+# Run one autonomous-discovery cycle — analyzes each active field for knowledge
+# gaps/trends, opens discovery investigations, and dispatches real search through
+# the scouts. Reuses the coordinator image (it has the scout agent URLs + LLM
+# env) with the entry point overridden and --no-deps, so it needs the agent
+# stack already up (`make up`). No new container.
+discover:
+	docker compose build coordinator
+	docker compose run --rm --no-deps \
+		--entrypoint "uv run mesh-discover" coordinator
+
 # Smoke test: bring up the stack, run one pipeline cycle, check row counts.
 smoke: up
 	@echo "Running smoke pipeline..."

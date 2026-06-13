@@ -106,6 +106,7 @@ def list_investigations(
     status: InvestigationStatus | None = None,
     limit: int = 100,
     field_id: str | None = None,
+    origin: InvestigationOrigin | None = None,
 ) -> list[Investigation]:
     conditions: list[str] = []
     params: list[Any] = []
@@ -115,6 +116,9 @@ def list_investigations(
     if status is not None:
         conditions.append("status = %s")
         params.append(status.value)
+    if origin is not None:
+        conditions.append("origin = %s")
+        params.append(origin.value)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
     rows = conn.execute(

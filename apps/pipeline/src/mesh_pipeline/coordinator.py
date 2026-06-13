@@ -845,6 +845,125 @@ def _avg_latency(extractions: list[dict[str, Any]]) -> int:
     return int(sum(latencies) / len(latencies)) if latencies else 0
 
 
+# ── shared investigation dispatch ─────────────────────────────────────────────
+
+
+async def dispatch_open_investigations(
+    *,
+    client: MeshA2AClient,
+    conn: Any,
+    embedder: Embedder | None,
+    llm: LLMClient | None,
+    semaphore: asyncio.Semaphore,
+    resolution_config: ResolutionConfig,
+    field_id: str,
+    traceparent: str,
+    run_id: str,
+    investigations: list[Any],
+    max_fetch: int | None = None,
+) -> dict[str, Any]:
+    """Run hypothesis-directed search for a set of open investigations, then feed
+    the gathered sources through extract → resolve → insert-claims — the exact
+    path the pipeline's ``dispatch_investigations`` node uses. Factored out
+    (Phase 22d) so the proactive discovery sweep reuses it instead of forking the
+    Investigation plumbing. ``max_fetch`` optionally caps total source records
+    gathered this call (``MESH_DISCOVER_MAX_FETCH``); ``None`` means uncapped.
+
+    Field-scoped: only dispatches to investigate sources backed by a connector
+    ENABLED for ``field_id``. Fetch failures record into the returned ``errors``
+    and never raise — one bad search never aborts the run."""
+    skill_map = client.skill_map()
+    enabled_sources = {
+        investigate_source_name(fc.connector_id)
+        for fc in list_field_connectors(conn, field_id, enabled_only=True)
+    }
+    errors: list[dict[str, Any]] = []
+    investigation_papers: dict[str, list[str]] = {}
+    gathered: list[ScoutedPaper] = []
+    dispatched = 0
+
+    for inv in investigations:
+        if max_fetch is not None and dispatched >= max_fetch:
+            break
+        update_investigation(
+            conn,
+            inv.id,
+            status=InvestigationStatus.in_progress,
+            pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
+        )
+        for source_type in inv.suggested_source_types:
+            if max_fetch is not None and dispatched >= max_fetch:
+                break
+            if source_type not in enabled_sources:
+                continue  # not enabled for this field
+            skill_id = f"investigate_{source_type}"
+            if skill_id not in skill_map:
+                continue  # connector advertises no investigate handler
+            result, err = await call_skill_node(
+                client,
+                skill_id,
+                {
+                    "investigation_id": inv.id,
+                    "hypothesis": inv.hypothesis or inv.question,
+                    "target_entity_id": inv.target_entity_id,
+                    "suggested_source_types": inv.suggested_source_types,
+                    "max_results": 10,
+                },
+                traceparent=traceparent,
+                context={"investigation_id": inv.id},
+            )
+            if err is not None or result is None:
+                if err is not None:
+                    errors.append(err.model_dump())
+                continue
+            for raw in result.get("source_records", []):
+                paper = ScoutedPaper.model_validate(raw)
+                gathered.append(paper)
+                investigation_papers.setdefault(inv.id, []).append(paper.source.url)
+                dispatched += 1
+
+    new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
+    pairs, extract_errors, usage_rows = await _extract_papers(
+        client, new_papers, traceparent, semaphore, field_id=field_id
+    )
+    errors.extend(extract_errors)
+    for row in usage_rows:
+        _persist_llm_usage(
+            conn,
+            run_id,
+            "extract_claims",
+            "claim_extractor",
+            row.get("usage"),
+            str(row.get("model") or ""),
+        )
+
+    names = {ec.subject_name for _, claims in pairs for ec in claims}
+    entity_map, created, _resolved = await _resolve_and_persist(
+        conn, client, embedder, llm, list(names), traceparent, resolution_config,
+        field_id=field_id,
+    )
+    url_to_inv = {
+        url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
+    }
+    _, inserted = _insert_claims(conn, pairs, entity_map, url_to_inv, field_id=field_id)
+    resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
+    log.info(
+        "investigations_dispatched",
+        dispatched=dispatched,
+        claims=inserted,
+        resolved=resolved_count,
+        abandoned=abandoned_count,
+    )
+    return {
+        "investigations_dispatched": dispatched,
+        "investigation_claims_inserted": inserted,
+        "investigation_entities_created": created,
+        "investigations_resolved": resolved_count,
+        "investigations_abandoned": abandoned_count,
+        "errors": errors,
+    }
+
+
 # ── graph construction ───────────────────────────────────────────────────────
 
 
@@ -1068,101 +1187,21 @@ def build_coordinator_graph(
 
     async def dispatch_investigations(state: CoordinatorState) -> dict[str, Any]:
         field_id = state["field_id"]
-        skill_map = client.skill_map()
         investigations = _open_investigations(conn, field_id=field_id)
         if not investigations:
             return {}
-        # Phase 22b: dispatch only to sources backed by a connector ENABLED for
-        # this field — field isolation extends to the investigation path, and
-        # web_search (→ "web") is the universal fallback only where it's enabled.
-        enabled_sources = {
-            investigate_source_name(fc.connector_id)
-            for fc in list_field_connectors(conn, field_id, enabled_only=True)
-        }
-        tp = state["traceparent"]
-        errors: list[dict[str, Any]] = []
-        investigation_papers: dict[str, list[str]] = {}
-        gathered: list[ScoutedPaper] = []
-        dispatched = 0
-
-        for inv in investigations:
-            update_investigation(
-                conn,
-                inv.id,
-                status=InvestigationStatus.in_progress,
-                pipeline_runs_attempted=inv.pipeline_runs_attempted + 1,
-            )
-            for source_type in inv.suggested_source_types:
-                if source_type not in enabled_sources:
-                    continue  # not enabled for this field
-                skill_id = f"investigate_{source_type}"
-                if skill_id not in skill_map:
-                    continue  # connector advertises no investigate handler
-                result, err = await call_skill_node(
-                    client,
-                    skill_id,
-                    {
-                        "investigation_id": inv.id,
-                        "hypothesis": inv.hypothesis or inv.question,
-                        "target_entity_id": inv.target_entity_id,
-                        "suggested_source_types": inv.suggested_source_types,
-                        "max_results": 10,
-                    },
-                    traceparent=tp,
-                    context={"investigation_id": inv.id},
-                )
-                if err is not None or result is None:
-                    if err is not None:
-                        errors.append(err.model_dump())
-                    continue
-                for raw in result.get("source_records", []):
-                    paper = ScoutedPaper.model_validate(raw)
-                    gathered.append(paper)
-                    investigation_papers.setdefault(inv.id, []).append(paper.source.url)
-                    dispatched += 1
-
-        new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
-        pairs, extract_errors, usage_rows = await _extract_papers(
-            client, new_papers, tp, semaphore, field_id=field_id
-        )
-        errors.extend(extract_errors)
-        for row in usage_rows:
-            _persist_llm_usage(
-                conn,
-                state["run_id"],
-                "extract_claims",
-                "claim_extractor",
-                row.get("usage"),
-                str(row.get("model") or ""),
-            )
-
-        names = {ec.subject_name for _, claims in pairs for ec in claims}
-        entity_map, created, _resolved = await _resolve_and_persist(
-            conn, client, embedder, llm, list(names), tp, resolution_config,
+        return await dispatch_open_investigations(
+            client=client,
+            conn=conn,
+            embedder=embedder,
+            llm=llm,
+            semaphore=semaphore,
+            resolution_config=resolution_config,
             field_id=field_id,
+            traceparent=state["traceparent"],
+            run_id=state["run_id"],
+            investigations=investigations,
         )
-        url_to_inv = {
-            url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
-        }
-        _, inserted = _insert_claims(
-            conn, pairs, entity_map, url_to_inv, field_id=field_id
-        )
-        resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
-        log.info(
-            "investigations_dispatched",
-            dispatched=dispatched,
-            claims=inserted,
-            resolved=resolved_count,
-            abandoned=abandoned_count,
-        )
-        return {
-            "investigations_dispatched": dispatched,
-            "investigation_claims_inserted": inserted,
-            "investigation_entities_created": created,
-            "investigations_resolved": resolved_count,
-            "investigations_abandoned": abandoned_count,
-            "errors": errors,
-        }
 
     async def finalize(state: CoordinatorState) -> dict[str, Any]:
         avg = _avg_latency(state["extractions"])

@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
+
 from mesh_db.connection import MeshConnection
 
 # Hard cap on rendered nodes — top-N by belief count. Not configurable.
@@ -18,9 +20,9 @@ NODE_CAP = 200
 
 
 def graph_nodes(
-    conn: MeshConnection, limit: int = NODE_CAP
+    conn: MeshConnection, limit: int = NODE_CAP, *, field_id: str = DEFAULT_FIELD_ID
 ) -> list[dict[str, Any]]:
-    """Top entities by belief count, with last-claim recency.
+    """Top entities by belief count, with last-claim recency. Scoped to one field.
 
     belief_count = distinct currently-held beliefs that any claim about the
     entity supports or contradicts. last_claim_at = most recent claim with
@@ -30,10 +32,10 @@ def graph_nodes(
         """
         WITH belief_claims AS (
             SELECT id AS belief_id, UNNEST(supporting_claim_ids) AS claim_id
-            FROM beliefs WHERE is_currently_held = TRUE
+            FROM beliefs WHERE is_currently_held = TRUE AND field_id = %(field_id)s
             UNION ALL
             SELECT id AS belief_id, UNNEST(contradicting_claim_ids) AS claim_id
-            FROM beliefs WHERE is_currently_held = TRUE
+            FROM beliefs WHERE is_currently_held = TRUE AND field_id = %(field_id)s
         ),
         entity_beliefs AS (
             SELECT c.subject_entity_id AS entity_id,
@@ -44,7 +46,7 @@ def graph_nodes(
         ),
         entity_last_claim AS (
             SELECT subject_entity_id AS entity_id, MAX(extracted_at) AS last_claim_at
-            FROM claims GROUP BY subject_entity_id
+            FROM claims WHERE field_id = %(field_id)s GROUP BY subject_entity_id
         )
         SELECT e.id, e.canonical_name, e.type,
                COALESCE(eb.belief_count, 0) AS belief_count,
@@ -52,10 +54,11 @@ def graph_nodes(
         FROM entities e
         LEFT JOIN entity_beliefs eb ON eb.entity_id = e.id
         LEFT JOIN entity_last_claim elc ON elc.entity_id = e.id
+        WHERE e.field_id = %(field_id)s
         ORDER BY belief_count DESC, e.created_at DESC
-        LIMIT %s
+        LIMIT %(limit)s
         """,
-        [limit],
+        {"field_id": field_id, "limit": limit},
     ).fetchall()
     return [
         {
@@ -70,7 +73,7 @@ def graph_nodes(
 
 
 def graph_edges(
-    conn: MeshConnection, node_ids: set[str]
+    conn: MeshConnection, node_ids: set[str], *, field_id: str = DEFAULT_FIELD_ID
 ) -> list[dict[str, Any]]:
     """Relationships whose both endpoints are in the rendered node set.
 
@@ -84,7 +87,9 @@ def graph_edges(
         SELECT from_entity_id, to_entity_id, type,
                COALESCE(cardinality(evidence_claim_ids), 0) AS claim_count
         FROM relationships
-        """
+        WHERE field_id = %s
+        """,
+        [field_id],
     ).fetchall()
     return [
         {

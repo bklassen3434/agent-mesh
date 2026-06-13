@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mesh_models.belief import Belief
+from mesh_models.field import DEFAULT_FIELD_ID
 
 from mesh_db.connection import MeshConnection
 
@@ -35,15 +36,19 @@ _SELECT = (
 )
 
 
-def create_belief(conn: MeshConnection, model: Belief) -> Belief:
+def create_belief(
+    conn: MeshConnection, model: Belief, *, field_id: str = DEFAULT_FIELD_ID
+) -> Belief:
     conn.execute(
         """
-        INSERT INTO beliefs (id, topic, statement, supporting_claim_ids, contradicting_claim_ids,
-            confidence, last_revised_at, revision_count, is_currently_held)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO beliefs (id, field_id, topic, statement, supporting_claim_ids,
+            contradicting_claim_ids, confidence, last_revised_at, revision_count,
+            is_currently_held)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.topic,
             model.statement,
             model.supporting_claim_ids,
@@ -66,10 +71,13 @@ MAX_LIMIT = 200
 
 
 def _belief_filters(
-    topic: str | None, currently_held: bool | None
+    topic: str | None, currently_held: bool | None, field_id: str | None = None
 ) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if topic is not None:
         conditions.append("topic ILIKE %s")
         params.append(f"%{topic}%")
@@ -86,10 +94,11 @@ def list_beliefs(
     currently_held: bool | None = None,
     limit: int = 100,
     offset: int = 0,
+    field_id: str | None = None,
 ) -> list[Belief]:
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
-    where, params = _belief_filters(topic, currently_held)
+    where, params = _belief_filters(topic, currently_held, field_id)
     params.extend([limit, offset])
     rows = conn.execute(
         f"{_SELECT}{where} ORDER BY last_revised_at DESC LIMIT %s OFFSET %s", params
@@ -101,8 +110,9 @@ def count_beliefs(
     conn: MeshConnection,
     topic: str | None = None,
     currently_held: bool | None = None,
+    field_id: str | None = None,
 ) -> int:
-    where, params = _belief_filters(topic, currently_held)
+    where, params = _belief_filters(topic, currently_held, field_id)
     row = conn.execute(f"SELECT COUNT(*) FROM beliefs{where}", params).fetchone()
     return int(row[0]) if row else 0
 
@@ -111,6 +121,7 @@ def find_stale_beliefs(
     conn: MeshConnection,
     threshold_days: int,
     limit: int = 100,
+    field_id: str | None = None,
 ) -> list[Belief]:
     """Beliefs whose most recent supporting/contradicting claim is older than ``threshold_days``.
 
@@ -121,11 +132,14 @@ def find_stale_beliefs(
     """
     cutoff = datetime.now(UTC) - timedelta(days=threshold_days)
     limit = min(max(limit, 0), MAX_LIMIT)
+    field_condition = "b.field_id = %s AND " if field_id is not None else ""
+    params: list[Any] = [field_id] if field_id is not None else []
+    params.extend([cutoff, limit])
     # Join via UNNEST on each claim-id array, MAX the extracted_at across both
     # to get the most recent evidence timestamp per belief. COALESCE so the
     # no-claims case sorts oldest first via a far-past sentinel.
     rows = conn.execute(
-        """
+        f"""
         WITH belief_claim_links AS (
             SELECT id AS belief_id,
                    UNNEST(supporting_claim_ids) AS claim_id
@@ -149,11 +163,11 @@ def find_stale_beliefs(
                b.revision_count, b.is_currently_held
         FROM beliefs b
         JOIN belief_evidence be ON be.belief_id = b.id
-        WHERE COALESCE(be.last_claim_at, TIMESTAMPTZ '1970-01-01') < %s
+        WHERE {field_condition}COALESCE(be.last_claim_at, TIMESTAMPTZ '1970-01-01') < %s
         ORDER BY be.last_claim_at ASC NULLS FIRST
         LIMIT %s
         """,
-        [cutoff, limit],
+        params,
     ).fetchall()
     return [_row_to_belief(r) for r in rows]
 

@@ -76,14 +76,25 @@ def list_revisions(
     belief_id: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    field_id: str | None = None,
 ) -> list[BeliefRevision]:
+    """List belief revisions, newest-first. ``field_id`` scopes to revisions of
+    beliefs in that field (revisions inherit field through their belief FK, so
+    the filter is an EXISTS over ``beliefs``)."""
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
+    conditions: list[str] = []
     params: list[Any] = []
-    where = ""
     if belief_id is not None:
-        where = " WHERE belief_id = %s"
+        conditions.append("belief_id = %s")
         params.append(belief_id)
+    if field_id is not None:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM beliefs b "
+            "WHERE b.id = belief_revisions.belief_id AND b.field_id = %s)"
+        )
+        params.append(field_id)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.extend([limit, offset])
     rows = conn.execute(
         f"{_SELECT}{where} ORDER BY revised_at DESC LIMIT %s OFFSET %s", params

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.relationship import Relationship
 
 from mesh_db.connection import MeshConnection
@@ -25,15 +26,19 @@ _SELECT = (
 )
 
 
-def create_relationship(conn: MeshConnection, model: Relationship) -> Relationship:
+def create_relationship(
+    conn: MeshConnection, model: Relationship, *, field_id: str = DEFAULT_FIELD_ID
+) -> Relationship:
     conn.execute(
         """
         INSERT INTO relationships
-            (id, from_entity_id, to_entity_id, type, evidence_claim_ids, confidence)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (id, field_id, from_entity_id, to_entity_id, type, evidence_claim_ids,
+             confidence)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.from_entity_id,
             model.to_entity_id,
             model.type,
@@ -54,9 +59,13 @@ def list_relationships(
     from_entity_id: str | None = None,
     to_entity_id: str | None = None,
     limit: int = 100,
+    field_id: str | None = None,
 ) -> list[Relationship]:
     conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if from_entity_id is not None:
         conditions.append("from_entity_id = %s")
         params.append(from_entity_id)
@@ -70,12 +79,21 @@ def list_relationships(
 
 
 def find_relationship(
-    conn: MeshConnection, from_entity_id: str, to_entity_id: str, type: str
+    conn: MeshConnection,
+    from_entity_id: str,
+    to_entity_id: str,
+    type: str,
+    field_id: str | None = None,
 ) -> Relationship | None:
     """Locate the single edge for a (from, to, type) triple, if it exists."""
+    conditions = ["from_entity_id = %s", "to_entity_id = %s", "type = %s"]
+    params: list[Any] = [from_entity_id, to_entity_id, type]
+    if field_id is not None:
+        conditions.insert(0, "field_id = %s")
+        params.insert(0, field_id)
     row = conn.execute(
-        f"{_SELECT} WHERE from_entity_id = %s AND to_entity_id = %s AND type = %s LIMIT 1",
-        [from_entity_id, to_entity_id, type],
+        f"{_SELECT} WHERE {' AND '.join(conditions)} LIMIT 1",
+        params,
     ).fetchone()
     return _row_to_relationship(row) if row else None
 
@@ -87,6 +105,8 @@ def add_relationship_evidence(
     type: str,
     claim_id: str,
     confidence: float,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[Relationship, bool]:
     """Claim-grounded edge upsert (Phase 14c). Aggregates onto one edge per
     (from, to, type): creates it if absent, else appends the evidence claim
@@ -94,7 +114,9 @@ def add_relationship_evidence(
 
     Returns ``(relationship, created)`` where ``created`` is True only when a new
     edge row was inserted."""
-    existing = find_relationship(conn, from_entity_id, to_entity_id, type)
+    existing = find_relationship(
+        conn, from_entity_id, to_entity_id, type, field_id=field_id
+    )
     if existing is None:
         rel = Relationship(
             from_entity_id=from_entity_id,
@@ -103,7 +125,7 @@ def add_relationship_evidence(
             evidence_claim_ids=[claim_id],
             confidence=confidence,
         )
-        create_relationship(conn, rel)
+        create_relationship(conn, rel, field_id=field_id)
         return rel, True
     if claim_id in existing.evidence_claim_ids:
         return existing, False

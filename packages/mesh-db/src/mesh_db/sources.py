@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.source import Source, SourceType
 
 from mesh_db.connection import MeshConnection
@@ -30,15 +31,19 @@ def _row_to_source(row: tuple[Any, ...]) -> Source:
     )
 
 
-def create_source(conn: MeshConnection, model: Source) -> Source:
+def create_source(
+    conn: MeshConnection, model: Source, *, field_id: str = DEFAULT_FIELD_ID
+) -> Source:
     conn.execute(
         """
         INSERT INTO sources
-            (id, type, url, author, published_at, fetched_at, raw_content_hash, reliability_prior)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (id, field_id, type, url, author, published_at, fetched_at,
+             raw_content_hash, reliability_prior)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.type.value,
             model.url,
             model.author,
@@ -73,14 +78,21 @@ def list_sources(
     type: SourceType | None = None,
     limit: int = 100,
     offset: int = 0,
+    field_id: str | None = None,
 ) -> list[Source]:
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
     query = _SELECT
+    conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if type is not None:
-        query += " WHERE type = %s"
+        conditions.append("type = %s")
         params.append(type.value)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY fetched_at DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
     rows = conn.execute(query, params).fetchall()
@@ -90,12 +102,19 @@ def list_sources(
 def count_sources(
     conn: MeshConnection,
     type: SourceType | None = None,
+    field_id: str | None = None,
 ) -> int:
     query = "SELECT COUNT(*) FROM sources"
+    conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if type is not None:
-        query += " WHERE type = %s"
+        conditions.append("type = %s")
         params.append(type.value)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     row = conn.execute(query, params).fetchone()
     return int(row[0]) if row else 0
 

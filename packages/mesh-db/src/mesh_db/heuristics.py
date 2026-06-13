@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
 
 from mesh_db.connection import MeshConnection
@@ -53,17 +54,23 @@ def _row_to_heuristic(row: tuple[Any, ...]) -> AgentHeuristic:
     )
 
 
-def create_heuristic(conn: MeshConnection, model: AgentHeuristic) -> AgentHeuristic:
+def create_heuristic(
+    conn: MeshConnection,
+    model: AgentHeuristic,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+) -> AgentHeuristic:
     conn.execute(
         """
         INSERT INTO agent_heuristic
-            (id, agent, skill, source, entity_id, heuristic, confidence,
+            (id, field_id, agent, skill, source, entity_id, heuristic, confidence,
              provenance_run_ids, provenance_claim_ids, created_at, last_revised_at,
              revision_count, expires_at, is_currently_active)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.agent,
             model.skill,
             model.source,
@@ -123,13 +130,18 @@ def list_heuristics(
     limit: int = 100,
     offset: int = 0,
     now: datetime | None = None,
+    field_id: str | None = None,
 ) -> list[AgentHeuristic]:
     """General listing (CLI inspection). ``include_expired=False`` drops rows
-    past their TTL; ``active`` filters on ``is_currently_active``."""
+    past their TTL; ``active`` filters on ``is_currently_active``. ``field_id``
+    scopes to one field (None = all fields)."""
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
     conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if agent is not None:
         conditions.append("agent = %s")
         params.append(agent)
@@ -161,25 +173,27 @@ def list_applicable_heuristics(
     entity_id: str | None = None,
     now: datetime | None = None,
     limit: int = 10,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> list[AgentHeuristic]:
     """Scope-matched, unexpired, active heuristics for a skill (Phase 16d).
 
     A heuristic with ``source``/``entity_id`` NULL applies broadly; one with a
     finer scope set applies only when the caller's scope matches it. Expired
     (past ``expires_at``) and inactive rows are excluded. Ordered by confidence
-    so the most trusted how-to leads the prompt."""
+    so the most trusted how-to leads the prompt. Always scoped to ``field_id`` —
+    heuristics never leak across fields (Phase 17a)."""
     limit = min(max(limit, 0), MAX_LIMIT)
     rows = conn.execute(
         f"""
         {_SELECT}
-        WHERE agent = %s AND skill = %s AND is_currently_active
+        WHERE field_id = %s AND agent = %s AND skill = %s AND is_currently_active
           AND expires_at > %s
           AND (source IS NULL OR source = %s)
           AND (entity_id IS NULL OR entity_id = %s)
         ORDER BY confidence DESC, last_revised_at DESC
         LIMIT %s
         """,
-        [agent, skill, now or datetime.now(UTC), source, entity_id, limit],
+        [field_id, agent, skill, now or datetime.now(UTC), source, entity_id, limit],
     ).fetchall()
     return [_row_to_heuristic(r) for r in rows]
 

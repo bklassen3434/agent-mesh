@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from pydantic import BaseModel
 
 from mesh_db.connection import MeshConnection
@@ -36,15 +37,19 @@ class ProcessedDecision(StrEnum):
 
 
 def get_processed_item(
-    conn: MeshConnection, source_type: str, external_id: str
+    conn: MeshConnection,
+    source_type: str,
+    external_id: str,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> ProcessedItem | None:
     row = conn.execute(
         """
         SELECT source_type, external_id, content_hash, first_seen_at, last_seen_at
         FROM processed_items
-        WHERE source_type = %s AND external_id = %s
+        WHERE field_id = %s AND source_type = %s AND external_id = %s
         """,
-        [source_type, external_id],
+        [field_id, source_type, external_id],
     ).fetchone()
     if row is None:
         return None
@@ -62,8 +67,12 @@ def decide(
     source_type: str,
     external_id: str,
     content_hash: str,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> ProcessedDecision:
-    existing = get_processed_item(conn, source_type, external_id)
+    existing = get_processed_item(
+        conn, source_type, external_id, field_id=field_id
+    )
     if existing is None:
         return ProcessedDecision.unseen
     if existing.content_hash == content_hash:
@@ -77,20 +86,25 @@ def record_processed_item(
     external_id: str,
     content_hash: str,
     now: datetime | None = None,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> None:
     """Insert a new ledger row or update an existing one's content_hash +
-    last_seen_at (preserving first_seen_at). Call after a successful extraction."""
+    last_seen_at (preserving first_seen_at). Call after a successful extraction.
+
+    Keyed per field: the same external source is tracked independently per field
+    (the PK is ``(field_id, source_type, external_id)``)."""
     ts = now or datetime.now(UTC)
     conn.execute(
         """
         INSERT INTO processed_items
-            (source_type, external_id, content_hash, first_seen_at, last_seen_at)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (source_type, external_id) DO UPDATE SET
+            (field_id, source_type, external_id, content_hash, first_seen_at, last_seen_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (field_id, source_type, external_id) DO UPDATE SET
             content_hash = excluded.content_hash,
             last_seen_at = excluded.last_seen_at
         """,
-        [source_type, external_id, content_hash, ts, ts],
+        [field_id, source_type, external_id, content_hash, ts, ts],
     )
 
 
@@ -99,6 +113,8 @@ def touch_processed_item(
     source_type: str,
     external_id: str,
     now: datetime | None = None,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> None:
     """Bump last_seen_at for an item skipped as unchanged (we saw it again but
     spent no tokens on it)."""
@@ -106,9 +122,9 @@ def touch_processed_item(
     conn.execute(
         """
         UPDATE processed_items SET last_seen_at = %s
-        WHERE source_type = %s AND external_id = %s
+        WHERE field_id = %s AND source_type = %s AND external_id = %s
         """,
-        [ts, source_type, external_id],
+        [ts, field_id, source_type, external_id],
     )
 
 

@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
@@ -33,17 +34,20 @@ class PipelineRun(BaseModel):
     errors: list[PipelineError] = Field(default_factory=list)
 
 
-def create_pipeline_run(conn: MeshConnection, model: PipelineRun) -> PipelineRun:
+def create_pipeline_run(
+    conn: MeshConnection, model: PipelineRun, *, field_id: str = DEFAULT_FIELD_ID
+) -> PipelineRun:
     conn.execute(
         """
         INSERT INTO pipeline_runs
-            (id, started_at, finished_at, run_type, triggered_by, papers_scouted,
-             sources_inserted, claims_inserted, entities_created, beliefs_created,
-             beliefs_revised, avg_extraction_latency_ms, errors)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, field_id, started_at, finished_at, run_type, triggered_by,
+             papers_scouted, sources_inserted, claims_inserted, entities_created,
+             beliefs_created, beliefs_revised, avg_extraction_latency_ms, errors)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.started_at,
             model.finished_at,
             model.run_type,
@@ -78,12 +82,17 @@ def list_pipeline_runs(
     conn: MeshConnection,
     limit: int = 10,
     run_type: str | None = None,
+    field_id: str | None = None,
 ) -> list[PipelineRun]:
-    where = ""
+    conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if run_type is not None:
-        where = " WHERE run_type = %s"
+        conditions.append("run_type = %s")
         params.append(run_type)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
     rows = conn.execute(
         f"""

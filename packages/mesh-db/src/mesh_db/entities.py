@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from mesh_models.entity import Entity, EntityType
+from mesh_models.field import DEFAULT_FIELD_ID
 from psycopg.types.json import Jsonb
 
 from mesh_db.connection import MeshConnection
@@ -29,15 +30,19 @@ def _row_to_entity(row: tuple[Any, ...]) -> Entity:
     )
 
 
-def create_entity(conn: MeshConnection, model: Entity) -> Entity:
+def create_entity(
+    conn: MeshConnection, model: Entity, *, field_id: str = DEFAULT_FIELD_ID
+) -> Entity:
     conn.execute(
         """
         INSERT INTO entities
-            (id, canonical_name, aliases, type, attributes, created_at, last_seen_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (id, field_id, canonical_name, aliases, type, attributes,
+             created_at, last_seen_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.canonical_name,
             model.aliases,
             model.type.value,
@@ -73,16 +78,18 @@ def find_candidate_duplicates(
     entity_type: EntityType | str | None = None,
     k: int = 10,
     exclude_id: str | None = None,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> list[tuple[str, str, str, float]]:
     """Blocking query: the ``k`` nearest existing entities by cosine distance.
 
     Returns ``(id, canonical_name, type, distance)`` ordered nearest-first.
     Cosine distance (``<=>``) is in ``[0, 2]``; similarity is ``1 - distance``
-    for the normalised vectors the embedder produces. Optionally filtered by
-    entity type (a model never blocks against a benchmark) and excluding a
-    given id (so an entity does not match itself)."""
-    conditions = ["name_embedding IS NOT NULL"]
-    params: list[Any] = [_vector_literal(embedding)]
+    for the normalised vectors the embedder produces. Always scoped to
+    ``field_id`` (resolution never crosses fields — Phase 17a). Optionally
+    filtered by entity type (a model never blocks against a benchmark) and
+    excluding a given id (so an entity does not match itself)."""
+    conditions = ["name_embedding IS NOT NULL", "field_id = %s"]
+    params: list[Any] = [_vector_literal(embedding), field_id]
     if entity_type is not None:
         conditions.append("type = %s")
         params.append(
@@ -123,6 +130,7 @@ def list_entities(
     q: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    field_id: str | None = None,
 ) -> list[Entity]:
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
@@ -132,6 +140,9 @@ def list_entities(
     )
     conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if type is not None:
         conditions.append("type = %s")
         params.append(type.value)
@@ -150,10 +161,14 @@ def count_entities(
     conn: MeshConnection,
     type: EntityType | None = None,
     q: str | None = None,
+    field_id: str | None = None,
 ) -> int:
     query = "SELECT COUNT(*) FROM entities"
     conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if type is not None:
         conditions.append("type = %s")
         params.append(type.value)

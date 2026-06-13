@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from mesh_models.claim import Claim, ClaimStatus, ClaimType, FailureMode
+from mesh_models.field import DEFAULT_FIELD_ID
 from psycopg.types.json import Jsonb
 
 from mesh_db.connection import MeshConnection
@@ -44,17 +45,20 @@ _SELECT = (
 )
 
 
-def create_claim(conn: MeshConnection, model: Claim) -> Claim:
+def create_claim(
+    conn: MeshConnection, model: Claim, *, field_id: str = DEFAULT_FIELD_ID
+) -> Claim:
     conn.execute(
         """
         INSERT INTO claims
-            (id, predicate, claim_type, subject_entity_id, object, source_id,
+            (id, field_id, predicate, claim_type, subject_entity_id, object, source_id,
             extracted_at, extracted_by_agent, raw_excerpt, status, confidence,
             superseded_by_claim_id, failure_mode)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.predicate,
             model.claim_type.value,
             model.subject_entity_id,
@@ -86,9 +90,13 @@ def _claim_filters(
     status: ClaimStatus | None,
     predicate: str | None,
     claim_type: ClaimType | None,
+    field_id: str | None = None,
 ) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if entity_id is not None:
         conditions.append("subject_entity_id = %s")
         params.append(entity_id)
@@ -117,10 +125,13 @@ def list_claims(
     claim_type: ClaimType | None = None,
     limit: int = 100,
     offset: int = 0,
+    field_id: str | None = None,
 ) -> list[Claim]:
     limit = min(max(limit, 0), MAX_LIMIT)
     offset = max(offset, 0)
-    where, params = _claim_filters(entity_id, source_id, status, predicate, claim_type)
+    where, params = _claim_filters(
+        entity_id, source_id, status, predicate, claim_type, field_id
+    )
     params.extend([limit, offset])
     rows = conn.execute(
         f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT %s OFFSET %s", params
@@ -135,8 +146,11 @@ def count_claims(
     status: ClaimStatus | None = None,
     predicate: str | None = None,
     claim_type: ClaimType | None = None,
+    field_id: str | None = None,
 ) -> int:
-    where, params = _claim_filters(entity_id, source_id, status, predicate, claim_type)
+    where, params = _claim_filters(
+        entity_id, source_id, status, predicate, claim_type, field_id
+    )
     row = conn.execute(f"SELECT COUNT(*) FROM claims{where}", params).fetchone()
     return int(row[0]) if row else 0
 

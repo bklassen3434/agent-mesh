@@ -58,6 +58,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from pydantic import BaseModel, Field
 
 from mesh_db.connection import MeshConnection
@@ -126,6 +127,7 @@ _CONTAINING_RUN = """
     (SELECT pr.id FROM pipeline_runs pr
      WHERE pr.started_at <= {ts}
        AND (pr.finished_at IS NULL OR {ts} <= pr.finished_at)
+       AND pr.field_id = %(field_id)s
      ORDER BY pr.started_at DESC
      LIMIT 1)
 """
@@ -176,12 +178,13 @@ def _extraction_events(
     since: datetime | None,
     until: datetime | None,
     limit: int,
+    field_id: str,
 ) -> list[EpisodicEntry]:
     """Claim-extraction events: claims this agent produced, grouped per source
     per run (one event = "extracted N claims from source X during run R"),
     each tagged with the aggregate fate of those claims."""
-    conds = ["c.extracted_by_agent = %(agent)s"]
-    params: dict[str, Any] = {"agent": agent, "limit": limit}
+    conds = ["c.extracted_by_agent = %(agent)s", "c.field_id = %(field_id)s"]
+    params: dict[str, Any] = {"agent": agent, "limit": limit, "field_id": field_id}
     if entity_id is not None:
         conds.append("c.subject_entity_id = %(entity_id)s")
         params["entity_id"] = entity_id
@@ -300,12 +303,13 @@ def _revision_events(
     since: datetime | None,
     until: datetime | None,
     limit: int,
+    field_id: str,
 ) -> list[EpisodicEntry]:
     """Belief-revision events: one per ``belief_revisions`` row this agent wrote,
     tagged with the belief's current fate (still held, and how many later
     revisions superseded this one)."""
-    conds = ["br.revised_by_agent = %(agent)s"]
-    params: dict[str, Any] = {"agent": agent, "limit": limit}
+    conds = ["br.revised_by_agent = %(agent)s", "b.field_id = %(field_id)s"]
+    params: dict[str, Any] = {"agent": agent, "limit": limit, "field_id": field_id}
     if topic is not None:
         conds.append("b.topic ILIKE %(topic)s")
         params["topic"] = f"%{topic}%"
@@ -392,9 +396,11 @@ def recall_history(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 50,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> list[EpisodicEntry]:
     """Time-ordered (most-recent-first) episodic action history for ``agent``,
-    each entry tagged with its derived outcome (15b).
+    each entry tagged with its derived outcome (15b). Scoped to ``field_id`` —
+    an agent's history never crosses fields (Phase 17a).
 
     Merges the agent-attributed event sources (claim extraction + belief
     revision), each with its run recovered by timestamp containment. Scope
@@ -420,12 +426,16 @@ def recall_history(
     # Extraction events have no topic; skip that source when a topic filter is set.
     if topic is None:
         entries.extend(
-            _extraction_events(conn, agent, entity_id, source_id, since, until, limit)
+            _extraction_events(
+                conn, agent, entity_id, source_id, since, until, limit, field_id
+            )
         )
     # Revision events have no source; skip that source when a source filter is set.
     if source_id is None:
         entries.extend(
-            _revision_events(conn, agent, entity_id, topic, since, until, limit)
+            _revision_events(
+                conn, agent, entity_id, topic, since, until, limit, field_id
+            )
         )
 
     entries.sort(key=lambda e: e.timestamp, reverse=True)

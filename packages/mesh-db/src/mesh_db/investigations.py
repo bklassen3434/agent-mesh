@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.investigation import Investigation, InvestigationStatus
 
 from mesh_db.connection import MeshConnection
@@ -52,18 +53,19 @@ _SELECT = (
 
 
 def create_investigation(
-    conn: MeshConnection, model: Investigation
+    conn: MeshConnection, model: Investigation, *, field_id: str = DEFAULT_FIELD_ID
 ) -> Investigation:
     conn.execute(
         """
-        INSERT INTO investigations (id, question, related_entity_ids, status, priority,
-            created_at, resolved_at, resolution_belief_id, assigned_scout_agents,
-            target_entity_id, hypothesis, suggested_source_types,
+        INSERT INTO investigations (id, field_id, question, related_entity_ids, status,
+            priority, created_at, resolved_at, resolution_belief_id,
+            assigned_scout_agents, target_entity_id, hypothesis, suggested_source_types,
             opened_by_belief_id, pipeline_runs_attempted, collected_claim_ids)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
+            field_id,
             model.question,
             model.related_entity_ids,
             model.status.value,
@@ -92,12 +94,17 @@ def list_investigations(
     conn: MeshConnection,
     status: InvestigationStatus | None = None,
     limit: int = 100,
+    field_id: str | None = None,
 ) -> list[Investigation]:
+    conditions: list[str] = []
     params: list[Any] = []
-    where = ""
+    if field_id is not None:
+        conditions.append("field_id = %s")
+        params.append(field_id)
     if status is not None:
-        where = " WHERE status = %s"
+        conditions.append("status = %s")
         params.append(status.value)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
     rows = conn.execute(
         f"{_SELECT}{where} ORDER BY created_at DESC LIMIT %s", params

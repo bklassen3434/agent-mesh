@@ -1115,10 +1115,18 @@ def backfill_entity_embeddings(batch_size: int, embed_all: bool) -> None:
     show_default=True,
 )
 @click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
-def reconcile_entities_cmd(apply_changes: bool, report_path: str, k: int) -> None:
+@click.option(
+    "--field",
+    default="ai-robotics",
+    show_default=True,
+    help="Field slug to scope reconciliation to (resolution never crosses fields).",
+)
+def reconcile_entities_cmd(
+    apply_changes: bool, report_path: str, k: int, field: str
+) -> None:
     """One-time reconciliation of accumulated duplicate entities (Phase 13c).
 
-    Blocks → matches → merges across the whole entity table. Middle-band
+    Blocks → matches → merges across one field's entity table. Middle-band
     adjudications route through the Anthropic Batch API when available. Writes a
     report (before/after counts, sample of merges) for false-merge review.
     Idempotent — re-running finds little to do.
@@ -1142,7 +1150,7 @@ def reconcile_entities_cmd(apply_changes: bool, report_path: str, k: int) -> Non
     conn = get_connection()  # writer
     try:
         report = reconcile_entities(
-            conn, embedder, llm, k=k, dry_run=not apply_changes
+            conn, embedder, llm, k=k, dry_run=not apply_changes, field_id=field
         )
     finally:
         conn.close()

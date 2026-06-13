@@ -25,13 +25,16 @@ def list_sources_endpoint(
     type: SourceType | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> Page[SourceWithCount]:
-    sources = list_sources(conn, type=type, limit=limit, offset=offset)
+    sources = list_sources(conn, type=type, limit=limit, offset=offset, field_id=field)
     enriched = [
-        SourceWithCount(source=s, claim_count=count_claims(conn, source_id=s.id))
+        SourceWithCount(
+            source=s, claim_count=count_claims(conn, source_id=s.id, field_id=field)
+        )
         for s in sources
     ]
-    total = count_sources(conn, type=type)
+    total = count_sources(conn, type=type, field_id=field)
     return Page[SourceWithCount](
         items=enriched, total=total, limit=limit, offset=offset
     )

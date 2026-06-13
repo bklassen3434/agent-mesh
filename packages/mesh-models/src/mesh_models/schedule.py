@@ -20,6 +20,7 @@ class Schedule(BaseModel):
     """One configured pipeline schedule (a ``schedules`` row)."""
 
     job_id: str
+    field_id: str = "ai-robotics"
     interval_hours: int
     enabled: bool
     updated_at: datetime
@@ -47,6 +48,7 @@ class SchedulerJobStatus(BaseModel):
     """
 
     job_id: str
+    field_id: str = "ai-robotics"
     next_run_at: datetime | None = None
     last_run_at: datetime | None = None
     state: str

@@ -949,6 +949,11 @@ export interface components {
         Schedule: {
             /** Job Id */
             job_id: string;
+            /**
+             * Field Id
+             * @default ai-robotics
+             */
+            field_id: string;
             /** Interval Hours */
             interval_hours: number;
             /** Enabled */
@@ -979,6 +984,11 @@ export interface components {
         SchedulerJobStatus: {
             /** Job Id */
             job_id: string;
+            /**
+             * Field Id
+             * @default ai-robotics
+             */
+            field_id: string;
             /** Next Run At */
             next_run_at?: string | null;
             /** Last Run At */
@@ -1120,7 +1130,10 @@ export interface operations {
     };
     stats_api_v1_stats_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1136,12 +1149,23 @@ export interface operations {
                     "application/json": components["schemas"]["StatsResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     list_runs_api_v1_pipeline_runs_get: {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1177,6 +1201,8 @@ export interface operations {
                 q?: string | null;
                 limit?: number;
                 offset?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1206,7 +1232,10 @@ export interface operations {
     };
     entity_detail_api_v1_entities__entity_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+            };
             header?: never;
             path: {
                 entity_id: string;
@@ -1244,6 +1273,8 @@ export interface operations {
                 status?: components["schemas"]["ClaimStatus"] | null;
                 limit?: number;
                 offset?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1308,6 +1339,8 @@ export interface operations {
                 type?: components["schemas"]["SourceType"] | null;
                 limit?: number;
                 offset?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1373,6 +1406,8 @@ export interface operations {
                 currently_held?: boolean | null;
                 limit?: number;
                 offset?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1499,6 +1534,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1530,6 +1567,8 @@ export interface operations {
         parameters: {
             query?: {
                 date?: string | null;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1582,6 +1621,8 @@ export interface operations {
             query?: {
                 max_nodes?: number;
                 max_edges?: number;
+                /** @description Field slug to scope results to */
+                field?: string;
             };
             header?: never;
             path?: never;
@@ -1611,7 +1652,10 @@ export interface operations {
     };
     get_graph_data_api_v1_graph_data_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1625,6 +1669,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphData"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1651,7 +1704,9 @@ export interface operations {
     };
     patch_schedule_api_v1_schedules__job_id__patch: {
         parameters: {
-            query?: never;
+            query?: {
+                field?: string;
+            };
             header?: never;
             path: {
                 job_id: string;
@@ -1686,7 +1741,9 @@ export interface operations {
     };
     trigger_pipeline_api_v1_pipelines__job_id__trigger_post: {
         parameters: {
-            query?: never;
+            query?: {
+                field?: string;
+            };
             header?: never;
             path: {
                 job_id: string;

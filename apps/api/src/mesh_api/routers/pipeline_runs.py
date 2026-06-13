@@ -17,5 +17,6 @@ router = APIRouter(prefix="/api/v1", tags=["pipeline-runs"])
 def list_runs(
     conn: ConnDep,
     limit: int = Query(10, ge=1, le=200),
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> list[PipelineRun]:
-    return list_pipeline_runs(conn, limit=limit)
+    return list_pipeline_runs(conn, limit=limit, field_id=field)

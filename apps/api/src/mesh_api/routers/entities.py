@@ -27,9 +27,10 @@ def list_entities_endpoint(
     q: str | None = Query(None, description="Substring match on canonical_name"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> Page[Entity]:
-    items = list_entities(conn, type=type, q=q, limit=limit, offset=offset)
-    total = count_entities(conn, type=type, q=q)
+    items = list_entities(conn, type=type, q=q, limit=limit, offset=offset, field_id=field)
+    total = count_entities(conn, type=type, q=q, field_id=field)
     return Page[Entity](items=items, total=total, limit=limit, offset=offset)
 
 
@@ -42,13 +43,20 @@ def list_entities_endpoint(
         "relationships touching it (in either direction)."
     ),
 )
-def entity_detail(entity_id: str, conn: ConnDep) -> EntityDetail:
+def entity_detail(
+    entity_id: str,
+    conn: ConnDep,
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
+) -> EntityDetail:
     entity = get_entity_by_id(conn, entity_id)
     if entity is None:
         raise HTTPException(status_code=404, detail="Entity not found")
-    claims = list_claims(conn, entity_id=entity_id, limit=200)
+    claims = list_claims(conn, entity_id=entity_id, limit=200, field_id=field)
     # Relationships in either direction — deduplicate by id.
-    rels = {r.id: r for r in list_relationships(conn, from_entity_id=entity_id, limit=200)}
-    for r in list_relationships(conn, to_entity_id=entity_id, limit=200):
+    rels = {
+        r.id: r
+        for r in list_relationships(conn, from_entity_id=entity_id, limit=200, field_id=field)
+    }
+    for r in list_relationships(conn, to_entity_id=entity_id, limit=200, field_id=field):
         rels[r.id] = r
     return EntityDetail(entity=entity, claims=claims, relationships=list(rels.values()))

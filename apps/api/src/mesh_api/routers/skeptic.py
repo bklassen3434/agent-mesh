@@ -24,12 +24,13 @@ router = APIRouter(prefix="/api/v1/skeptic", tags=["skeptic"])
 def recent_skeptic_activity(
     conn: ConnDep,
     limit: int = Query(20, ge=1, le=100),
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> list[SkepticActivityItem]:
-    # list_revisions has no agent filter; pull a generous window and filter in
-    # Python. The skeptic-revision rate is tiny relative to the table so this
-    # is fine for now; if the table grows past ~50k rows, push the filter into
-    # the DB layer.
-    candidates = list_revisions(conn, limit=200)
+    # Scoped to the field via list_revisions' field_id filter (EXISTS over
+    # beliefs). list_revisions has no agent filter; pull a generous window and
+    # filter to skeptic-authored rows in Python — the skeptic-revision rate is
+    # tiny relative to the table so this is fine for now.
+    candidates = list_revisions(conn, limit=200, field_id=field)
     skeptic_revs = [r for r in candidates if r.revised_by_agent == "skeptic"][:limit]
 
     if not skeptic_revs:

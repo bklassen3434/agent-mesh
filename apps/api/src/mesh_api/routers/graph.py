@@ -54,9 +54,10 @@ def get_graph(
     conn: ConnDep,
     max_nodes: Annotated[int, Query(ge=1, le=5000)] = 500,
     max_edges: Annotated[int, Query(ge=1, le=20000)] = 2000,
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> GraphResponse:
-    entities = list_entities(conn, limit=max_nodes)
-    relationships = list_relationships(conn, limit=max_edges)
+    entities = list_entities(conn, limit=max_nodes, field_id=field)
+    relationships = list_relationships(conn, limit=max_edges, field_id=field)
     entity_ids = {e.id for e in entities}
     # Edges referencing entities outside the bounded node set are dropped —
     # cytoscape complains on dangling edges and they're confusing in the UI.
@@ -89,12 +90,15 @@ def get_graph(
         "endpoints survive the cap."
     ),
 )
-def get_graph_data(conn: ConnDep) -> GraphData:
-    node_rows = graph_nodes(conn, limit=NODE_CAP)
+def get_graph_data(
+    conn: ConnDep,
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
+) -> GraphData:
+    node_rows = graph_nodes(conn, limit=NODE_CAP, field_id=field)
     node_ids = {n["id"] for n in node_rows}
-    edge_rows = graph_edges(conn, node_ids)
+    edge_rows = graph_edges(conn, node_ids, field_id=field)
     return GraphData(
         nodes=[GraphDataNode(**n) for n in node_rows],
         edges=[GraphDataEdge(**e) for e in edge_rows],
-        total_entities=count_entities(conn),
+        total_entities=count_entities(conn, field_id=field),
     )

@@ -37,8 +37,9 @@ def build_app(manager: SchedulerManager) -> Starlette:
 
     async def run_job(request: Request) -> JSONResponse:
         job_id = request.path_params["job_id"]
+        field_id = request.query_params.get("field", "ai-robotics")
         try:
-            result = manager.trigger(job_id)
+            result = manager.trigger(job_id, field_id)
         except KeyError:
             return JSONResponse({"detail": f"unknown job {job_id}"}, status_code=404)
         if result is None:

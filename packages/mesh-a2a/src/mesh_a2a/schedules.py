@@ -56,11 +56,14 @@ def _connect() -> Iterator[psycopg.Connection[Any]]:
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS schedules (
-    job_id         TEXT PRIMARY KEY,
+    job_id         TEXT NOT NULL,
+    field_id       TEXT NOT NULL DEFAULT 'ai-robotics',
     interval_hours INTEGER NOT NULL,
     enabled        BOOLEAN NOT NULL DEFAULT true,
-    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (job_id, field_id)
 );
+ALTER TABLE schedules ADD COLUMN IF NOT EXISTS field_id TEXT NOT NULL DEFAULT 'ai-robotics';
 """
 
 
@@ -69,14 +72,16 @@ def ensure_schedules_table() -> None:
 
     Safe to call on every API request and at scheduler startup — the
     CREATE is ``IF NOT EXISTS`` and the seed is ``ON CONFLICT DO NOTHING``,
-    so a populated table is left untouched.
+    so a populated table is left untouched. The ``ADD COLUMN IF NOT EXISTS``
+    backfills ``field_id`` on pre-Phase-17 tables (no-op on fresh installs).
     """
     with _connect() as conn:
         conn.execute(_DDL)
         for job_id, hours in DEFAULT_INTERVALS.items():
             conn.execute(
-                "INSERT INTO schedules (job_id, interval_hours, enabled) "
-                "VALUES (%s, %s, true) ON CONFLICT (job_id) DO NOTHING",
+                "INSERT INTO schedules (job_id, field_id, interval_hours, enabled) "
+                "VALUES (%s, 'ai-robotics', %s, true) "
+                "ON CONFLICT (job_id, field_id) DO NOTHING",
                 (job_id, hours),
             )
 
@@ -84,9 +89,10 @@ def ensure_schedules_table() -> None:
 def _row_to_schedule(row: tuple[Any, ...]) -> Schedule:
     return Schedule(
         job_id=str(row[0]),
-        interval_hours=int(row[1]),
-        enabled=bool(row[2]),
-        updated_at=row[3],
+        field_id=str(row[1]),
+        interval_hours=int(row[2]),
+        enabled=bool(row[3]),
+        updated_at=row[4],
     )
 
 
@@ -94,19 +100,19 @@ def list_schedules() -> list[Schedule]:
     ensure_schedules_table()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT job_id, interval_hours, enabled, updated_at "
-            "FROM schedules ORDER BY job_id"
+            "SELECT job_id, field_id, interval_hours, enabled, updated_at "
+            "FROM schedules ORDER BY field_id, job_id"
         ).fetchall()
     return [_row_to_schedule(r) for r in rows]
 
 
-def get_schedule(job_id: str) -> Schedule | None:
+def get_schedule(job_id: str, field_id: str = "ai-robotics") -> Schedule | None:
     ensure_schedules_table()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT job_id, interval_hours, enabled, updated_at "
-            "FROM schedules WHERE job_id = %s",
-            (job_id,),
+            "SELECT job_id, field_id, interval_hours, enabled, updated_at "
+            "FROM schedules WHERE job_id = %s AND field_id = %s",
+            (job_id, field_id),
         ).fetchone()
     return _row_to_schedule(row) if row else None
 
@@ -114,6 +120,7 @@ def get_schedule(job_id: str) -> Schedule | None:
 def update_schedule(
     job_id: str,
     *,
+    field_id: str = "ai-robotics",
     interval_hours: int | None = None,
     enabled: bool | None = None,
 ) -> Schedule | None:
@@ -130,9 +137,9 @@ def update_schedule(
                SET interval_hours = COALESCE(%s, interval_hours),
                    enabled        = COALESCE(%s, enabled),
                    updated_at     = now()
-             WHERE job_id = %s
-            RETURNING job_id, interval_hours, enabled, updated_at
+             WHERE job_id = %s AND field_id = %s
+            RETURNING job_id, field_id, interval_hours, enabled, updated_at
             """,
-            (interval_hours, enabled, job_id),
+            (interval_hours, enabled, job_id, field_id),
         ).fetchone()
     return _row_to_schedule(row) if row else None

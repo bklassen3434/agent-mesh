@@ -7,7 +7,7 @@ poll is the safety net if that signal is missed.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from mesh_a2a.schedules import (
     DEFAULT_INTERVALS,
     SchedulesUnavailable,
@@ -47,7 +47,9 @@ def list_schedules_endpoint() -> list[Schedule]:
         f"{list(ALLOWED_INTERVAL_HOURS)}."
     ),
 )
-def patch_schedule(job_id: str, body: ScheduleUpdate) -> Schedule:
+def patch_schedule(
+    job_id: str, body: ScheduleUpdate, field: str = Query("ai-robotics")
+) -> Schedule:
     if job_id not in _KNOWN_JOBS:
         raise HTTPException(status_code=404, detail=f"Unknown job {job_id}")
     if body.interval_hours is None and body.enabled is None:
@@ -61,7 +63,7 @@ def patch_schedule(job_id: str, body: ScheduleUpdate) -> Schedule:
         )
     try:
         updated = update_schedule(
-            job_id, interval_hours=body.interval_hours, enabled=body.enabled
+            job_id, field_id=field, interval_hours=body.interval_hours, enabled=body.enabled
         )
     except SchedulesUnavailable as exc:
         raise HTTPException(status_code=503, detail="Schedule store not configured") from exc

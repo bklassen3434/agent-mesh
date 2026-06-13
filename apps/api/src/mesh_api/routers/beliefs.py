@@ -40,6 +40,7 @@ def list_beliefs_endpoint(
     currently_held: bool | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> Page[Belief]:
     items = list_beliefs(
         conn,
@@ -47,8 +48,9 @@ def list_beliefs_endpoint(
         currently_held=currently_held,
         limit=limit,
         offset=offset,
+        field_id=field,
     )
-    total = count_beliefs(conn, topic=topic, currently_held=currently_held)
+    total = count_beliefs(conn, topic=topic, currently_held=currently_held, field_id=field)
     return Page[Belief](items=items, total=total, limit=limit, offset=offset)
 
 

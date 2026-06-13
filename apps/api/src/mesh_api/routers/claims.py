@@ -29,6 +29,7 @@ def list_claims_endpoint(
     status: ClaimStatus | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> Page[Claim]:
     items = list_claims(
         conn,
@@ -38,6 +39,7 @@ def list_claims_endpoint(
         predicate=predicate,
         limit=limit,
         offset=offset,
+        field_id=field,
     )
     total = count_claims(
         conn,
@@ -45,6 +47,7 @@ def list_claims_endpoint(
         source_id=source_id,
         status=status,
         predicate=predicate,
+        field_id=field,
     )
     return Page[Claim](items=items, total=total, limit=limit, offset=offset)
 

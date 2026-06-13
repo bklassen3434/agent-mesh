@@ -7,7 +7,7 @@ graceful degradation when the scheduler is unreachable.
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from mesh_a2a.schedules import DEFAULT_INTERVALS
 from mesh_models.schedule import SchedulerJobStatus, TriggerResult
 
@@ -27,11 +27,13 @@ _KNOWN_JOBS = set(DEFAULT_INTERVALS)
         "Returns 409 if a run for that job is already in progress."
     ),
 )
-def trigger_pipeline(job_id: str) -> TriggerResult:
+def trigger_pipeline(
+    job_id: str, field: str = Query("ai-robotics")
+) -> TriggerResult:
     if job_id not in _KNOWN_JOBS:
         raise HTTPException(status_code=404, detail=f"Unknown job {job_id}")
     try:
-        resp = trigger_run(job_id)
+        resp = trigger_run(job_id, field)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Scheduler unreachable") from exc
     if resp.status_code == 409:

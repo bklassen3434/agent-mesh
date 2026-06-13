@@ -70,7 +70,7 @@ def _window(target: date) -> tuple[datetime, datetime]:
 
 
 def _gather_new_beliefs(
-    conn: MeshConnection, start: datetime, end: datetime
+    conn: MeshConnection, start: datetime, end: datetime, field: str
 ) -> list[dict[str, Any]]:
     """Beliefs whose first appearance falls in the window.
 
@@ -84,12 +84,13 @@ def _gather_new_beliefs(
         FROM beliefs
         WHERE revision_count = 0
           AND is_currently_held = TRUE
+          AND field_id = %s
           AND last_revised_at >= %s
           AND last_revised_at < %s
         ORDER BY last_revised_at DESC
         LIMIT 50
         """,
-        [start, end],
+        [field, start, end],
     ).fetchall()
     return [
         {
@@ -104,20 +105,22 @@ def _gather_new_beliefs(
 
 
 def _gather_revisions(
-    conn: MeshConnection, start: datetime, end: datetime
+    conn: MeshConnection, start: datetime, end: datetime, field: str
 ) -> list[dict[str, Any]]:
+    # belief_revisions has no field_id; scope via the joined belief's field_id.
     rows = conn.execute(
         """
         SELECT r.id, r.belief_id, r.previous_statement, r.new_statement,
                r.previous_confidence, r.new_confidence, r.revised_by_agent,
                r.rationale, r.revised_at, b.topic
         FROM belief_revisions r
-        LEFT JOIN beliefs b ON r.belief_id = b.id
-        WHERE r.revised_at >= %s AND r.revised_at < %s
+        JOIN beliefs b ON r.belief_id = b.id
+        WHERE b.field_id = %s
+          AND r.revised_at >= %s AND r.revised_at < %s
         ORDER BY r.revised_at DESC
         LIMIT 50
         """,
-        [start, end],
+        [field, start, end],
     ).fetchall()
     return [
         {
@@ -140,6 +143,7 @@ def _gather_claims(
     conn: MeshConnection,
     start: datetime,
     end: datetime,
+    field: str,
     min_confidence: float = 0.8,
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
@@ -149,13 +153,14 @@ def _gather_claims(
         FROM claims c
         LEFT JOIN entities e ON e.id = c.subject_entity_id
         WHERE c.status = 'active'
+          AND c.field_id = %s
           AND c.extracted_at >= %s
           AND c.extracted_at < %s
           AND c.confidence >= %s
         ORDER BY c.confidence DESC, c.extracted_at DESC
         LIMIT 50
         """,
-        [start, end, min_confidence],
+        [field, start, end, min_confidence],
     ).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -247,6 +252,7 @@ async def _run_personalizer(
 async def get_briefing(
     conn: ConnDep,
     target_date: Annotated[date | None, Query(alias="date")] = None,
+    field: str = Query("ai-robotics", description="Field slug to scope results to"),
 ) -> Briefing:
     target = target_date or datetime.now(UTC).date()
 
@@ -262,16 +268,16 @@ async def get_briefing(
         )
 
     profile_hash = _profile_hash(profile_text)
-    cache_key = (target.isoformat(), profile_hash)
+    cache_key = (f"{field}:{target.isoformat()}", profile_hash)
     async with _CACHE_LOCK:
         cached = _CACHE.get(cache_key)
         if cached is not None:
             return cached
 
     start, end = _window(target)
-    beliefs = _gather_new_beliefs(conn, start, end)
-    revisions = _gather_revisions(conn, start, end)
-    claims = _gather_claims(conn, start, end)
+    beliefs = _gather_new_beliefs(conn, start, end, field)
+    revisions = _gather_revisions(conn, start, end, field)
+    claims = _gather_claims(conn, start, end, field)
 
     if not beliefs and not revisions and not claims:
         # Skip the LLM round-trip when there's nothing to rank.

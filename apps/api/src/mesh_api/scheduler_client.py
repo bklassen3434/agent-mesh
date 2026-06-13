@@ -39,8 +39,10 @@ def signal_reload() -> bool:
         return False
 
 
-def trigger_run(job_id: str) -> httpx.Response:
+def trigger_run(job_id: str, field: str = "ai-robotics") -> httpx.Response:
     """Ask the scheduler to start an immediate run. Raises on connection error;
     the caller inspects the status code (409 already-running, 404 unknown)."""
     with httpx.Client(timeout=_TIMEOUT) as client:
-        return client.post(f"{base_url()}/scheduler/run/{job_id}")
+        return client.post(
+            f"{base_url()}/scheduler/run/{job_id}", params={"field": field}
+        )

@@ -20,6 +20,7 @@ from mesh_llm.factory import make_llm_client
 from mesh_llm.pricing import CostBreakdown, estimate_cost, is_priced
 from mesh_llm.protocol import LLMClient
 from mesh_llm.routing import (
+    RoutedLLMClient,
     RoutingConfig,
     RoutingDecision,
     Tier,
@@ -44,6 +45,7 @@ __all__ = [
     "LLMUsage",
     "OllamaClient",
     "OllamaNotReadyError",
+    "RoutedLLMClient",
     "RoutingConfig",
     "RoutingDecision",
     "Tier",

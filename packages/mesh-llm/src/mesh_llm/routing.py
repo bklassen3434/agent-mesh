@@ -34,6 +34,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from mesh_llm.client import LLMResponseError
+from mesh_llm.protocol import LLMClient
+
 # Tier defaults. The cheap tier mirrors each provider's current hard default so
 # "routing on, no other config" behaves like today's single-model setup for the
 # common path and only escalates the genuinely hard cases.
@@ -240,3 +243,185 @@ def classify_difficulty(
     """
     cfg = config or RoutingConfig.from_env()
     return _difficulty(name, system, user, options, cfg)[0]
+
+
+# ── RoutedLLMClient (block 20b) ──────────────────────────────────────────────
+
+
+def _build_tier_client(
+    provider: str, model: str, agent_name: str | None
+) -> LLMClient:
+    """Construct a concrete client for a tier, pinning its model explicitly.
+
+    Passing ``model=`` bypasses ``resolve_model`` — the router, not the env
+    precedence chain, owns the tier's model. Imported lazily to keep this module
+    importable without instantiating any provider SDK.
+    """
+    from mesh_llm.anthropic_client import AnthropicClient
+    from mesh_llm.client import OllamaClient
+
+    name = provider.lower()
+    if name == "anthropic":
+        return AnthropicClient(model=model, agent_name=agent_name)
+    if name == "ollama":
+        return OllamaClient(model=model, agent_name=agent_name)
+    raise ValueError(
+        f"Unknown routing provider: {name!r}. Expected 'anthropic' or 'ollama'."
+    )
+
+
+class RoutedLLMClient:
+    """An :class:`~mesh_llm.protocol.LLMClient` that routes each request to a
+    cheap or strong tier.
+
+    The wrapper *is* an ``LLMClient`` (same Protocol surface), so agents, the
+    batch path, and tracing treat it like any other client — no agent learns it
+    is being routed. Per request it calls :func:`classify_difficulty`; the
+    default path is the cheap tier and escalation is the exception. A cheap-tier
+    ``LLMResponseError`` (parse failure) triggers one retry on the strong tier
+    (``MESH_ROUTE_ESCALATE_ON_PARSE_FAIL``, default on). Provider-not-ready
+    errors propagate — routing never swallows an unconfigured-provider error.
+
+    ``model`` (the Protocol attribute) reports the cheap-tier model, since that
+    is the default path. The tier clients are built lazily so a strong-tier-only
+    misconfiguration an enabled run may never hit does not fail construction.
+    """
+
+    def __init__(self, config: RoutingConfig, agent_name: str | None = None) -> None:
+        self._config = config
+        self.agent_name = agent_name
+        self.model = config.cheap_model
+        self._cheap: LLMClient | None = None
+        self._strong: LLMClient | None = None
+
+    # -- tier client accessors ------------------------------------------------
+
+    @property
+    def cheap_client(self) -> LLMClient:
+        if self._cheap is None:
+            self._cheap = _build_tier_client(
+                self._config.cheap_provider, self._config.cheap_model, self.agent_name
+            )
+        return self._cheap
+
+    @property
+    def strong_client(self) -> LLMClient:
+        """The strong-tier client. Exposed so a batch caller (skeptic sweep /
+        consolidation) can opt a whole batch into the strong tier — per-item
+        batch routing is out of scope for this phase."""
+        if self._strong is None:
+            self._strong = _build_tier_client(
+                self._config.strong_provider, self._config.strong_model, self.agent_name
+            )
+        return self._strong
+
+    def _client_for(self, tier: Tier) -> LLMClient:
+        return self.strong_client if tier is Tier.STRONG else self.cheap_client
+
+    # -- routing decision -----------------------------------------------------
+
+    def decide(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        options: dict[str, Any] | None = None,
+    ) -> RoutingDecision:
+        """Classify one request into a :class:`RoutingDecision` (tier + model +
+        provider + reason) without calling any model."""
+        tier, reason = _difficulty(name, system, user, options, self._config)
+        if tier is Tier.STRONG:
+            return RoutingDecision(
+                Tier.STRONG,
+                self._config.strong_model,
+                self._config.strong_provider,
+                reason,
+            )
+        return RoutingDecision(
+            Tier.CHEAP, self._config.cheap_model, self._config.cheap_provider, reason
+        )
+
+    def _with_trace_meta(
+        self, options: dict[str, Any] | None, decision: RoutingDecision
+    ) -> dict[str, Any]:
+        """Attach the decision (tier + reason) to the call options so the
+        underlying client forwards it to ``trace_generation`` metadata."""
+        return {
+            **(options or {}),
+            ROUTE_OPTION_KEY: {
+                "routed": True,
+                "tier": decision.tier.value,
+                "route_reason": decision.reason,
+            },
+        }
+
+    # -- LLMClient Protocol ---------------------------------------------------
+
+    def health_check(self) -> None:
+        """Check only the cheap tier — the default path every enabled run
+        exercises. The strong tier is checked lazily on first escalation, so a
+        strong-only misconfiguration a run never reaches does not hard-fail
+        startup."""
+        self.cheap_client.health_check()
+
+    def complete_with_latency(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: Any = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[Any, int]:
+        decision = self.decide(name, system, user, options)
+        try:
+            return self._client_for(decision.tier).complete_with_latency(
+                name, system, user, response_model,
+                self._with_trace_meta(options, decision),
+            )
+        except LLMResponseError:
+            escalation = self._escalate_after_parse_fail(decision)
+            if escalation is None:
+                raise
+            return self.strong_client.complete_with_latency(
+                name, system, user, response_model,
+                self._with_trace_meta(options, escalation),
+            )
+
+    def complete_with_usage(
+        self,
+        name: str,
+        system: str,
+        user: str,
+        response_model: Any = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[Any, int, Any]:
+        decision = self.decide(name, system, user, options)
+        try:
+            return self._client_for(decision.tier).complete_with_usage(
+                name, system, user, response_model,
+                self._with_trace_meta(options, decision),
+            )
+        except LLMResponseError:
+            escalation = self._escalate_after_parse_fail(decision)
+            if escalation is None:
+                raise
+            return self.strong_client.complete_with_usage(
+                name, system, user, response_model,
+                self._with_trace_meta(options, escalation),
+            )
+
+    def _escalate_after_parse_fail(
+        self, decision: RoutingDecision
+    ) -> RoutingDecision | None:
+        """Decide whether a cheap-tier parse failure should retry on strong.
+
+        Returns the strong-tier decision to retry with, or ``None`` to re-raise
+        (already on strong, or escalate-on-parse-fail disabled)."""
+        if decision.tier is Tier.STRONG or not self._config.escalate_on_parse_fail:
+            return None
+        return RoutingDecision(
+            Tier.STRONG,
+            self._config.strong_model,
+            self._config.strong_provider,
+            "cheap parse failure → escalate",
+        )

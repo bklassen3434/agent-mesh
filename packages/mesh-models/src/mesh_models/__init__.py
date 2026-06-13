@@ -13,6 +13,13 @@ from mesh_models.claim import (
     claim_type_for_predicate,
 )
 from mesh_models.entity import Entity, EntityType
+from mesh_models.field import (
+    AI_ROBOTICS_PROFILE,
+    DEFAULT_FIELD_ID,
+    DEFAULT_FIELD_SLUG,
+    Field,
+    FieldProfile,
+)
 from mesh_models.graph import GraphData, GraphDataEdge, GraphDataNode
 from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
 from mesh_models.investigation import Investigation, InvestigationStatus
@@ -28,7 +35,10 @@ from mesh_models.schedule import (
 from mesh_models.source import Source, SourceType
 
 __all__ = [
+    "AI_ROBOTICS_PROFILE",
     "ALLOWED_INTERVAL_HOURS",
+    "DEFAULT_FIELD_ID",
+    "DEFAULT_FIELD_SLUG",
     "PREDICATE_TO_CLAIM_TYPE",
     "AgentHeuristic",
     "AgentHeuristicRevision",
@@ -41,6 +51,8 @@ __all__ = [
     "ClaimType",
     "Entity",
     "EntityType",
+    "Field",
+    "FieldProfile",
     "GraphData",
     "GraphDataEdge",
     "GraphDataNode",

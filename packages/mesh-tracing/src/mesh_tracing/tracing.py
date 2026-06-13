@@ -57,6 +57,7 @@ def trace_generation(
     usage: dict[str, int] | None = None,
     cost_usd: float | None = None,
     agent_name: str | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> None:
     """Record a completed LLM generation to Langfuse with full prompt/output/timing.
 
@@ -65,7 +66,9 @@ def trace_generation(
     is attached to the Langfuse generation so per-agent / per-skill token cost
     is queryable; ``cost_usd`` (computed from list prices upstream) is recorded
     as the generation's total cost, and ``agent_name`` + skill (``name``) land
-    in metadata for attribution.
+    in metadata for attribution. ``metadata`` adds extra key/values to the
+    generation metadata (Phase 20 routing attaches tier + escalation reason
+    here, so per-tier volume and escalation rate are queryable).
 
     No-ops silently when Langfuse env vars are absent or the package is not installed.
     Never raises — tracing must not break the pipeline.
@@ -98,6 +101,7 @@ def trace_generation(
             "metadata": {
                 "agent": agent_name,
                 "skill": name,
+                **(metadata or {}),
                 **(
                     {
                         "cache_read_tokens": usage.get("cache_read_tokens", 0),

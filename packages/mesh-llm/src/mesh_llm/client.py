@@ -161,7 +161,11 @@ class OllamaClient:
         response_model: type[T] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[str | T, int, LLMUsage]:
-        merged_options = {**_DEFAULT_OPTIONS, **(options or {})}
+        # Strip the reserved routing-metadata key (Phase 20) before it reaches
+        # Ollama as a model option; forward it to tracing instead.
+        opts = dict(options or {})
+        route_meta = opts.pop("_route", None)
+        merged_options = {**_DEFAULT_OPTIONS, **opts}
         schema = response_model.model_json_schema() if response_model is not None else None
 
         start = time.monotonic()
@@ -193,6 +197,7 @@ class OllamaClient:
             usage=usage.model_dump(),
             cost_usd=None,
             agent_name=self.agent_name,
+            metadata=route_meta if isinstance(route_meta, dict) else None,
         )
 
         if response_model is None:

@@ -1356,3 +1356,160 @@ def reconcile_entities_cmd(
         console.print(
             "[yellow]Dry run: re-run with --apply to perform these merges.[/yellow]"
         )
+
+
+@cli.command("consolidate-beliefs")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Perform merges + decay/archival (default: dry-run — compute + report).",
+)
+@click.option(
+    "--report-path",
+    "report_path",
+    default="docs/belief-consolidation-report.md",
+    show_default=True,
+)
+@click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
+@click.option(
+    "--field",
+    default="ai-robotics",
+    show_default=True,
+    help="Field slug to scope consolidation to (never crosses fields).",
+)
+@click.option(
+    "--no-decay",
+    "no_decay",
+    is_flag=True,
+    help="Skip the staleness decay + archival pass (merge only).",
+)
+def consolidate_beliefs_cmd(
+    apply_changes: bool, report_path: str, k: int, field: str, no_decay: bool
+) -> None:
+    """One-time belief consolidation over one field's held corpus (Phase 19).
+
+    Backfills statement_embedding for any held belief missing one, then
+    blocks → matches → merges semantic duplicates (middle band via the Anthropic
+    Batch API when available) and ages stale beliefs (decay + archival). Writes a
+    report (before/after counts, sample of merges) for false-merge review.
+    Read-only by default — pass --apply to write. Idempotent.
+    """
+    from pathlib import Path
+
+    from mesh_agents.belief_reconcile import reconcile_beliefs, render_report_markdown
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import make_embedder, make_llm_client
+
+    embedder = make_embedder()
+    llm: Any | None
+    try:
+        llm = make_llm_client(agent_name="belief_consolidator")
+        llm.health_check()
+    except Exception as exc:  # provider not ready → high-band auto-merges only
+        console.print(f"[yellow]LLM unavailable ({exc}); adjudicating none.[/yellow]")
+        llm = None
+
+    mode = "APPLY" if apply_changes else "dry-run"
+    console.print(f"Consolidating beliefs ([cyan]{mode}[/cyan])…")
+    conn = get_connection()  # writer
+    try:
+        fld = get_field_by_slug(conn, field)
+        field_id = fld.id if fld is not None else field
+        report = reconcile_beliefs(
+            conn, embedder, llm, k=k, dry_run=not apply_changes,
+            decay=not no_decay, field_id=field_id,
+        )
+    finally:
+        conn.close()
+
+    console.print(
+        f"[green]held before={report.beliefs_held_before} "
+        f"after={report.beliefs_held_after} merges={report.merges} "
+        f"auto={report.auto_merges} adjudicated={report.adjudications} "
+        f"decayed={report.decayed} archived={report.archived} "
+        f"embedded={report.embedded_now}[/green]"
+    )
+    out = Path(report_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_report_markdown(report))
+    console.print(f"Report written to [cyan]{out}[/cyan]")
+    if not apply_changes and report.merges:
+        console.print(
+            "[yellow]Dry run: re-run with --apply to perform these merges.[/yellow]"
+        )
+
+
+@cli.group("beliefs")
+def beliefs() -> None:
+    """Phase 19 belief-consolidation inspection."""
+
+
+@beliefs.command("duplicates")
+@click.option(
+    "--field",
+    default="ai-robotics",
+    show_default=True,
+    help="Field slug to scope to (consolidation never crosses fields).",
+)
+@click.option("--k", default=10, type=int, show_default=True, help="Blocking neighbours.")
+@click.option("--limit", default=50, type=int, show_default=True)
+def beliefs_duplicates(field: str, k: int, limit: int) -> None:
+    """List candidate duplicate belief pairs above the low band (read-only).
+
+    Embeds + blocks each held belief and shows pairs whose cosine similarity
+    clears the reject floor, with their band (merge / adjudicate), so pending
+    consolidation can be eyeballed without running the sweep.
+    """
+    from mesh_agents.belief_consolidation import BeliefMergeConfig, band
+    from mesh_agents.belief_reconcile import ensure_belief_embeddings
+    from mesh_db.beliefs import belief_family, find_candidate_duplicate_beliefs
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import belief_embed_text, make_embedder
+
+    cfg = BeliefMergeConfig.from_env()
+    embedder = make_embedder()
+    conn = get_connection()  # writer (embedding backfill may write)
+    try:
+        fld = get_field_by_slug(conn, field)
+        field_id = fld.id if fld is not None else field
+        ensure_belief_embeddings(conn, embedder, field_id)
+        held = list_beliefs(conn, currently_held=True, limit=100000, field_id=field_id)
+        seen: set[frozenset[str]] = set()
+        rows: list[tuple[str, str, str, str, float, str]] = []
+        for b in held:
+            vec = embedder.embed([belief_embed_text(b.topic, b.statement)])[0]
+            family = belief_family(b.topic)
+            for nb_id, nb_topic, _stmt, distance in find_candidate_duplicate_beliefs(
+                conn, vec, exclude_id=b.id, k=k, field_id=field_id, family=family
+            ):
+                pair = frozenset({b.id, nb_id})
+                if len(pair) < 2 or pair in seen:
+                    continue
+                similarity = 1.0 - distance
+                decision = band(similarity, cfg)
+                if decision == "reject":
+                    continue
+                seen.add(pair)
+                rows.append((b.id, b.topic, nb_id, nb_topic, similarity, decision))
+    finally:
+        conn.close()
+
+    rows.sort(key=lambda r: r[4], reverse=True)
+    rows = rows[:limit]
+    if not rows:
+        console.print("[dim]No candidate duplicate belief pairs above the low band.[/dim]")
+        return
+
+    table = Table(title=f"Candidate duplicate beliefs ({field})")
+    table.add_column("A", style="dim", max_width=8)
+    table.add_column("Topic A", overflow="fold")
+    table.add_column("B", style="dim", max_width=8)
+    table.add_column("Topic B", overflow="fold")
+    table.add_column("Cosine", justify="right")
+    table.add_column("Band", style="cyan")
+    for a_id, a_topic, b_id, b_topic, sim, dband in rows:
+        table.add_row(
+            a_id[:8], a_topic, b_id[:8], b_topic, f"{sim:.3f}", dband
+        )
+    console.print(table)

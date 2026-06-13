@@ -19,9 +19,17 @@ byte-identical to the prior hardcoded string.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from importlib.resources import files
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+
+# The verbatim AI/robotics few-shot block (the EXAMPLE 1..17 section of the
+# legacy extraction prompt), kept as packaged data so the canonical profile
+# reproduces the prior prompt byte-for-byte (Phase 17b).
+_AI_ROBOTICS_EXAMPLES = (
+    files("mesh_models").joinpath("_ai_robotics_examples.txt").read_text()
+)
 
 # The seeded default field. With no ``--field`` specified, the pipeline targets
 # this field and behaves exactly as before Phase 17.
@@ -64,16 +72,12 @@ class Field(BaseModel):
 AI_ROBOTICS_PROFILE = FieldProfile(
     slug=DEFAULT_FIELD_SLUG,
     name="AI & Robotics",
-    description=(
-        "an AI/robotics research knowledge base, tracking models, benchmarks, "
-        "labs, methods, datasets, and the systems built on them"
-    ),
-    entity_type_hints=[
-        "models (e.g. GPT-4, Gemini, GR00T N1)",
-        "benchmarks / datasets (e.g. MMLU, SWE-bench)",
-        "labs / organizations (e.g. OpenAI, DeepMind)",
-        "methods / architectures (e.g. RLHF, transformer)",
-    ],
-    extraction_examples="",
+    # Byte-exact pieces: ``description`` is the legacy domain clause, the hints
+    # are the legacy rule-4 entity examples, and ``extraction_examples`` is the
+    # legacy EXAMPLE 1..17 block — so the built prompt is byte-identical to the
+    # prior hardcoded string (Phase 17b, asserted in tests).
+    description="an AI/robotics research knowledge base",
+    entity_type_hints=["GPT-4", "RoboAgent", "MMLU"],
+    extraction_examples=_AI_ROBOTICS_EXAMPLES,
     topic_label="sota",
 )

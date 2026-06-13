@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-CLAIM_EXTRACTION_SYSTEM = """\
+from mesh_models.field import AI_ROBOTICS_PROFILE, FieldProfile
+
+_LEGACY_CLAIM_EXTRACTION_SYSTEM = """\
 You are a claim extractor for an AI/robotics research knowledge base.
 
 Given a title and a piece of source text — which may be a paper abstract, blog post, forum discussion, repository description, or leaderboard snapshot — extract ONLY the most concrete, factual claims that can be expressed using one of these predicates:
@@ -494,7 +496,7 @@ def format_extraction_user(title: str, abstract: str) -> str:
     return CLAIM_EXTRACTION_USER.format(title=title, abstract=abstract)
 
 
-SKEPTIC_SYSTEM = """\
+_LEGACY_SKEPTIC_SYSTEM = """\
 You are a skeptic in an AI/robotics research knowledge base. Your job is to falsify or weaken existing beliefs by finding evidence problems in the claims that support them.
 
 You will receive:
@@ -630,7 +632,7 @@ def format_consolidation_user(
     )
 
 
-PERSONALIZER_SYSTEM = """\
+_LEGACY_PERSONALIZER_SYSTEM = """\
 You are a personalization filter for an AI/robotics research knowledge base. You read a user's profile (a free-form markdown description of what they care about) and a set of candidate items (new beliefs, belief revisions, and high-confidence claims from the last 24h) and pick out the subset that's worth their attention today.
 
 For each item, judge:
@@ -698,3 +700,87 @@ def format_personalizer_user(
         n_revisions=n_revisions,
         n_claims=n_claims,
     )
+
+
+# ── Profile-driven system-prompt builders (Phase 17b) ─────────────────────────
+#
+# The three system prompts are field-framing + field-supplied examples wrapped
+# around a UNIVERSAL core (the predicate vocabulary, object schemas, verdict /
+# section taxonomy — none of which moves per field). The builders template only
+# the framing: the domain clause (``profile.description``), the rule-4 entity
+# examples (``profile.entity_type_hints``), and the extraction few-shot
+# (``profile.extraction_examples``). Everything else is sliced verbatim from the
+# legacy strings, so the ai-robotics profile rebuilds them byte-for-byte (the
+# cache prefix is therefore per-field-stable). See tests/test_field_prompts.py.
+
+_EXT_INTRO_PREFIX = "You are a claim extractor for "
+_EXT_INTRO = _EXT_INTRO_PREFIX + AI_ROBOTICS_PROFILE.description + "."
+_EXT_RULE4 = (
+    "4. subject_name should be the canonical entity name as it appears in the "
+    'source text (e.g. "GPT-4", "RoboAgent", "MMLU").'
+)
+_EXT_EXAMPLES_ANCHOR = "=== EXAMPLE 1 ==="
+_EXT_FOOTER = (
+    "Now extract claims from the following source. "
+    "Return only valid JSON matching the schema.\n"
+)
+
+assert _LEGACY_CLAIM_EXTRACTION_SYSTEM.startswith(_EXT_INTRO)
+_ext_rest = _LEGACY_CLAIM_EXTRACTION_SYSTEM[len(_EXT_INTRO):]
+_EXT_BEFORE_RULE4 = _ext_rest[: _ext_rest.index(_EXT_RULE4)]
+_ext_after_rule4 = _ext_rest[_ext_rest.index(_EXT_RULE4) + len(_EXT_RULE4):]
+_EXT_BEFORE_EXAMPLES = _ext_after_rule4[: _ext_after_rule4.index(_EXT_EXAMPLES_ANCHOR)]
+_EXT_AFTER_EXAMPLES = _ext_after_rule4[_ext_after_rule4.rindex(_EXT_FOOTER):]
+
+
+def build_claim_extraction_system(profile: FieldProfile | None = None) -> str:
+    """Build the claim-extraction system prompt for a field's profile. With no
+    profile it rebuilds the legacy ai-robotics prompt byte-for-byte."""
+    p = profile or AI_ROBOTICS_PROFILE
+    names = ", ".join(f'"{h}"' for h in p.entity_type_hints)
+    rule4 = (
+        "4. subject_name should be the canonical entity name as it appears in "
+        f"the source text (e.g. {names})."
+    )
+    return (
+        f"{_EXT_INTRO_PREFIX}{p.description}."
+        + _EXT_BEFORE_RULE4
+        + rule4
+        + _EXT_BEFORE_EXAMPLES
+        + p.extraction_examples
+        + _EXT_AFTER_EXAMPLES
+    )
+
+
+_SKE_INTRO = "You are a skeptic in " + AI_ROBOTICS_PROFILE.description + "."
+assert _LEGACY_SKEPTIC_SYSTEM.startswith(_SKE_INTRO)
+_SKE_BODY = _LEGACY_SKEPTIC_SYSTEM[len(_SKE_INTRO):]
+
+
+def build_skeptic_system(profile: FieldProfile | None = None) -> str:
+    """Build the skeptic system prompt for a field's profile (byte-identical to
+    the legacy prompt for the ai-robotics profile)."""
+    p = profile or AI_ROBOTICS_PROFILE
+    return f"You are a skeptic in {p.description}." + _SKE_BODY
+
+
+_PER_INTRO = (
+    "You are a personalization filter for " + AI_ROBOTICS_PROFILE.description + "."
+)
+assert _LEGACY_PERSONALIZER_SYSTEM.startswith(_PER_INTRO)
+_PER_BODY = _LEGACY_PERSONALIZER_SYSTEM[len(_PER_INTRO):]
+
+
+def build_personalizer_system(profile: FieldProfile | None = None) -> str:
+    """Build the personalizer system prompt for a field's profile (byte-identical
+    to the legacy prompt for the ai-robotics profile)."""
+    p = profile or AI_ROBOTICS_PROFILE
+    return f"You are a personalization filter for {p.description}." + _PER_BODY
+
+
+# Back-compat module constants — the ai-robotics defaults, equal to the legacy
+# strings. Existing imports keep working; new code should call the builders with
+# the run's FieldProfile.
+CLAIM_EXTRACTION_SYSTEM = build_claim_extraction_system()
+SKEPTIC_SYSTEM = build_skeptic_system()
+PERSONALIZER_SYSTEM = build_personalizer_system()

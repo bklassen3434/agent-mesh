@@ -40,6 +40,7 @@ from mesh_agents.consolidator import (
 )
 from mesh_db.connection import get_connection
 from mesh_db.episodic import EpisodicEntry, recall_history
+from mesh_db.fields import list_fields
 from mesh_db.heuristics import list_heuristics
 from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.pg_migrations import init_pg
@@ -136,6 +137,7 @@ class ConsolidationState(TypedDict):
 class _DistillWork(TypedDict):
     """Per-target payload for the distill_one fan-out worker."""
 
+    field_id: str
     agent: str
     skill: str
     entries: list[dict[str, Any]]
@@ -167,12 +169,15 @@ def _provenance_from_entries(
 MAX_DEDUP = 200
 
 
-def _already_present(conn: Any, agent: str, skill: str, text: str) -> bool:
+def _already_present(
+    conn: Any, agent: str, skill: str, text: str, field_id: str
+) -> bool:
     """Skip a candidate if an active, unexpired heuristic with identical text
-    already exists for this scope — avoids flooding the store with re-distilled
-    duplicates across scheduled runs."""
+    already exists for this scope (within the field) — avoids flooding the store
+    with re-distilled duplicates across scheduled runs."""
     existing = list_heuristics(
-        conn, agent=agent, skill=skill, active=True, include_expired=False, limit=MAX_DEDUP,
+        conn, agent=agent, skill=skill, active=True, include_expired=False,
+        limit=MAX_DEDUP, field_id=field_id,
     )
     return any(h.heuristic.strip() == text.strip() for h in existing)
 
@@ -183,6 +188,7 @@ def _persist_candidates(
     candidates: list[Any],
     run_ids: list[str],
     claim_ids: list[str],
+    field_id: str,
 ) -> int:
     written = 0
     ttl = _ttl_days()
@@ -190,12 +196,14 @@ def _persist_candidates(
         if not run_ids and not claim_ids:
             log.warning("consolidation_skip_no_provenance", agent=agent)
             continue
-        if _already_present(conn, agent, candidate.skill, candidate.heuristic):
+        if _already_present(conn, agent, candidate.skill, candidate.heuristic, field_id):
             continue
         proposal = candidate_to_proposal(
             agent, candidate, run_ids=run_ids, claim_ids=claim_ids, ttl_days=ttl
         )
-        persist_heuristic(conn, proposal, revised_by_agent=_CONSOLIDATOR_AGENT)
+        persist_heuristic(
+            conn, proposal, revised_by_agent=_CONSOLIDATOR_AGENT, field_id=field_id
+        )
         written += 1
     return written
 
@@ -217,33 +225,38 @@ def build_consolidation_graph(
     async def load_history(state: ConsolidationState) -> dict[str, Any]:
         targets = _targets()
         limit = _history_limit()
+        fields = list_fields(conn, active_only=True)
         built: list[dict[str, Any]] = []
-        for agent, skill in targets:
-            entries = recall_history(conn, agent, limit=limit)
-            if not entries:
-                continue
-            run_ids, claim_ids = _provenance_from_entries(entries)
-            if not run_ids and not claim_ids:
-                # No provenance to ground a heuristic in — skip (provenance is
-                # mandatory).
-                continue
-            built.append(
-                {
-                    "agent": agent,
-                    "skill": skill,
-                    "entries": [e.model_dump(mode="json") for e in entries],
-                    "run_ids": run_ids,
-                    "claim_ids": claim_ids,
-                }
-            )
+        # Distill per (field, agent, skill): an agent's history — and the
+        # heuristics distilled from it — never cross fields (Phase 17a).
+        for field in fields:
+            for agent, skill in targets:
+                entries = recall_history(conn, agent, limit=limit, field_id=field.id)
+                if not entries:
+                    continue
+                run_ids, claim_ids = _provenance_from_entries(entries)
+                if not run_ids and not claim_ids:
+                    # No provenance to ground a heuristic in — skip (provenance is
+                    # mandatory).
+                    continue
+                built.append(
+                    {
+                        "field_id": field.id,
+                        "agent": agent,
+                        "skill": skill,
+                        "entries": [e.model_dump(mode="json") for e in entries],
+                        "run_ids": run_ids,
+                        "claim_ids": claim_ids,
+                    }
+                )
         log.info(
             "consolidation_history_loaded",
-            targets=len(targets),
+            targets=len(targets) * len(fields),
             with_history=len(built),
         )
         return {
             "targets": built,
-            "targets_considered": len(targets),
+            "targets_considered": len(targets) * len(fields),
             "targets_with_history": len(built),
         }
 
@@ -256,6 +269,7 @@ def build_consolidation_graph(
             Send(
                 "distill_one",
                 {
+                    "field_id": t["field_id"],
                     "agent": t["agent"],
                     "skill": t["skill"],
                     "entries": t["entries"],
@@ -274,7 +288,8 @@ def build_consolidation_graph(
             distill_pure, sync_llm, agent, state["skill"], entries
         )
         written = _persist_candidates(
-            conn, agent, result.heuristics, state["run_ids"], state["claim_ids"]
+            conn, agent, result.heuristics, state["run_ids"], state["claim_ids"],
+            state["field_id"],
         )
         log.info(
             "consolidation_distilled",
@@ -294,7 +309,13 @@ def build_consolidation_graph(
         for t in state["targets"]:
             entries = [EpisodicEntry.model_validate(e) for e in t["entries"]]
             system, user = build_consolidation_prompt(t["agent"], t["skill"], entries)
-            items.append(BatchRequestItem(custom_id=t["agent"], system=system, user=user))
+            # custom_id is per (field, agent) so two fields' same-agent targets
+            # never collide in the batch.
+            items.append(
+                BatchRequestItem(
+                    custom_id=f"{t['field_id']}::{t['agent']}", system=system, user=user
+                )
+            )
         if not items:
             return {"batch_id": None}
         batch_id = await asyncio.to_thread(
@@ -333,19 +354,22 @@ def build_consolidation_graph(
         )
         written = 0
         usages: list[dict[str, Any]] = []
-        by_agent = {t["agent"]: t for t in state["targets"]}
-        for agent, t in by_agent.items():
-            res = results.get(agent)
+        by_custom_id = {f"{t['field_id']}::{t['agent']}": t for t in state["targets"]}
+        for custom_id, t in by_custom_id.items():
+            agent = t["agent"]
+            res = results.get(custom_id)
             if res is None or res.parsed is None:
                 log.warning(
                     "consolidation_batch_item_failed",
                     agent=agent,
+                    field_id=t["field_id"],
                     error=res.error if res else "missing result",
                 )
                 continue
             result = cast(ConsolidationResult, res.parsed)
             n = _persist_candidates(
-                conn, agent, result.heuristics, t["run_ids"], t["claim_ids"]
+                conn, agent, result.heuristics, t["run_ids"], t["claim_ids"],
+                t["field_id"],
             )
             written += n
             # Trace the batched generation to Langfuse at the discounted rate.

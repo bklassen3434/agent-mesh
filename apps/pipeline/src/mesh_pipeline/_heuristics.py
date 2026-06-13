@@ -18,6 +18,7 @@ from mesh_db.heuristics import (
     get_heuristic_by_id,
     update_heuristic,
 )
+from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
 
 
@@ -32,12 +33,14 @@ def persist_heuristic(
     *,
     revised_by_agent: str = "consolidator",
     now: datetime | None = None,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> AgentHeuristic:
     """Persist a *new* heuristic: head row + a genesis revision (append-only).
 
     The genesis revision records creation from nothing (previous_* empty/zero),
     so the revision log is a complete history from the first persist. Raises
-    ``MissingProvenanceError`` when the proposal carries no provenance."""
+    ``MissingProvenanceError`` when the proposal carries no provenance. The
+    heuristic is scoped to ``field_id`` — it never leaks to another field."""
     if not proposal.has_provenance():
         raise MissingProvenanceError(
             f"heuristic for {proposal.agent}/{proposal.skill} has no provenance"
@@ -58,7 +61,7 @@ def persist_heuristic(
         expires_at=now + timedelta(days=proposal.ttl_days),
         is_currently_active=True,
     )
-    create_heuristic(conn, heuristic)
+    create_heuristic(conn, heuristic, field_id=field_id)
     create_heuristic_revision(
         conn,
         AgentHeuristicRevision(

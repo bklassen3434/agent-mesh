@@ -68,6 +68,7 @@ from mesh_db.beliefs import (
 from mesh_db.claims import create_claim, list_claims
 from mesh_db.connection import get_connection
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
+from mesh_db.fields import get_field_by_slug
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     list_investigations,
@@ -97,6 +98,7 @@ from mesh_llm.usage import LLMUsage
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus, ClaimType, claim_type_for_predicate
 from mesh_models.entity import Entity, EntityType
+from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
 from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from pydantic import BaseModel
@@ -160,6 +162,7 @@ def _investigation_max_runs() -> int:
 
 class CoordinatorState(TypedDict):
     run_id: str
+    field_id: str  # the field this run scopes all reads/writes to (Phase 17a)
     triggered_by: str
     traceparent: str
     started_at: str  # ISO-8601
@@ -217,11 +220,12 @@ class _ExtractWork(TypedDict):
 
 
 def _dedup_and_insert_sources(
-    conn: Any, papers: list[ScoutedPaper]
+    conn: Any, papers: list[ScoutedPaper], *, field_id: str = DEFAULT_FIELD_ID
 ) -> list[ScoutedPaper]:
-    """Drop papers whose source hash already exists, insert the rest."""
+    """Drop papers whose source hash already exists (within this field), insert
+    the rest scoped to ``field_id``."""
     existing_hashes: set[str] = {
-        s.raw_content_hash for s in list_sources(conn, limit=10000)
+        s.raw_content_hash for s in list_sources(conn, limit=10000, field_id=field_id)
     }
     new_papers = [
         p for p in papers if p.source.raw_content_hash not in existing_hashes
@@ -235,15 +239,21 @@ def _dedup_and_insert_sources(
         seen.add(p.source.raw_content_hash)
         deduped.append(p)
     for paper in deduped:
-        create_source(conn, paper.source)
+        create_source(conn, paper.source, field_id=field_id)
     return deduped
 
 
 async def _resolve_entities(
-    conn: Any, client: MeshA2AClient, names: list[str], traceparent: str
+    conn: Any,
+    client: MeshA2AClient,
+    names: list[str],
+    traceparent: str,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> list[ResolvedEntityInfo]:
     """Resolve candidate names via the resolve_entities skill, falling back to
-    pure local resolution when the skill is absent or errors."""
+    pure local resolution when the skill is absent or errors. The existing-entity
+    context is scoped to ``field_id`` so resolution never sees another field."""
     if not names:
         return []
     existing = [
@@ -253,7 +263,7 @@ async def _resolve_entities(
             aliases=e.aliases,
             entity_type=e.type.value,
         )
-        for e in list_entities(conn, limit=10000)
+        for e in list_entities(conn, limit=10000, field_id=field_id)
     ]
     if "resolve_entities" in client.skill_map():
         result, err = await call_skill_node(
@@ -277,7 +287,7 @@ async def _resolve_entities(
 
 
 def _persist_entities(
-    conn: Any, resolved: list[ResolvedEntityInfo]
+    conn: Any, resolved: list[ResolvedEntityInfo], *, field_id: str = DEFAULT_FIELD_ID
 ) -> tuple[dict[str, str], int]:
     """Persist is_new entities, return (name→entity_id map, created count)."""
     entity_map: dict[str, str] = {}
@@ -293,6 +303,7 @@ def _persist_entities(
                         canonical_name=info.canonical_name,
                         type=EntityType(info.entity_type),
                     ),
+                    field_id=field_id,
                 )
                 created += 1
             except Exception:
@@ -308,17 +319,22 @@ async def _resolve_and_persist(
     names: list[str],
     traceparent: str,
     config: ResolutionConfig | None = None,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[dict[str, str], int, list[ResolvedEntityInfo]]:
     """Resolve + persist candidate names, returning (name→id, created, infos).
 
     With an embedder (the live pipeline) this is the Phase 13 semantic path:
     alias fast-path → block → match, creating entities with embeddings. Without
     one (tests / no-embedder setups) it falls back to the exact-match A2A skill.
+    All resolution + creation is scoped to ``field_id`` (Phase 17a).
     """
-    resolved = await _resolve_entities(conn, client, names, traceparent)
+    resolved = await _resolve_entities(
+        conn, client, names, traceparent, field_id=field_id
+    )
     if embedder is None:
         # No embedder → exact-match only (tests / minimal setups).
-        entity_map, created = _persist_entities(conn, resolved)
+        entity_map, created = _persist_entities(conn, resolved, field_id=field_id)
         return entity_map, created, resolved
 
     # Semantic path: keep the skill's exact-match + type assignment, but for
@@ -333,7 +349,7 @@ async def _resolve_and_persist(
         if info.is_new:
             final = resolve_entity_semantic(
                 conn, embedder, llm, info.name,
-                type_hint=info.entity_type, config=config,
+                type_hint=info.entity_type, config=config, field_id=field_id,
             )
         else:
             final = info
@@ -349,6 +365,8 @@ def _insert_claims(
     pairs: list[tuple[ScoutedPaper, list[ExtractedClaim]]],
     entity_map: dict[str, str],
     url_to_investigation_id: dict[str, str],
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[list[ResolvedClaim], int]:
     """Insert claims for resolved subjects, attaching investigation lineage."""
     resolved_claims: list[ResolvedClaim] = []
@@ -367,7 +385,7 @@ def _insert_claims(
                 raw_excerpt=ec.raw_excerpt,
                 confidence=ec.confidence,
             )
-            create_claim(conn, claim)
+            create_claim(conn, claim, field_id=field_id)
             inserted += 1
             inv_id = url_to_investigation_id.get(paper.source.url)
             if inv_id is not None:
@@ -405,13 +423,15 @@ async def _run_sota(
     resolved_claims: list[ResolvedClaim],
     traceparent: str,
     weights: ConfidenceWeights,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
     """Update SOTA beliefs from the resolved claims. Returns (created, revised)."""
     existing_sota = [
         BeliefSummary(
             belief_id=b.id, topic=b.topic, statement=b.statement, confidence=b.confidence
         )
-        for b in list_beliefs(conn, currently_held=True, limit=1000)
+        for b in list_beliefs(conn, currently_held=True, limit=1000, field_id=field_id)
         if b.topic.startswith("sota:")
     ]
     belief_updates: list[BeliefUpdate]
@@ -448,7 +468,7 @@ async def _run_sota(
                 supporting_claim_ids=update.supporting_claim_ids,
                 confidence=update.new_confidence,
             )
-            create_belief(conn, belief)
+            create_belief(conn, belief, field_id=field_id)
             # 14d: confidence comes from the belief's own evidence signals, not
             # the seed constant from the SOTA computation.
             update_belief(
@@ -487,7 +507,11 @@ async def _run_sota(
 
 
 def _run_capability(
-    conn: Any, resolved_claims: list[ResolvedClaim], weights: ConfidenceWeights
+    conn: Any,
+    resolved_claims: list[ResolvedClaim],
+    weights: ConfidenceWeights,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
     """Synthesize entity-anchored capability beliefs (Phase 14b). Returns
     (created, revised).
@@ -507,7 +531,7 @@ def _run_capability(
 
     existing = {
         b.topic: b
-        for b in list_beliefs(conn, currently_held=True, limit=1000)
+        for b in list_beliefs(conn, currently_held=True, limit=1000, field_id=field_id)
         if b.topic.startswith(CAPABILITY_TOPIC_PREFIX)
     }
 
@@ -521,6 +545,7 @@ def _run_capability(
             claim_type=ClaimType.capability,
             status=ClaimStatus.active,
             limit=200,
+            field_id=field_id,
         )
         claims = [
             ResolvedClaim(
@@ -560,7 +585,7 @@ def _run_capability(
                 supporting_claim_ids=update.supporting_claim_ids,
                 confidence=update.new_confidence,
             )
-            create_belief(conn, belief)
+            create_belief(conn, belief, field_id=field_id)
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
@@ -615,7 +640,11 @@ def _edge_target_names(claims: list[ExtractedClaim]) -> set[str]:
 
 
 def _run_edges(
-    conn: Any, resolved_claims: list[ResolvedClaim], entity_map: dict[str, str]
+    conn: Any,
+    resolved_claims: list[ResolvedClaim],
+    entity_map: dict[str, str],
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> int:
     """Synthesize claim-grounded relationship edges from relational claims
     (Phase 14c). Returns the number of *new* edges created (repeat assertions
@@ -640,6 +669,7 @@ def _run_edges(
             edge_type,
             rc.claim_id,
             rc.confidence,
+            field_id=field_id,
         )
         if was_created:
             created += 1
@@ -692,10 +722,12 @@ async def _extract_papers(
     return pairs, errors, usage_rows
 
 
-def _open_investigations(conn: Any) -> list[Any]:
+def _open_investigations(conn: Any, *, field_id: str = DEFAULT_FIELD_ID) -> list[Any]:
     return list_investigations(
-        conn, status=InvestigationStatus.open, limit=100
-    ) + list_investigations(conn, status=InvestigationStatus.in_progress, limit=100)
+        conn, status=InvestigationStatus.open, limit=100, field_id=field_id
+    ) + list_investigations(
+        conn, status=InvestigationStatus.in_progress, limit=100, field_id=field_id
+    )
 
 
 def _investigation_lifecycle(conn: Any, investigations: list[Any]) -> tuple[int, int]:
@@ -743,7 +775,7 @@ def _item_identity(paper: ScoutedPaper) -> tuple[str, str, str]:
 
 
 def _dedup_for_extraction(
-    conn: Any, papers: list[ScoutedPaper], now: datetime
+    conn: Any, papers: list[ScoutedPaper], now: datetime, *, field_id: str = DEFAULT_FIELD_ID
 ) -> tuple[list[ScoutedPaper], int]:
     """Partition scouted papers into (to_extract, skipped_count) using the
     processed_items ledger. Unseen + content-changed items are extracted;
@@ -758,9 +790,11 @@ def _dedup_for_extraction(
         if key in seen_in_batch:
             continue
         seen_in_batch.add(key)
-        decision = decide(conn, source_type, external_id, content_hash)
+        decision = decide(
+            conn, source_type, external_id, content_hash, field_id=field_id
+        )
         if decision is ProcessedDecision.unchanged:
-            touch_processed_item(conn, source_type, external_id, now)
+            touch_processed_item(conn, source_type, external_id, now, field_id=field_id)
             skipped += 1
         else:
             to_extract.append(paper)
@@ -858,12 +892,13 @@ def build_coordinator_graph(
         return patch
 
     async def ingest(state: CoordinatorState) -> dict[str, Any]:
+        field_id = state["field_id"]
         papers = [ScoutedPaper.model_validate(p) for p in state["raw_papers"]]
         now = datetime.now(UTC)
         # Dedup gate: skip extraction for items already processed (unchanged
         # content). Only unseen / content-changed items proceed to extraction.
-        to_extract, skipped = _dedup_for_extraction(conn, papers, now)
-        new_papers = _dedup_and_insert_sources(conn, to_extract)
+        to_extract, skipped = _dedup_for_extraction(conn, papers, now, field_id=field_id)
+        new_papers = _dedup_and_insert_sources(conn, to_extract, field_id=field_id)
         log.info(
             "ingest",
             items_seen=len(papers),
@@ -929,12 +964,17 @@ def build_coordinator_graph(
             # Relational claims also reference a *target* entity (in the object);
             # resolve those too so 14c can ground edges on real nodes.
             names.update(_edge_target_names(claims))
+        field_id = state["field_id"]
         entity_map, created, resolved = await _resolve_and_persist(
             conn, client, embedder, llm, list(names),
-            state["traceparent"], resolution_config,
+            state["traceparent"], resolution_config, field_id=field_id,
         )
-        resolved_claims, inserted = _insert_claims(conn, pairs, entity_map, {})
-        relationships_created = _run_edges(conn, resolved_claims, entity_map)
+        resolved_claims, inserted = _insert_claims(
+            conn, pairs, entity_map, {}, field_id=field_id
+        )
+        relationships_created = _run_edges(
+            conn, resolved_claims, entity_map, field_id=field_id
+        )
         has_mb = any(r.entity_type in _MODEL_LIKE_TYPES for r in resolved)
         log.info(
             "entities_resolved",
@@ -965,11 +1005,13 @@ def build_coordinator_graph(
         resolved_claims = [
             ResolvedClaim.model_validate(rc) for rc in state["resolved_claims"]
         ]
+        field_id = state["field_id"]
         sota_created, sota_revised = await _run_sota(
-            conn, client, resolved_claims, state["traceparent"], confidence_weights
+            conn, client, resolved_claims, state["traceparent"], confidence_weights,
+            field_id=field_id,
         )
         cap_created, cap_revised = _run_capability(
-            conn, resolved_claims, confidence_weights
+            conn, resolved_claims, confidence_weights, field_id=field_id
         )
         log.info(
             "beliefs_synthesized",
@@ -990,15 +1032,16 @@ def build_coordinator_graph(
         # node's job is to decide whether the run has open investigations to
         # dispatch; it's also the documented hook where a coordinator-side
         # curator dispatch would live if one is ever wired in.
-        has_open = len(_open_investigations(conn)) > 0
+        has_open = len(_open_investigations(conn, field_id=state["field_id"])) > 0
         return {"has_open_investigations": has_open}
 
     def route_after_curate(state: CoordinatorState) -> str:
         return "dispatch_investigations" if state["has_open_investigations"] else "finalize"
 
     async def dispatch_investigations(state: CoordinatorState) -> dict[str, Any]:
+        field_id = state["field_id"]
         skill_map = client.skill_map()
-        investigations = _open_investigations(conn)
+        investigations = _open_investigations(conn, field_id=field_id)
         if not investigations:
             return {}
         tp = state["traceparent"]
@@ -1041,7 +1084,7 @@ def build_coordinator_graph(
                     investigation_papers.setdefault(inv.id, []).append(paper.source.url)
                     dispatched += 1
 
-        new_papers = _dedup_and_insert_sources(conn, gathered)
+        new_papers = _dedup_and_insert_sources(conn, gathered, field_id=field_id)
         pairs, extract_errors, usage_rows = await _extract_papers(
             client, new_papers, tp, semaphore
         )
@@ -1059,11 +1102,14 @@ def build_coordinator_graph(
         names = {ec.subject_name for _, claims in pairs for ec in claims}
         entity_map, created, _resolved = await _resolve_and_persist(
             conn, client, embedder, llm, list(names), tp, resolution_config,
+            field_id=field_id,
         )
         url_to_inv = {
             url: inv_id for inv_id, urls in investigation_papers.items() for url in urls
         }
-        _, inserted = _insert_claims(conn, pairs, entity_map, url_to_inv)
+        _, inserted = _insert_claims(
+            conn, pairs, entity_map, url_to_inv, field_id=field_id
+        )
         resolved_count, abandoned_count = _investigation_lifecycle(conn, investigations)
         log.info(
             "investigations_dispatched",
@@ -1106,7 +1152,10 @@ def build_coordinator_graph(
             try:
                 paper = ScoutedPaper.model_validate(e["paper"])
                 source_type, external_id, content_hash = _item_identity(paper)
-                record_processed_item(conn, source_type, external_id, content_hash, now)
+                record_processed_item(
+                    conn, source_type, external_id, content_hash, now,
+                    field_id=state["field_id"],
+                )
             except Exception:  # never let ledger bookkeeping abort finalize
                 log.warning("processed_item_record_failed", paper=e.get("paper"))
         errors = [
@@ -1131,7 +1180,7 @@ def build_coordinator_graph(
             avg_extraction_latency_ms=avg,
             errors=errors,
         )
-        create_pipeline_run(conn, run)
+        create_pipeline_run(conn, run, field_id=state["field_id"])
         log.info(
             "coordinator_complete",
             run_id=run.id,
@@ -1216,23 +1265,34 @@ async def run_pipeline(
     max_papers: int,
     since: datetime | None,
     db_path: str | None = None,
+    field: str = DEFAULT_FIELD_SLUG,
 ) -> PipelineResult:
     """Phase 8 coordinator pipeline, driven by a LangGraph graph.
 
     Discovers agents via A2A cards and dispatches by skill id, exactly as
     before; orchestration state is checkpointed (Postgres in docker,
     in-memory locally) with thread_id == run_id.
+
+    ``field`` (slug) scopes every read/write of field-state to one field
+    (default ``ai-robotics`` — the seeded field that reproduces prior behavior).
     """
-    log.info("coordinator_starting", categories=categories, max_papers=max_papers)
+    log.info(
+        "coordinator_starting", categories=categories, max_papers=max_papers, field=field
+    )
 
     conn = get_connection(db_path)
     init_pg()
+
+    # Resolve the field slug → id (the seeded ai-robotics field's id == slug).
+    field_row = get_field_by_slug(conn, field)
+    field_id = field_row.id if field_row is not None else DEFAULT_FIELD_ID
 
     # A manual trigger from the API/scheduler can pin the run id (so the
     # returned id matches this run's pipeline_runs row + checkpoint thread).
     run_id = os.environ.get("MESH_RUN_ID") or str(uuid.uuid4())
     initial_state: CoordinatorState = {
         "run_id": run_id,
+        "field_id": field_id,
         "triggered_by": os.environ.get("MESH_TRIGGERED_BY", "manual"),
         "traceparent": new_traceparent(),
         "started_at": datetime.now(UTC).isoformat(),

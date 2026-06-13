@@ -41,6 +41,12 @@ structlog.configure(
     help="(deprecated; ignored — the store is Postgres)",
 )
 @click.option(
+    "--field",
+    default=os.environ.get("MESH_PIPELINE_FIELD", "ai-robotics"),
+    show_default=True,
+    help="Field slug to scope this run to (A2A coordinator only)",
+)
+@click.option(
     "--a2a",
     "use_a2a",
     is_flag=True,
@@ -48,25 +54,44 @@ structlog.configure(
     help="Use A2A coordinator instead of in-process orchestrator",
 )
 def main(
-    categories: str, max_papers: int, since: str | None, db_path: str | None, use_a2a: bool
+    categories: str,
+    max_papers: int,
+    since: str | None,
+    db_path: str | None,
+    field: str,
+    use_a2a: bool,
 ) -> None:
     """Run the Agent Mesh ingestion pipeline."""
     cats = [c.strip() for c in categories.split(",") if c.strip()]
 
     if use_a2a:
         from mesh_pipeline.coordinator import parse_since, run_pipeline
-    else:
-        from mesh_pipeline.orchestrator import parse_since, run_pipeline  # type: ignore[assignment]
 
-    since_dt = parse_since(since)
-    result = asyncio.run(
-        run_pipeline(
-            categories=cats,
-            max_papers=max_papers,
-            since=since_dt,
-            db_path=db_path,
+        since_dt = parse_since(since)
+        result = asyncio.run(
+            run_pipeline(
+                categories=cats,
+                max_papers=max_papers,
+                since=since_dt,
+                db_path=db_path,
+                field=field,
+            )
         )
-    )
+    else:
+        from mesh_pipeline.orchestrator import (  # type: ignore[assignment]
+            parse_since,
+            run_pipeline,
+        )
+
+        since_dt = parse_since(since)
+        result = asyncio.run(
+            run_pipeline(
+                categories=cats,
+                max_papers=max_papers,
+                since=since_dt,
+                db_path=db_path,
+            )
+        )
 
     click.echo(f"\nPipeline run {result.run_id}")
     click.echo(f"  Papers scouted:    {result.papers_scouted}")

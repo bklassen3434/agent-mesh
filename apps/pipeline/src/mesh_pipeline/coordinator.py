@@ -64,6 +64,7 @@ from mesh_db.beliefs import (
     get_belief_by_id,
     get_belief_signals,
     list_beliefs,
+    set_belief_embedding,
     update_belief,
 )
 from mesh_db.claims import create_claim, list_claims
@@ -93,7 +94,7 @@ from mesh_db.processed_items import (
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, list_sources
-from mesh_llm import Embedder
+from mesh_llm import Embedder, belief_embed_text
 from mesh_llm.pricing import estimate_cost
 from mesh_llm.protocol import LLMClient
 from mesh_llm.usage import LLMUsage
@@ -410,6 +411,24 @@ def _insert_claims(
     return resolved_claims, inserted
 
 
+def _embed_belief(
+    conn: Any, embedder: Embedder | None, belief_id: str, topic: str, statement: str
+) -> None:
+    """Populate a belief's ``statement_embedding`` from (topic, statement) so the
+    Phase-19 consolidation sweep can block on it (Phase 19a).
+
+    A local fastembed call — NOT an LLM — so the no-hot-path-LLM principle holds.
+    No-ops when no embedder is wired (tests / minimal setups). Best-effort: an
+    embedding failure must never abort synthesis (the backfill catches misses)."""
+    if embedder is None:
+        return
+    try:
+        vec = embedder.embed([belief_embed_text(topic, statement)])[0]
+        set_belief_embedding(conn, belief_id, vec)
+    except Exception:  # never let embedding bookkeeping abort a synthesis write
+        log.warning("belief_embed_failed", belief_id=belief_id)
+
+
 def _belief_confidence(
     conn: Any, belief_id: str, weights: ConfidenceWeights
 ) -> float:
@@ -429,6 +448,7 @@ async def _run_sota(
     resolved_claims: list[ResolvedClaim],
     traceparent: str,
     weights: ConfidenceWeights,
+    embedder: Embedder | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
@@ -480,6 +500,7 @@ async def _run_sota(
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
+            _embed_belief(conn, embedder, belief.id, belief.topic, belief.statement)
             created += 1
         else:
             assert update.existing_belief_id is not None
@@ -508,6 +529,11 @@ async def _run_sota(
                 last_revised_at=revision.revised_at,
                 revision_count=existing_b.revision_count + 1,
             )
+            # Statement changed → re-embed so blocking tracks the live statement.
+            _embed_belief(
+                conn, embedder, update.existing_belief_id,
+                existing_b.topic, update.new_statement,
+            )
             revised += 1
     return created, revised
 
@@ -516,6 +542,7 @@ def _run_capability(
     conn: Any,
     resolved_claims: list[ResolvedClaim],
     weights: ConfidenceWeights,
+    embedder: Embedder | None = None,
     *,
     field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[int, int]:
@@ -595,6 +622,7 @@ def _run_capability(
             update_belief(
                 conn, belief.id, confidence=_belief_confidence(conn, belief.id, weights)
             )
+            _embed_belief(conn, embedder, belief.id, belief.topic, belief.statement)
             created += 1
         else:
             assert update.existing_belief_id is not None
@@ -616,6 +644,11 @@ def _run_capability(
                 conn, update.existing_belief_id, weights
             )
             update_belief(conn, update.existing_belief_id, confidence=new_confidence)
+            # Statement changed → re-embed so blocking tracks the live statement.
+            _embed_belief(
+                conn, embedder, update.existing_belief_id,
+                existing_full.topic, update.new_statement,
+            )
             create_revision(
                 conn,
                 BeliefRevision(
@@ -1155,10 +1188,10 @@ def build_coordinator_graph(
         field_id = state["field_id"]
         sota_created, sota_revised = await _run_sota(
             conn, client, resolved_claims, state["traceparent"], confidence_weights,
-            field_id=field_id,
+            embedder, field_id=field_id,
         )
         cap_created, cap_revised = _run_capability(
-            conn, resolved_claims, confidence_weights, field_id=field_id
+            conn, resolved_claims, confidence_weights, embedder, field_id=field_id
         )
         log.info(
             "beliefs_synthesized",

@@ -30,6 +30,9 @@ DEFAULT_INTERVALS: dict[str, int] = {
     "skeptic_sweep": 24,
     # Phase 16c: memory consolidation runs daily, offline (batch API).
     "consolidation": 24,
+    # Phase 19: belief consolidation (semantic dedup/merge + decay) runs daily,
+    # offline (batch API).
+    "belief_consolidation": 24,
     # Phase 22d: autonomous discovery runs daily.
     "discovery": 24,
 }

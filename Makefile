@@ -1,4 +1,4 @@
-.PHONY: up down logs pipeline skeptic consolidate smoke wiki api types \
+.PHONY: up down logs pipeline skeptic consolidate belief-consolidate discover smoke wiki api types \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
@@ -41,6 +41,11 @@ consolidate:
 	docker compose --profile skeptic build skeptic-sweep
 	docker compose --profile skeptic run --rm --no-deps \
 		--entrypoint "uv run mesh-consolidate" skeptic-sweep
+
+belief-consolidate:
+	docker compose --profile skeptic build skeptic-sweep
+	docker compose --profile skeptic run --rm --no-deps \
+		--entrypoint "uv run mesh-belief-consolidate" skeptic-sweep
 
 # Run one autonomous-discovery cycle — analyzes each active field for knowledge
 # gaps/trends, opens discovery investigations, and dispatches real search through

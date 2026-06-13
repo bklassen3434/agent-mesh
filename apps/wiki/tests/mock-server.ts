@@ -266,6 +266,33 @@ app.get('/api/v1/briefing', (_req, res) => {
   res.json({ date: daysAgo(0).slice(0, 10), profile_excerpt: '', sections: [] });
 });
 
+app.post('/api/v1/ask', (req: Request, res: Response) => {
+  const question = String(req.body?.question ?? '');
+  const field = String(req.query.field ?? 'ai-robotics');
+  // An explicitly "nothing-known" question exercises the uncovered state.
+  if (/nothing|unknown|chromodynamics/i.test(question)) {
+    res.json({
+      answer_markdown: 'The mesh has no evidence on this question.',
+      citations: [],
+      coverage: 'uncovered',
+      caveats: [],
+    });
+    return;
+  }
+  res.json({
+    answer_markdown:
+      `In ${field}, the leading system performs strongly [belief:belief-0]. ` +
+      `This is corroborated by a claim [claim:claim-0] about [entity:ent-0].`,
+    citations: [
+      { kind: 'belief', id: 'belief-0', quote: 'performs strongly' },
+      { kind: 'claim', id: 'claim-0', quote: 'corroborated' },
+      { kind: 'entity', id: 'ent-0', quote: 'leading system' },
+    ],
+    coverage: 'well_supported',
+    caveats: ['Evidence is recent and may shift as new sources arrive.'],
+  });
+});
+
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[mock-api] listening on http://localhost:${PORT}`);

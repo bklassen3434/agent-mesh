@@ -15,11 +15,22 @@ from mesh_db.fields import (
     set_active,
 )
 from mesh_db.pg_migrations import init_pg
+from mesh_db.search import (
+    ContextPack,
+    ScoredBelief,
+    gather_context,
+    search_beliefs,
+    search_claims,
+    search_entities,
+)
 
 __all__ = [
+    "ContextPack",
     "MeshConnection",
+    "ScoredBelief",
     "create_field",
     "enable_connector",
+    "gather_context",
     "get_connection",
     "get_connector",
     "get_field",
@@ -28,6 +39,9 @@ __all__ = [
     "list_connectors",
     "list_field_connectors",
     "list_fields",
+    "search_beliefs",
+    "search_claims",
+    "search_entities",
     "seed_connectors",
     "seed_default_field",
     "set_active",

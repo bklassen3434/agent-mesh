@@ -35,6 +35,7 @@ from mesh_models.investigation import (
     InvestigationOrigin,
     InvestigationStatus,
 )
+from mesh_models.qa import Answer, Citation, CitationKind, Coverage
 from mesh_models.relationship import Relationship
 from mesh_models.revision import BeliefRevision
 from mesh_models.schedule import (
@@ -56,15 +57,19 @@ __all__ = [
     "PREDICATE_TO_CLAIM_TYPE",
     "AgentHeuristic",
     "AgentHeuristicRevision",
+    "Answer",
     "Belief",
     "BeliefRevision",
     "Briefing",
     "BriefingSection",
+    "Citation",
+    "CitationKind",
     "Claim",
     "ClaimStatus",
     "ClaimType",
     "Connector",
     "ConnectorKind",
+    "Coverage",
     "Entity",
     "EntityType",
     "Field",

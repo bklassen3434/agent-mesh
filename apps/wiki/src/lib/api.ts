@@ -34,6 +34,9 @@ export type SkepticActivityItem = Schemas['SkepticActivityItem'];
 export type Briefing = Schemas['Briefing'];
 export type BriefingSection = Schemas['BriefingSection'];
 export type PersonalizedItem = Schemas['PersonalizedItem'];
+export type Answer = Schemas['Answer'];
+export type Citation = Schemas['Citation'];
+export type Coverage = Schemas['Coverage'];
 
 export type PageEntity = Schemas['Page_Entity_'];
 export type PageClaim = Schemas['Page_Claim_'];
@@ -162,4 +165,12 @@ export const api = {
     apiSend<Schedule>('PATCH', `/api/v1/schedules/${encodeURIComponent(jobId)}`, body),
   triggerPipeline: (jobId: string) =>
     apiSend<TriggerResult>('POST', `/api/v1/pipelines/${encodeURIComponent(jobId)}/trigger`),
+
+  // Ask page (Phase 21) -----------------------------------------------------
+  ask: (question: string, field?: string) =>
+    apiSend<Answer>(
+      'POST',
+      `/api/v1/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`,
+      { question },
+    ),
 };

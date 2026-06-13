@@ -74,3 +74,38 @@ def test_unknown_connector_rejected(tmp_db: MeshConnection) -> None:
     field_id = _other_field(tmp_db)
     with pytest.raises(ValueError):
         enable_connector(tmp_db, field_id, "does-not-exist", config={})
+
+
+# ── Phase 18a: config-driven connectors ──────────────────────────────────────
+
+
+def test_config_driven_connectors_in_catalog_only(tmp_db: MeshConnection) -> None:
+    from mesh_models.connector import ConnectorKind
+
+    slugs = {c.slug for c in list_connectors(tmp_db)}
+    assert {"web_search", "rss", "rest_json"} <= slugs
+    web = get_connector(tmp_db, "web_search")
+    assert web is not None
+    assert web.kind == ConnectorKind.config_driven
+    assert web.scout_skill_id == "scout_web_search"
+    # NOT seeded into ai-robotics — that field keeps its built-in scouts.
+    ai_ids = {fc.connector_id for fc in list_field_connectors(tmp_db, DEFAULT_FIELD_ID)}
+    assert not ({"web_search", "rss", "rest_json"} & ai_ids)
+
+
+def test_enable_config_driven_on_new_field(tmp_db: MeshConnection) -> None:
+    field_id = _other_field(tmp_db)
+    fc = enable_connector(
+        tmp_db, field_id, "web_search",
+        config={"web_seed_queries": ["precision agriculture sensors"]},
+    )
+    assert fc.config["web_seed_queries"] == ["precision agriculture sensors"]
+    # rss requires feed_url
+    with pytest.raises(ValueError):
+        enable_connector(tmp_db, field_id, "rss", config={})
+    enable_connector(
+        tmp_db, field_id, "rss",
+        config={"feed_url": "https://example.com/feed", "include_terms": ["crop"]},
+    )
+    enabled = {fc.connector_id for fc in list_field_connectors(tmp_db, field_id, enabled_only=True)}
+    assert {"web_search", "rss"} <= enabled

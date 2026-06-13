@@ -25,6 +25,10 @@ from mesh_models.field import DEFAULT_FIELD_ID
 
 class ConnectorKind(StrEnum):
     builtin = "builtin"
+    # Phase 18a: generic, code-once / configure-many connectors. One service per
+    # kind serves arbitrarily many instances, each instance just a
+    # ``field_connectors`` row with its own config (no new module/service).
+    config_driven = "config_driven"
 
 
 class Connector(BaseModel):
@@ -153,8 +157,91 @@ _BUILTIN: list[tuple[Connector, dict[str, Any]]] = [
     ),
 ]
 
-# Catalog connectors (global).
-BUILTIN_CONNECTORS: list[Connector] = [c for c, _ in _BUILTIN]
+# ── Config-driven connectors (Phase 18a) ─────────────────────────────────────
+#
+# Generic, no-code sources a user adds to *any* field by filling a config form.
+# Catalog-only: NOT seeded into ai-robotics (that field keeps its built-in
+# scouts). Each is served by one ``config_driven`` service that runs every
+# configured instance. The field-mapping for ``rest_json`` is expressed as flat
+# ``str`` keys (dotted JSON paths) so it stays inside the existing
+# ``validate_connector_config`` type system — no nested-dict schema type needed.
+
+_CONFIG_DRIVEN: list[Connector] = [
+    Connector(
+        id="web_search",
+        slug="web_search",
+        name="Web Search",
+        description="Brave web search over seed queries; the universal fallback source.",
+        kind=ConnectorKind.config_driven,
+        config_schema={
+            "web_seed_queries": {
+                "type": "list[str]", "required": True,
+                "description": "Web search queries run each pipeline run",
+            },
+        },
+    ),
+    Connector(
+        id="rss",
+        slug="rss",
+        name="RSS / Atom Feed",
+        description="A single user-supplied RSS or Atom feed, with optional term filters.",
+        kind=ConnectorKind.config_driven,
+        config_schema={
+            "feed_url": {
+                "type": "str", "required": True,
+                "description": "RSS/Atom feed URL",
+            },
+            "include_terms": {
+                "type": "list[str]", "required": False,
+                "description": "Keep only items mentioning one of these terms",
+            },
+            "exclude_terms": {
+                "type": "list[str]", "required": False,
+                "description": "Drop items mentioning any of these terms",
+            },
+        },
+    ),
+    Connector(
+        id="rest_json",
+        slug="rest_json",
+        name="REST JSON API",
+        description="A generic JSON HTTP endpoint mapped to sources via field paths.",
+        kind=ConnectorKind.config_driven,
+        config_schema={
+            "endpoint": {
+                "type": "str", "required": True,
+                "description": "HTTP(S) endpoint returning JSON",
+            },
+            "query_template": {
+                "type": "str", "required": False,
+                "description": "Optional querystring appended to the endpoint",
+            },
+            "items_path": {
+                "type": "str", "required": False,
+                "description": "Dotted path to the list of items (empty = top-level list)",
+            },
+            "title_path": {
+                "type": "str", "required": False,
+                "description": "Dotted path within an item to its title",
+            },
+            "text_path": {
+                "type": "str", "required": False,
+                "description": "Dotted path within an item to its body text",
+            },
+            "url_path": {
+                "type": "str", "required": False,
+                "description": "Dotted path within an item to its URL",
+            },
+            "published_path": {
+                "type": "str", "required": False,
+                "description": "Dotted path within an item to its published timestamp",
+            },
+        },
+    ),
+]
+
+# Catalog connectors (global): the built-in scouts + the config-driven kinds.
+BUILTIN_CONNECTORS: list[Connector] = [c for c, _ in _BUILTIN] + _CONFIG_DRIVEN
 
 # ai-robotics field enablement: every built-in enabled, config = today's defaults.
 AI_ROBOTICS_FIELD_CONNECTORS: list[FieldConnector] = [

@@ -13,6 +13,7 @@ from mesh_llm.embeddings import (
     EMBED_DIM,
     Embedder,
     FastEmbedEmbedder,
+    belief_embed_text,
     entity_embed_text,
     make_embedder,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "RoutingConfig",
     "RoutingDecision",
     "Tier",
+    "belief_embed_text",
     "classify_difficulty",
     "entity_embed_text",
     "estimate_cost",

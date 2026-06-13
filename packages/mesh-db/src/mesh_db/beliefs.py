@@ -62,6 +62,25 @@ def create_belief(
     return model
 
 
+def _vector_literal(embedding: list[float]) -> str:
+    """pgvector text input format: ``[0.1,0.2,...]``. Used with a ``::vector``
+    cast so we need no extra psycopg type adapter (mirrors
+    ``mesh_db.entities._vector_literal``)."""
+    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+
+
+def set_belief_embedding(
+    conn: MeshConnection, id: str, embedding: list[float]
+) -> None:
+    """Populate ``statement_embedding`` for a belief (Phase 19a). Mirrors
+    ``set_entity_embedding`` — the embedding is a consolidation-layer write, not a
+    belief-content change (no revision is recorded for it)."""
+    conn.execute(
+        "UPDATE beliefs SET statement_embedding = %s::vector WHERE id = %s",
+        [_vector_literal(embedding), id],
+    )
+
+
 def get_belief_by_id(conn: MeshConnection, id: str) -> Belief | None:
     row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_belief(row) if row else None

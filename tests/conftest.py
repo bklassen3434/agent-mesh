@@ -13,6 +13,7 @@ _KNOWLEDGE_TABLES = [
     "entities", "sources", "claims", "beliefs", "belief_revisions",
     "relationships", "investigations", "pipeline_runs", "llm_usage",
     "processed_items", "agent_heuristic", "agent_heuristic_revision",
+    "agent_invocations",
 ]
 
 

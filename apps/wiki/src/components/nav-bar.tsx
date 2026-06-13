@@ -69,6 +69,9 @@ export function NavBar({ statusHref }: { statusHref: string }) {
           <Link href="/graph" className={linkCls(isActive('/graph'))}>
             Graph
           </Link>
+          <Link href="/agents" className={linkCls(isActive('/agents'))}>
+            Agents
+          </Link>
           <Link href="/pipelines" className={linkCls(isActive('/pipelines'))}>
             Pipelines
           </Link>
@@ -96,6 +99,7 @@ export function NavBar({ statusHref }: { statusHref: string }) {
                 ))}
                 <div className="mt-3" />
                 <DrawerLink href="/graph" label="Graph" active={isActive('/graph')} />
+                <DrawerLink href="/agents" label="Agents" active={isActive('/agents')} />
                 <DrawerLink href="/pipelines" label="Pipelines" active={isActive('/pipelines')} />
                 <a
                   href={statusHref}

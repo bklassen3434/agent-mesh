@@ -219,6 +219,7 @@ class AnthropicClient:
 
         raw_usage = getattr(message, "usage", None)
         usage = LLMUsage(
+            model=self.model,
             input_tokens=int(getattr(raw_usage, "input_tokens", 0) or 0),
             output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
             cache_read_tokens=int(
@@ -315,6 +316,7 @@ class AnthropicClient:
             msg = result.message
             raw_usage = msg.usage
             usage = LLMUsage(
+                model=self.model,
                 input_tokens=int(getattr(raw_usage, "input_tokens", 0) or 0),
                 output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
                 cache_read_tokens=int(getattr(raw_usage, "cache_read_input_tokens", 0) or 0),

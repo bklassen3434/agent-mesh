@@ -107,7 +107,9 @@ def _extract_sync(
         user=user_prompt,
         response_model=ClaimExtractionResult,
     )
-    return result.claims, latency_ms, usage, getattr(llm, "model", "")
+    # usage.model is the realized model (correct even when a RoutedLLMClient
+    # escalated cheap→strong); fall back to the client attribute if unset.
+    return result.claims, latency_ms, usage, usage.model or getattr(llm, "model", "")
 
 
 def _extract_with_memory(

@@ -181,6 +181,7 @@ class OllamaClient:
         latency_ms = int((time.monotonic() - start) * 1000)
         raw = response.message.content or ""
         usage = LLMUsage(
+            model=self.model,
             input_tokens=int(getattr(response, "prompt_eval_count", 0) or 0),
             output_tokens=int(getattr(response, "eval_count", 0) or 0),
         )

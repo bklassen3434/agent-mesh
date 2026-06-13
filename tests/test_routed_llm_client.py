@@ -50,7 +50,12 @@ class _FakeClient:
         self.calls.append({"options": options})
         if self._fail_once and len(self.calls) == 1:
             raise LLMResponseError(f"parse fail on {self.model}")
-        return f"answer:{self.model}", 42, LLMUsage(input_tokens=10, output_tokens=5)
+        # Real clients stamp the model that served the call onto the usage.
+        return (
+            f"answer:{self.model}",
+            42,
+            LLMUsage(model=self.model, input_tokens=10, output_tokens=5),
+        )
 
 
 def _routed(
@@ -122,6 +127,33 @@ def test_cheap_parse_fail_escalates_to_strong(monkeypatch: pytest.MonkeyPatch) -
     assert result == "answer:sonnet"
     assert len(cheap.calls) == 1  # tried cheap, it raised
     assert len(strong.calls) == 1  # then retried on strong
+
+
+def test_usage_carries_realized_model_on_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The returned usage must report the model that actually served the call,
+    so cost ledgering attributes an escalated request to the strong tier (not
+    the cheap-tier ``router.model``)."""
+    # Length-based escalation.
+    cheap, strong = _FakeClient("haiku"), _FakeClient("sonnet")
+    router = _routed(monkeypatch, cheap, strong, escalate_chars=100)
+    _, _, usage = router.complete_with_usage("x", "sys", "y" * 200)
+    assert usage.model == "sonnet"
+    assert router.model == "haiku"  # the Protocol attribute is unchanged
+
+    # Parse-failure escalation.
+    cheap2 = _FakeClient("haiku", fail_once=True)
+    strong2 = _FakeClient("sonnet")
+    router2 = _routed(monkeypatch, cheap2, strong2)
+    _, _, usage2 = router2.complete_with_usage("x", "sys", "short input")
+    assert usage2.model == "sonnet"
+
+    # The cheap default path reports the cheap model.
+    cheap3, strong3 = _FakeClient("haiku"), _FakeClient("sonnet")
+    router3 = _routed(monkeypatch, cheap3, strong3)
+    _, _, usage3 = router3.complete_with_usage("x", "sys", "short input")
+    assert usage3.model == "haiku"
 
 
 def test_parse_fail_no_escalation_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

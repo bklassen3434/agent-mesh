@@ -312,7 +312,9 @@ def draft_hypotheses(
                 rationale=p.rationale.strip(),
             )
         )
-    model = getattr(llm, "model", "")
+    # usage.model is the realized model (correct under cheap→strong routing
+    # escalation); fall back to the client attribute if unset.
+    model = usage.model or getattr(llm, "model", "")
     return out, usage, model
 
 

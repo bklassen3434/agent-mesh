@@ -18,9 +18,12 @@ structlog.configure(
 @click.command()
 @click.option(
     "--categories",
-    default=os.environ.get("MESH_PIPELINE_CATEGORIES", "cs.AI,cs.RO,cs.LG"),
+    default=os.environ.get("MESH_PIPELINE_CATEGORIES"),
     show_default=True,
-    help="Comma-separated arxiv categories",
+    help=(
+        "Comma-separated arxiv categories — overrides the field's arxiv "
+        "connector config for this run. Unset: use the per-field connector config."
+    ),
 )
 @click.option(
     "--max-papers",
@@ -54,7 +57,7 @@ structlog.configure(
     help="Use A2A coordinator instead of in-process orchestrator",
 )
 def main(
-    categories: str,
+    categories: str | None,
     max_papers: int,
     since: str | None,
     db_path: str | None,
@@ -62,7 +65,11 @@ def main(
     use_a2a: bool,
 ) -> None:
     """Run the Agent Mesh ingestion pipeline."""
-    cats = [c.strip() for c in categories.split(",") if c.strip()]
+    cats = (
+        [c.strip() for c in categories.split(",") if c.strip()]
+        if categories
+        else None
+    )
 
     if use_a2a:
         from mesh_pipeline.coordinator import parse_since, run_pipeline
@@ -84,9 +91,11 @@ def main(
         )
 
         since_dt = parse_since(since)
+        # The legacy in-process orchestrator predates per-field connectors; it
+        # still takes a concrete category list.
         result = asyncio.run(
             run_pipeline(
-                categories=cats,
+                categories=cats or ["cs.AI", "cs.RO", "cs.LG"],
                 max_papers=max_papers,
                 since=since_dt,
                 db_path=db_path,

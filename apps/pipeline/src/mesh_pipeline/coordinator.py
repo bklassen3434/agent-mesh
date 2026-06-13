@@ -47,6 +47,7 @@ from mesh_agents.confidence import (
     ConfidenceWeights,
     compute_confidence,
 )
+from mesh_agents.connector import connector_skill_id
 from mesh_agents.entity_resolution import ResolutionConfig, resolve_entity_semantic
 from mesh_agents.entity_tracker import EntitySummary, ResolvedEntityInfo
 from mesh_agents.sota_tracker import BeliefSummary, BeliefUpdate, ResolvedClaim
@@ -67,6 +68,7 @@ from mesh_db.beliefs import (
 )
 from mesh_db.claims import create_claim, list_claims
 from mesh_db.connection import get_connection
+from mesh_db.connectors import list_field_connectors
 from mesh_db.entities import create_entity, get_entity_by_id, list_entities
 from mesh_db.fields import get_field_by_slug
 from mesh_db.investigations import (
@@ -166,11 +168,14 @@ class CoordinatorState(TypedDict):
     triggered_by: str
     traceparent: str
     started_at: str  # ISO-8601
-    categories: list[str]
+    # Optional run-level override of the arxiv connector's categories (legacy
+    # --categories flag). None → each connector uses its per-field config.
+    categories: list[str] | None
     max_papers: int
     since: str | None
-    # scouting (fan-out workers append here)
+    # scouting: the run's enabled connectors → their per-field config (17c).
     scout_skill_ids: list[str]
+    scout_configs: dict[str, dict[str, Any]]
     raw_papers: Annotated[list[dict[str, Any]], operator.add]
     # ingest
     new_papers: list[dict[str, Any]]
@@ -860,24 +865,44 @@ def build_coordinator_graph(
 
     async def scout(state: CoordinatorState) -> dict[str, Any]:
         discovered = await client.discover(_agent_urls())
-        scout_ids = sorted(sid for sid in discovered if sid.startswith("scout_"))
-        if not scout_ids:
-            raise SystemExit("No scout agents discovered — aborting pipeline")
-        log.info("scouts_discovered", scout_skills=scout_ids)
-        return {"scout_skill_ids": scout_ids}
+        discovered_scouts = {sid for sid in discovered if sid.startswith("scout_")}
+        # Dispatch only the connectors ENABLED for this run's field, each with its
+        # stored per-field config (17c). _agent_urls() are merely the *available*
+        # connector services; which run is field-driven.
+        enabled = list_field_connectors(conn, state["field_id"], enabled_only=True)
+        configs: dict[str, dict[str, Any]] = {}
+        for fc in enabled:
+            skill = connector_skill_id(fc.connector_id)
+            if skill in discovered_scouts:
+                configs[skill] = fc.config
+        if not configs:
+            raise SystemExit(
+                "No enabled connectors discovered for field "
+                f"{state['field_id']} — aborting pipeline"
+            )
+        scout_ids = sorted(configs)
+        log.info("scouts_discovered", scout_skills=scout_ids, field_id=state["field_id"])
+        return {"scout_skill_ids": scout_ids, "scout_configs": configs}
 
     def fan_scouts(state: CoordinatorState) -> list[Send]:
-        payload: dict[str, Any] = {
-            "categories": state["categories"],
-            "max_results": state["max_papers"],
-        }
-        if state["since"] is not None:
-            payload["since"] = state["since"]
         tp = state["traceparent"]
-        return [
-            Send("scout_one", {"skill_id": sid, "payload": payload, "traceparent": tp})
-            for sid in state["scout_skill_ids"]
-        ]
+        sends: list[Send] = []
+        for sid in state["scout_skill_ids"]:
+            config = state["scout_configs"].get(sid, {})
+            payload: dict[str, Any] = {**config, "max_results": state["max_papers"]}
+            if state["since"] is not None:
+                payload["since"] = state["since"]
+            # Legacy --categories override applies to the connector that takes
+            # categories (arxiv).
+            if state["categories"] is not None and "categories" in config:
+                payload["categories"] = state["categories"]
+            sends.append(
+                Send(
+                    "scout_one",
+                    {"skill_id": sid, "payload": payload, "traceparent": tp},
+                )
+            )
+        return sends
 
     async def scout_one(state: _ScoutWork) -> dict[str, Any]:
         result, err = await call_skill_node(
@@ -1264,7 +1289,7 @@ def _result_from_state(state: CoordinatorState) -> PipelineResult:
 
 
 async def run_pipeline(
-    categories: list[str],
+    categories: list[str] | None,
     max_papers: int,
     since: datetime | None,
     db_path: str | None = None,
@@ -1303,6 +1328,7 @@ async def run_pipeline(
         "max_papers": max_papers,
         "since": since.isoformat() if since is not None else None,
         "scout_skill_ids": [],
+        "scout_configs": {},
         "raw_papers": [],
         "new_papers": [],
         "papers_scouted": 0,

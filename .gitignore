@@ -54,3 +54,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Verification-skill evidence (captured at runtime, not source)
+.evidence/

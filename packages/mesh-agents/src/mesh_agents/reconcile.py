@@ -24,6 +24,7 @@ from mesh_db.entities import (
     set_entity_embedding,
 )
 from mesh_llm import Embedder, entity_embed_text
+from mesh_models.field import DEFAULT_FIELD_ID
 
 from mesh_agents.entity_resolution import (
     EntityForMatch,
@@ -68,22 +69,30 @@ class _Ent:
     aliases: list[str]
 
 
-def _load_entities(conn: MeshConnection) -> list[_Ent]:
+def _load_entities(
+    conn: MeshConnection, field_id: str = DEFAULT_FIELD_ID
+) -> list[_Ent]:
     rows = conn.execute(
-        "SELECT id, canonical_name, type, aliases FROM entities ORDER BY created_at"
+        "SELECT id, canonical_name, type, aliases FROM entities "
+        "WHERE field_id = %s ORDER BY created_at",
+        [field_id],
     ).fetchall()
     return [_Ent(str(r[0]), str(r[1]), str(r[2]), list(r[3] or [])) for r in rows]
 
 
 def _ensure_embeddings(
-    conn: MeshConnection, embedder: Embedder, ents: list[_Ent]
+    conn: MeshConnection,
+    embedder: Embedder,
+    ents: list[_Ent],
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> tuple[dict[str, list[float]], int]:
     """Embed every entity name in memory (used as query vectors) and persist any
     that the DB is missing. Returns ``(id→vector, count_persisted)``."""
     missing = {
         str(r[0])
         for r in conn.execute(
-            "SELECT id FROM entities WHERE name_embedding IS NULL"
+            "SELECT id FROM entities WHERE name_embedding IS NULL AND field_id = %s",
+            [field_id],
         ).fetchall()
     }
     vectors = embedder.embed([entity_embed_text(e.name, e.type) for e in ents])
@@ -155,16 +164,17 @@ def reconcile_entities(
     k: int = 10,
     dry_run: bool = False,
     batch_poll_seconds: float = 10.0,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> ReconciliationReport:
     cfg = config or ResolutionConfig.from_env()
     report = ReconciliationReport(dry_run=dry_run)
 
-    ents = _load_entities(conn)
+    ents = _load_entities(conn, field_id)
     report.entities_before = len(ents)
     if not ents:
         return report
 
-    vecs, report.embedded_now = _ensure_embeddings(conn, embedder, ents)
+    vecs, report.embedded_now = _ensure_embeddings(conn, embedder, ents, field_id)
     by_id = {e.id: e for e in ents}
 
     # Block + classify → confirmed-same pairs and middle-band pairs to adjudicate.
@@ -172,7 +182,7 @@ def reconcile_entities(
     middle: set[frozenset[str]] = set()
     for e in ents:
         for cand_id, _name, _type, distance in find_candidate_duplicates(
-            conn, vecs[e.id], entity_type=e.type, exclude_id=e.id, k=k
+            conn, vecs[e.id], entity_type=e.type, exclude_id=e.id, k=k, field_id=field_id
         ):
             pair = frozenset({e.id, cand_id})
             if len(pair) < 2:
@@ -219,7 +229,7 @@ def reconcile_entities(
     report.entities_after = (
         report.entities_before - report.merges
         if dry_run
-        else len(_load_entities(conn))
+        else len(_load_entities(conn, field_id))
     )
     return report
 

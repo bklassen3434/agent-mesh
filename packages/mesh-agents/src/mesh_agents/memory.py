@@ -24,6 +24,7 @@ import logging
 from mesh_db.connection import MeshConnection, get_connection
 from mesh_db.episodic import EpisodicEntry, recall_history
 from mesh_db.heuristics import list_applicable_heuristics
+from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.heuristic import AgentHeuristic
 
 logger = logging.getLogger(__name__)
@@ -84,16 +85,18 @@ def recall_block(
     source_id: str | None = None,
     topic: str | None = None,
     limit: int = DEFAULT_RECALL_LIMIT,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> str:
     """Episodic recall for ``agent`` at the given scope, formatted for a prompt.
-    Any failure yields ``""``."""
+    Any failure yields ``""``. Scoped to ``field_id``."""
     owned = conn is None
     c = conn if conn is not None else _open_reader()
     if c is None:
         return ""
     try:
         entries = recall_history(
-            c, agent, entity_id=entity_id, source_id=source_id, topic=topic, limit=limit
+            c, agent, entity_id=entity_id, source_id=source_id, topic=topic,
+            limit=limit, field_id=field_id,
         )
     except Exception as exc:  # a memory read must never break a skill
         logger.debug("recall_block_failed", extra={"agent": agent, "error": str(exc)})
@@ -115,6 +118,7 @@ def build_memory_block(
     topic: str | None = None,
     recall_limit: int = DEFAULT_RECALL_LIMIT,
     heuristic_limit: int = DEFAULT_HEURISTIC_LIMIT,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> str:
     """Combined memory block for a skill: applicable (scope-matched, unexpired,
     active) heuristics first, then recent episodic history. Reads both off a
@@ -123,6 +127,7 @@ def build_memory_block(
     Heuristic scope = (agent, skill) plus optional finer ``source`` / ``entity_id``;
     expired and inactive heuristics are excluded by ``list_applicable_heuristics``.
     Episodic scope = (agent) with optional ``entity_id`` / ``source_id`` / ``topic``.
+    Both reads are scoped to ``field_id`` — memory never crosses fields (17a).
     Returns ``""`` when both are empty or no DB is reachable."""
     owned = conn is None
     c = conn if conn is not None else _open_reader()
@@ -131,14 +136,15 @@ def build_memory_block(
     parts: list[str] = []
     try:
         heuristics = list_applicable_heuristics(
-            c, agent, skill, source=source, entity_id=entity_id, limit=heuristic_limit
+            c, agent, skill, source=source, entity_id=entity_id,
+            limit=heuristic_limit, field_id=field_id,
         )
         hblock = format_heuristic_block(heuristics, heuristic_limit)
         if hblock:
             parts.append(hblock)
         entries = recall_history(
             c, agent, entity_id=entity_id, source_id=source_id, topic=topic,
-            limit=recall_limit,
+            limit=recall_limit, field_id=field_id,
         )
         rblock = format_episodic_block(entries, recall_limit)
         if rblock:

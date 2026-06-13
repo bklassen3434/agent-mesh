@@ -30,6 +30,7 @@ from mesh_llm.client import LLMResponseError
 from mesh_llm.embeddings import Embedder, entity_embed_text
 from mesh_llm.protocol import LLMClient
 from mesh_models.entity import Entity, EntityType
+from mesh_models.field import DEFAULT_FIELD_ID
 from pydantic import BaseModel, Field
 
 from mesh_agents.entity_tracker import ResolvedEntityInfo
@@ -195,18 +196,20 @@ def entity_for_match_from_claims(
 
 
 def _find_by_name_or_alias(
-    conn: MeshConnection, name: str
+    conn: MeshConnection, name: str, *, field_id: str = DEFAULT_FIELD_ID
 ) -> tuple[str, str, str] | None:
     """Exact/alias string fast-path. Returns (id, canonical_name, type) or None.
-    Resolves the vast majority of repeat references with no embed and no LLM."""
+    Resolves the vast majority of repeat references with no embed and no LLM.
+    Scoped to ``field_id`` — the same surface form in two fields stays distinct."""
     row = conn.execute(
         """
         SELECT id, canonical_name, type FROM entities
-        WHERE lower(canonical_name) = lower(%s)
-           OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE lower(a) = lower(%s))
+        WHERE field_id = %s
+          AND (lower(canonical_name) = lower(%s)
+           OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE lower(a) = lower(%s)))
         LIMIT 1
         """,
-        [name, name],
+        [field_id, name, name],
     ).fetchone()
     return (str(row[0]), str(row[1]), str(row[2])) if row else None
 
@@ -232,6 +235,7 @@ def resolve_entity_semantic(
     type_hint: EntityType | str | None = None,
     config: ResolutionConfig | None = None,
     k: int = 10,
+    field_id: str = DEFAULT_FIELD_ID,
 ) -> ResolvedEntityInfo:
     """Resolve one candidate name to a canonical entity, creating one if needed.
 
@@ -239,10 +243,13 @@ def resolve_entity_semantic(
     (type-filtered) + classify the nearest candidate; high → attach, low → create
     new, middle → LLM adjudicate (attach iff same; create new when the LLM is
     absent — conservative). Attaching records a novel surface form as an alias.
-    New entities are created with their embedding. Coordinator/writer-owned."""
+    New entities are created with their embedding. Coordinator/writer-owned.
+
+    All reads/writes are scoped to ``field_id``: blocking, the string fast-path,
+    and entity creation never cross fields (Phase 17a)."""
     cfg = config or ResolutionConfig.from_env()
 
-    fast = _find_by_name_or_alias(conn, name)
+    fast = _find_by_name_or_alias(conn, name, field_id=field_id)
     if fast is not None:
         eid, cname, ctype = fast
         return ResolvedEntityInfo(
@@ -258,7 +265,9 @@ def resolve_entity_semantic(
     vec = embedder.embed([entity_embed_text(name, etype_val)])[0]
 
     attach: tuple[str, str, str] | None = None
-    candidates = find_candidate_duplicates(conn, vec, entity_type=etype_val, k=k)
+    candidates = find_candidate_duplicates(
+        conn, vec, entity_type=etype_val, k=k, field_id=field_id
+    )
     if candidates:
         cid, cname, ctype, distance = candidates[0]
         decision = classify_pair(1.0 - distance, cfg)
@@ -283,7 +292,7 @@ def resolve_entity_semantic(
         )
 
     ent = Entity(canonical_name=name, type=etype)
-    create_entity(conn, ent)
+    create_entity(conn, ent, field_id=field_id)
     set_entity_embedding(conn, ent.id, vec)
     return ResolvedEntityInfo(
         name=name, entity_id=ent.id, canonical_name=name,

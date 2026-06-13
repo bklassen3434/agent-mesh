@@ -1,3 +1,10 @@
+from mesh_models.agent_invocation import (
+    AgentGraph,
+    AgentGraphEdge,
+    AgentGraphNode,
+    AgentInvocation,
+    AgentRosterEntry,
+)
 from mesh_models.belief import Belief
 from mesh_models.briefing import (
     Briefing,
@@ -50,8 +57,13 @@ __all__ = [
     "DEFAULT_FIELD_ID",
     "DEFAULT_FIELD_SLUG",
     "PREDICATE_TO_CLAIM_TYPE",
+    "AgentGraph",
+    "AgentGraphEdge",
+    "AgentGraphNode",
     "AgentHeuristic",
     "AgentHeuristicRevision",
+    "AgentInvocation",
+    "AgentRosterEntry",
     "Belief",
     "BeliefRevision",
     "Briefing",

@@ -1251,12 +1251,12 @@ def _make_resolution_deps() -> tuple[Embedder | None, LLMClient | None]:
     """Build the entity-resolution embedder + (best-effort) adjudication LLM for
     the live pipeline. A missing/unready LLM degrades to high-band/exact-only
     resolution (no middle-band adjudication) rather than aborting the run."""
-    from mesh_llm import make_embedder, make_llm_client
+    from mesh_llm import make_embedder, make_routed_llm_client
 
     embedder = make_embedder()
     llm: LLMClient | None
     try:
-        llm = make_llm_client(agent_name="entity_resolution")
+        llm = make_routed_llm_client(agent_name="entity_resolution")
         llm.health_check()
     except Exception as exc:
         log.warning("entity_resolution_llm_unavailable", error=str(exc))

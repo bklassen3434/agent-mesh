@@ -16,7 +16,7 @@ from mesh_llm.embeddings import (
     entity_embed_text,
     make_embedder,
 )
-from mesh_llm.factory import make_llm_client
+from mesh_llm.factory import make_llm_client, make_routed_llm_client
 from mesh_llm.pricing import CostBreakdown, estimate_cost, is_priced
 from mesh_llm.protocol import LLMClient
 from mesh_llm.routing import (
@@ -56,4 +56,5 @@ __all__ = [
     "is_priced",
     "make_embedder",
     "make_llm_client",
+    "make_routed_llm_client",
 ]

@@ -12,6 +12,14 @@ from mesh_models.claim import (
     ClaimType,
     claim_type_for_predicate,
 )
+from mesh_models.connector import (
+    AI_ROBOTICS_FIELD_CONNECTORS,
+    BUILTIN_CONNECTORS,
+    Connector,
+    ConnectorKind,
+    FieldConnector,
+    validate_connector_config,
+)
 from mesh_models.entity import Entity, EntityType
 from mesh_models.field import (
     AI_ROBOTICS_PROFILE,
@@ -35,8 +43,10 @@ from mesh_models.schedule import (
 from mesh_models.source import Source, SourceType
 
 __all__ = [
+    "AI_ROBOTICS_FIELD_CONNECTORS",
     "AI_ROBOTICS_PROFILE",
     "ALLOWED_INTERVAL_HOURS",
+    "BUILTIN_CONNECTORS",
     "DEFAULT_FIELD_ID",
     "DEFAULT_FIELD_SLUG",
     "PREDICATE_TO_CLAIM_TYPE",
@@ -49,9 +59,12 @@ __all__ = [
     "Claim",
     "ClaimStatus",
     "ClaimType",
+    "Connector",
+    "ConnectorKind",
     "Entity",
     "EntityType",
     "Field",
+    "FieldConnector",
     "FieldProfile",
     "GraphData",
     "GraphDataEdge",
@@ -68,4 +81,5 @@ __all__ = [
     "SourceType",
     "TriggerResult",
     "claim_type_for_predicate",
+    "validate_connector_config",
 ]

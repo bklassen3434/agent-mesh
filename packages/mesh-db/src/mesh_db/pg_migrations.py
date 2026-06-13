@@ -111,15 +111,18 @@ def init_pg(url: str | None = None) -> list[str]:
     Roles first (so the grant migration can reference them), then the
     numbered migrations. Idempotent end to end.
     """
+    from mesh_db.connectors import seed_connectors
     from mesh_db.fields import seed_default_field
     from mesh_db.pg_connection import get_pg_connection
 
     with get_pg_connection(url) as conn:
         ensure_roles(conn)
         applied = apply_pg_migrations(conn)
-        # Materialize the canonical ai-robotics FieldProfile from Python (the SQL
-        # migration only seeds a minimal placeholder). Idempotent upsert.
+        # Materialize the canonical ai-robotics FieldProfile + the built-in
+        # connector catalog + the ai-robotics enablement from Python (the SQL
+        # migrations only create empty tables). Idempotent upserts.
         seed_default_field(conn)
+        seed_connectors(conn)
         return applied
 
 

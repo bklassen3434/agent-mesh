@@ -176,15 +176,15 @@ services:
     command: ["uv", "run", "python", "-m", "mesh_agent_servers.web_search_scout"]
     environment:
       AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8013"
-      AGENT_PUBLIC_URL: "http://web-search-scout:8013"
+      AGENT_PORT: "8017"
+      AGENT_PUBLIC_URL: "http://web-search-scout:8017"
       BRAVE_API_KEY: ${BRAVE_API_KEY:-}
     env_file:
       - .env
     ports:
-      - "8013:8013"
+      - "8017:8017"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8017/healthz')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -503,7 +503,7 @@ services:
       dockerfile: Dockerfile.coordinator
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8013,http://rss-scout:8014,http://rest-json-scout:8015"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
       # Phase 12: owner DSN applies the schema + roles on startup; the
       # coordinator's knowledge writes go through the writer role.
       MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
@@ -585,7 +585,7 @@ services:
     entrypoint: ["uv", "run", "mesh-scheduler"]
     environment:
       MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8013,http://rss-scout:8014,http://rest-json-scout:8015"
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
       # Phase 12: the scheduler shells out to mesh-pipeline / mesh-skeptic-sweep,
       # which inherit this env — owner DSN to apply schema, writer role for the

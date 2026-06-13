@@ -118,7 +118,7 @@ def _search_one(client: httpx.Client, query: str, count: int) -> list[dict[str, 
         "Accept": "application/json",
         "X-Subscription-Token": _api_key() or "",
     }
-    params = {"q": query, "count": min(count, _BRAVE_MAX_COUNT)}
+    params: dict[str, str | int] = {"q": query, "count": min(count, _BRAVE_MAX_COUNT)}
     try:
         resp = client.get(_BRAVE_URL, headers=headers, params=params, timeout=_HTTP_TIMEOUT)
         resp.raise_for_status()

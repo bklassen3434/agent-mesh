@@ -1,8 +1,8 @@
 name: Redeploy
 
 # Manually re-run the self-hosted deployment (the Pi / laptop running docker
-# compose). Trigger from the GitHub UI: Actions → Redeploy → "Run workflow",
-# then pick the branch to deploy.
+# compose). Trigger from the GitHub UI: Actions → Redeploy → "Run workflow".
+# Always deploys `main` — the single branch we deploy to the Pi.
 #
 # Requires a self-hosted runner installed on the deployment host (the machine
 # that runs `docker compose`). See:
@@ -16,12 +16,6 @@ name: Redeploy
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: "Branch to deploy"
-        type: string
-        required: true
-        default: main
 
 # Never let two redeploys run at once.
 concurrency:
@@ -39,7 +33,8 @@ jobs:
       # which directory we run from (compose otherwise derives it from the dir
       # name, which would spin up a duplicate stack).
       COMPOSE_PROJECT_NAME: agent-mesh
-      BRANCH: ${{ inputs.branch }}
+      # The single branch we deploy to the Pi.
+      BRANCH: main
     steps:
       - name: Show target
         run: |

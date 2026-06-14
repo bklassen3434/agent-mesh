@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -166,7 +166,7 @@ def run_assertions() -> list[Assertion]:
             rows = cur.fetchall()
             a.count = len(rows)
             a.passed = a.count == 0
-            a.samples = [dict(zip(cols, r)) for r in rows[:5]]
+            a.samples = [dict(zip(cols, r, strict=False)) for r in rows[:5]]
     finally:
         conn.close()
     return assertions
@@ -193,7 +193,7 @@ def store_counts() -> dict[str, int]:
 
 
 def write_evidence(assertions: list[Assertion], counts: dict[str, int]) -> Path:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     repo_root = Path(__file__).resolve().parents[3]
     out = repo_root / ".evidence" / "verify-invariants" / ts
     out.mkdir(parents=True, exist_ok=True)
@@ -260,7 +260,8 @@ def main() -> int:
 
     failed = [a for a in assertions if not a.passed]
     verdict = "PASS" if not failed else "FAIL"
-    print(f"verify-invariants: {verdict}  ({len(assertions) - len(failed)}/{len(assertions)} passed)")
+    passed_n = len(assertions) - len(failed)
+    print(f"verify-invariants: {verdict}  ({passed_n}/{len(assertions)} passed)")
     for a in assertions:
         mark = "PASS" if a.passed else "FAIL"
         print(f"  [{mark}] {a.name}: {a.count} violation(s)")

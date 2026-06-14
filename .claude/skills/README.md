@@ -13,11 +13,40 @@ and record what they saw.
 
 ## Skills
 
+**Static-invariant checks** (read-only; run anytime against the live store):
+
 | Skill | What it verifies | Evidence |
 |---|---|---|
-| `/verify-invariants` | Core data-integrity invariants on the live knowledge store: claim immutability/supersession, append-only belief revisions, no dangling array-provenance refs (post-merge), claim_type↔predicate consistency. | row counts + offending-row samples |
-| `/verify-pipeline` | A bounded pipeline cycle does what it claims: before/after state snapshot, delta consistency (sources→claims→entities→beliefs), recorded errors, then re-asserts invariants. | before/after counts + run row + diff |
-| `/verify-api` | The read API serves internally-consistent state: `/healthz`, `/stats`, graph edges reference real nodes, pagination totals are sane, belief detail resolves its claims. | captured JSON responses + assertions |
+| `/verify-invariants` | Core data-integrity invariants: claim immutability/supersession, append-only belief revisions, no dangling array-provenance refs (post-merge), claim_type↔predicate consistency. | row counts + offending-row samples |
+| `/verify-field-isolation` | `field_id` is a true partition — no row references a row in another field (claim↔entity/source, relationship↔endpoints/evidence, belief↔claims, investigation↔target/related/belief refs) + orphan-field detection. | per-field counts + offending-row samples |
+| `/verify-observability` | Routing (Phase 20) + discovery (Phase 22) surfaces: LLM-ledger integrity (non-negative tokens/cost, every row references a real run), valid investigation origins, discovery provenance; plus a reported tier-split of spend + discovery activity. | hard assertions + tier/origin report |
+| `/verify-api` | The read API serves internally-consistent state: `/healthz`, `/stats`, graph + graph/data edges reference real nodes, pagination totals sane, belief detail resolves its claims, agent invocations resolve to their agent, the agent graph is a coordinator star. | captured JSON responses + assertions |
+
+**Action checks** (snapshot → run a bounded action → snapshot → assert deltas; the action writes — run against a dev store):
+
+| Skill | What it verifies | Evidence |
+|---|---|---|
+| `/verify-pipeline` | A bounded `mesh-pipeline` cycle: before/after snapshot, delta consistency (sources→claims→entities→beliefs), recorded errors, then re-asserts invariants. | before/after counts + run row + diff |
+| `/verify-skeptic` | A `mesh-skeptic-sweep`: deltas match the reported run (critique counter-claims, skeptic-attributed revisions, agent_reasoning sources), then re-asserts invariants. | before/after counts + run row + diff |
+| `/verify-entity-resolution` | A `reconcile-entities` merge only shrank entities/relationships while leaving the claim set byte-identical; no self-loops or dangling investigation entity refs. | before/after counts + structural samples |
+| `/verify-belief-consolidation` | A `consolidate-beliefs` pass stayed strictly append-only: no belief/revision row deleted, claims untouched, merged-away beliefs un-held with a revision, confidence in range. | before/after counts + structural samples |
+
+### Coverage map (subsystem → skill)
+
+| Subsystem | Verified by |
+|---|---|
+| Extract → resolve → synthesize pipeline | `/verify-pipeline` |
+| Skeptic sweep (belief challenge / confidence) | `/verify-skeptic` |
+| Semantic entity resolution (Phase 13) | `/verify-entity-resolution` |
+| Belief consolidation + decay/archival (Phase 19) | `/verify-belief-consolidation` |
+| Field partitioning (Phase 17) | `/verify-field-isolation` |
+| Model routing (Phase 20) + autonomous discovery (Phase 22) | `/verify-observability` |
+| Read API + wiki backend (incl. agent observability, Phase 23) | `/verify-api` |
+| Cross-cutting data integrity | `/verify-invariants` |
+
+Most action checks finish by re-running `/verify-invariants` (and often
+`/verify-field-isolation`) on the freshly-written data — a green run that
+violates an invariant is still a FAIL.
 
 ## Evidence convention
 

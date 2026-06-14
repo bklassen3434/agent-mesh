@@ -4,7 +4,8 @@
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- [Ollama](https://ollama.com) with a pulled model (for pipeline runs — not needed for tests)
+- An LLM provider for pipeline runs (not needed for tests): an `ANTHROPIC_API_KEY` (default provider) or a local [Ollama](https://ollama.com) with a pulled model. See [llm-setup.md](llm-setup.md).
+- Postgres: a single `pgvector/pgvector:pg16` instance (`mesh-postgres`) backs the whole store. `make up` brings it up in docker; tests start their own ephemeral container (see below).
 
 ## Setup (under 5 minutes)
 
@@ -22,6 +23,9 @@ uv run mesh.cli init-db
 ```
 
 This applies the Postgres knowledge schema + roles (uses MESH_PG_URL / LANGGRAPH_POSTGRES_URL).
+It runs the numbered SQL migrations in `packages/mesh-db/migrations_pg/NNN_*.sql` and is idempotent —
+only unapplied migrations run. DuckDB is no longer used (removed in Phase 12); the store is a single
+pgvector Postgres instance.
 
 ## Try the CLI
 
@@ -69,7 +73,8 @@ uv run mesh.cli show-revisions --belief <belief-id>
 
 ## Running the pipeline
 
-The pipeline requires Ollama running locally. See [llm-setup.md](llm-setup.md) for installation.
+The pipeline needs an LLM provider — by default Anthropic (`ANTHROPIC_API_KEY` in `.env`); set
+`MESH_LLM_PROVIDER=ollama` to run against a local Ollama instead. See [llm-setup.md](llm-setup.md).
 
 ```bash
 # Run with defaults (cs.AI, cs.RO, cs.LG; last 24h; max 20 papers)
@@ -78,8 +83,8 @@ uv run mesh-pipeline
 # Fetch up to 50 papers from cs.LG in the last 7 days
 uv run mesh-pipeline --categories cs.LG --max-papers 50 --since 7d
 
-# Use a specific DB file
-uv run mesh-pipeline --db-path /tmp/research.db
+# Scope a run to a specific field
+uv run mesh-pipeline --field ai-robotics
 
 # Check results
 uv run mesh.cli pipeline-stats
@@ -92,18 +97,31 @@ Key environment variables (in `.env`):
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `MESH_LLM_MODEL` | `qwen3:8b` | Model for claim extraction |
-| `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |
+| `MESH_LLM_PROVIDER` | `anthropic` | `anthropic` (cloud) or `ollama` (local) |
+| `MESH_LLM_MODEL` | `claude-haiku-4-5` | Model for claim extraction (matches the provider) |
+| `ANTHROPIC_API_KEY` | (empty) | Required when provider is `anthropic` |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (provider=ollama only) |
+| `MESH_PIPELINE_FIELD` | `ai-robotics` | Field slug a run scopes to (`--field`) |
+| `MESH_PIPELINE_CATEGORIES` | (field's arxiv connector config) | Optional per-run arxiv category override |
 | `MESH_PIPELINE_MAX_PAPERS` | `20` | Papers per run |
 | `MESH_PIPELINE_CONCURRENCY` | `3` | Parallel LLM extraction slots |
 
 ## Run tests
 
+Tests need no LLM. They spin up an ephemeral `pgvector/pgvector:pg16` container via testcontainers
+and apply the schema with `init_pg` (see `tests/conftest.py`) — never point them at a real DB. Docker
+must be running.
+
 ```bash
 uv run pytest
 uv run pytest -v           # verbose
 uv run pytest tests/test_models.py  # single file
+```
+
+If port-mapping fails with a Ryuk error, disable the reaper:
+
+```bash
+TESTCONTAINERS_RYUK_DISABLED=true uv run pytest
 ```
 
 ## Lint and type check
@@ -120,15 +138,19 @@ uv run mypy .
 agent-mesh/
 ├── apps/
 │   ├── cli/               — mesh.cli entry point
-│   └── pipeline/          — mesh-pipeline orchestrator
+│   ├── pipeline/          — LangGraph coordinator + skeptic/discovery/consolidation graphs
+│   ├── agents/            — A2A agent HTTP servers (scouts + workers)
+│   ├── api/               — read-only FastAPI service (:8000)
+│   ├── wiki/              — Next.js wiki (:3000)
+│   └── scheduler/         — BackgroundScheduler control surface (:9100)
 ├── packages/
 │   ├── mesh-models/       — Pydantic v2 domain models
-│   ├── mesh-db/           — Postgres access layer (psycopg pool) + migrations
+│   ├── mesh-db/           — Postgres access layer (psycopg pool) + migrations_pg/
 │   ├── mesh-tracing/      — Langfuse tracing wrapper
-│   ├── mesh-llm/          — Ollama client + prompts
-│   └── mesh-agents/       — Agent classes (scout, extractor, tracker, synthesizer)
+│   ├── mesh-llm/          — Anthropic + Ollama clients, routing, prompts
+│   └── mesh-agents/       — Agent classes (scout, extractor, tracker, synthesizer, …)
 ├── tests/                 — pytest test suite
-└── docs/                  — this directory
+└── docs/                  — this directory (see agents.md for the full agent fleet)
 ```
 
 ## Environment variables
@@ -137,15 +159,19 @@ Copy `.env.example` to `.env` and fill in as needed:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MESH_PG_URL` | (falls back to `LANGGRAPH_POSTGRES_URL`) | Knowledge-store Postgres DSN |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `MESH_LLM_MODEL` | `qwen3:8b` | Model for claim extraction |
-| `MESH_PIPELINE_CATEGORIES` | `cs.AI,cs.RO,cs.LG` | Default arxiv categories |
+| `MESH_PG_URL` | (falls back to `LANGGRAPH_POSTGRES_URL`) | Knowledge-store Postgres DSN (owner; used for migrations) |
+| `MESH_LLM_PROVIDER` | `anthropic` | `anthropic` (cloud) or `ollama` (local) |
+| `MESH_LLM_MODEL` | `claude-haiku-4-5` | Model for claim extraction (matches the provider) |
+| `ANTHROPIC_API_KEY` | (empty) | Required when provider is `anthropic` |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (provider=ollama only) |
 | `MESH_PIPELINE_MAX_PAPERS` | `20` | Papers per pipeline run |
 | `MESH_PIPELINE_CONCURRENCY` | `3` | Parallel LLM slots |
 | `LANGFUSE_PUBLIC_KEY` | (empty) | Enables Langfuse tracing if set |
 | `LANGFUSE_SECRET_KEY` | (empty) | Required alongside public key |
 | `LANGFUSE_HOST` | `http://localhost:3000` | Langfuse server URL |
+
+The full environment-variable reference (routing, confidence, consolidation, discovery, observability,
+etc.) lives in the repo root `CLAUDE.md`.
 
 Tracing is a no-op if the Langfuse keys are absent — you do not need a Langfuse instance to develop.
 
@@ -232,31 +258,39 @@ uv run mesh.cli a2a-call resolve_entities \
   --agent-urls http://localhost:8003
 ```
 
-### Agent ports
+The agent HTTP servers live in `apps/agents/src/mesh_agent_servers/`.
 
-| Agent | Port | Skill | Profile |
-|-------|------|-------|---------|
-| arxiv-scout | 8001 | `scout_arxiv` | default |
-| claim-extractor | 8002 | `extract_claims` | default |
-| entity-tracker | 8003 | `resolve_entities` | default |
-| sota-tracker | 8004 | `update_sota` | default |
-| hn-scout | 8005 | `scout_hn` | default |
-| skeptic | 8006 | `challenge_belief` | `skeptic` |
-| curator | 8007 | `select_beliefs_to_challenge` | `skeptic` |
+### Agent fleet
 
-### New environment variables (Phase 2)
+The fleet has grown well beyond the original four agents: ~10 scouts (arxiv, hn, github,
+bluesky, reddit, blog, leaderboard, web-search, rss, rest-json) plus worker agents
+(claim-extractor, entity-tracker, sota-tracker, curator, skeptic, personalizer,
+research-qa) — coordinated by the LangGraph coordinator alongside the skeptic / discovery /
+consolidation sweeps and the scheduler. See [agents.md](agents.md) for the current roster,
+ports, and skills, and the `docker-compose.yml` services list for what `make up` boots.
+
+### Orchestration: A2A coordinator vs. legacy orchestrator
+
+By default `mesh-pipeline` runs the in-process legacy orchestrator. Pass `--a2a` (or set
+`MESH_USE_A2A=true`) to run the LangGraph **A2A coordinator** instead — the current,
+production orchestration path (stateful LangGraph graphs checkpointed to Postgres, per-field
+connector dispatch). The docker `coordinator` service sets `MESH_USE_A2A=true`, so `make
+pipeline` always uses the coordinator. The legacy in-process orchestrator predates per-field
+connectors and is retained only for simple local single-field runs.
+
+### Agent-server environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MESH_USE_A2A` | `false` | Set to `true` to use A2A coordinator instead of Phase 1 orchestrator |
-| `MESH_AGENT_URLS` | localhost ports 8001-8004 | Comma-separated agent base URLs for discovery |
+| `MESH_USE_A2A` | `false` | Use the LangGraph A2A coordinator instead of the legacy in-process orchestrator |
+| `MESH_AGENT_URLS` | localhost agent ports | Comma-separated agent base URLs for discovery |
 | `AGENT_HOST` | `0.0.0.0` | Bind address for agent servers |
 | `AGENT_PORT` | varies | Port for agent server |
 | `AGENT_PUBLIC_URL` | `http://<name>:<port>` | URL advertised in the Agent Card |
 
 ## Adding a new migration
 
-1. Create `packages/mesh-db/migrations/NNN_description.sql`
+1. Create `packages/mesh-db/migrations_pg/NNN_description.sql` (Postgres DDL, `knowledge` schema)
 2. Run `uv run mesh.cli init-db` — it will apply only the new migration
 3. The migration runner is idempotent; running it on an already-migrated DB is safe
 
@@ -292,11 +326,22 @@ full architectural rationale.
 ### Running the full stack in docker
 
 ```bash
-make up            # five agents (arxiv, hn, extractor, entity, sota) + api + wiki
-make pipeline      # one-shot coordinator run; populates the DB
-make wiki          # opens the home dashboard
-make down
+make up                # the agent fleet + api + wiki + mesh-postgres
+make pipeline          # one-shot coordinator run; populates the DB
+make skeptic           # one falsification sweep (skeptic profile)
+make consolidate       # one memory-consolidation cycle
+make belief-consolidate  # one belief-consolidation cycle
+make discover          # one autonomous-discovery cycle
+make smoke             # up + one pipeline + row-count + A2A discovery check
+make wiki              # opens the wiki dashboard
+make api               # opens the Swagger UI
+make types             # regenerate apps/wiki/src/lib/api-types.ts (needs API up)
+make test              # uv run pytest + wiki Playwright E2E (make test-ui)
+make down              # tear down (incl. skeptic + scheduler profiles)
 ```
+
+`make test-ui-headed` / `test-ui-debug` / `test-ui-report` drive the wiki Playwright E2E
+in headed / debug / report modes.
 
 ## Falsification sweep (Phase 4)
 

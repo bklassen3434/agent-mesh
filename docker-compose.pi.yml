@@ -54,11 +54,20 @@ services:
   curator:          *pi-slow-start
   skeptic:          *pi-slow-start
   api:              *pi-slow-start
+  # The Telegram bridge is light (no ML deps), but arm64 still runs `uv sync`
+  # on first boot before it binds the health port — give it the slow-start grace.
+  telegram-bot:     *pi-slow-start
 
   # ── viewing/aux services → `ui` profile (start only when you need them) ─────
   # Browse the wiki on demand with:  docker compose up -d wiki   (naming a
   # profiled service starts it regardless of COMPOSE_PROFILES); stop it with
   # docker compose stop wiki.  /ask degrades cleanly when research-qa is down.
+  #
+  # NOTE: the telegram-bot's chat answers come from research-qa and its daily
+  # brief from personalizer — both park here. Keep them stopped and the bot
+  # still runs, but chat answers come back "not covered" and briefs are empty.
+  # To make the bot fully useful on the Pi, start them (RAM permitting):
+  #   docker compose up -d research-qa personalizer
   wiki:         { profiles: ["ui"] }
   personalizer: { profiles: ["ui"] }
   research-qa:  { profiles: ["ui"] }

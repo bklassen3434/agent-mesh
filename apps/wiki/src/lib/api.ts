@@ -38,6 +38,16 @@ export type Answer = Schemas['Answer'];
 export type Citation = Schemas['Citation'];
 export type Coverage = Schemas['Coverage'];
 
+// Connectors + fields pages (Phase 18)
+export type Connector = Schemas['Connector'];
+export type ConnectorKind = Schemas['ConnectorKind'];
+export type FieldConnector = Schemas['FieldConnector'];
+export type FieldConnectorUpdate = Schemas['FieldConnectorUpdate'];
+export type Field = Schemas['Field'];
+export type FieldProfile = Schemas['FieldProfile'];
+export type FieldCreate = Schemas['FieldCreate'];
+export type FieldPatch = Schemas['FieldPatch'];
+
 // Agent observability (Phase 23)
 export type AgentRosterEntry = Schemas['AgentRosterEntry'];
 export type AgentInvocation = Schemas['AgentInvocation'];
@@ -100,7 +110,7 @@ export async function apiGet<T>(path: string, opts: ApiOptions = {}): Promise<T>
 }
 
 export async function apiSend<T>(
-  method: 'POST' | 'PATCH',
+  method: 'POST' | 'PATCH' | 'PUT',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -200,5 +210,24 @@ export const api = {
       'POST',
       `/api/v1/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`,
       { question },
+    ),
+
+  // Fields page (Phase 18) --------------------------------------------------
+  listFields: (activeOnly = false) =>
+    apiGet<Field[]>('/api/v1/fields', { query: { active_only: activeOnly } }),
+  field: (slug: string) => apiGet<Field>(`/api/v1/fields/${encodeURIComponent(slug)}`),
+  createField: (body: FieldCreate) => apiSend<Field>('POST', '/api/v1/fields', body),
+  updateField: (slug: string, body: FieldPatch) =>
+    apiSend<Field>('PATCH', `/api/v1/fields/${encodeURIComponent(slug)}`, body),
+
+  // Connectors page (Phase 18) ----------------------------------------------
+  connectors: () => apiGet<Connector[]>('/api/v1/connectors'),
+  fieldConnectors: (field: string) =>
+    apiGet<FieldConnector[]>(`/api/v1/fields/${encodeURIComponent(field)}/connectors`),
+  updateFieldConnector: (field: string, connectorId: string, body: FieldConnectorUpdate) =>
+    apiSend<FieldConnector>(
+      'PUT',
+      `/api/v1/fields/${encodeURIComponent(field)}/connectors/${encodeURIComponent(connectorId)}`,
+      body,
     ),
 };

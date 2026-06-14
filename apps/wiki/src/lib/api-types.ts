@@ -381,6 +381,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List fields
+         * @description Every field scope, each with its stored FieldProfile.
+         */
+        get: operations["list_fields_endpoint_api_v1_fields_get"];
+        put?: never;
+        /**
+         * Create a field
+         * @description Create a new field scope from a name + profile. The name is slugified into the immutable id/slug. A field starts with no connectors enabled — enable sources for it via the connectors endpoints.
+         */
+        post: operations["create_field_endpoint_api_v1_fields_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fields/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a field */
+        get: operations["get_field_endpoint_api_v1_fields__slug__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a field
+         * @description Patch a field's name, profile fields, and/or active flag. slug/id are immutable. Profile edits take effect on the next pipeline run.
+         */
+        patch: operations["patch_field_endpoint_api_v1_fields__slug__patch"];
+        trace?: never;
+    };
+    "/api/v1/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the connector catalog
+         * @description The global catalog of source connectors a field can enable, each with its config_schema (the fields a field must supply to use it).
+         */
+        get: operations["list_connectors_endpoint_api_v1_connectors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fields/{slug}/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a field's connector enablement
+         * @description The connectors configured for a field — enabled flag + per-field config. Join against /connectors by connector_id (== connector slug) for the catalog metadata.
+         */
+        get: operations["list_field_connectors_endpoint_api_v1_fields__slug__connectors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fields/{slug}/connectors/{connector_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Enable/disable or reconfigure a connector for a field
+         * @description Upsert one field's enablement + config of a catalog connector. The config is validated against the connector's config_schema; an unknown key, wrong type, or missing required field is a 422. Persisted on the mesh_writer role; the next pipeline run dispatches the field's enabled connectors.
+         */
+        put: operations["put_field_connector_api_v1_fields__slug__connectors__connector_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/schedules": {
         parameters: {
             query?: never;
@@ -1064,6 +1169,31 @@ export interface components {
             subject_entity: components["schemas"]["Entity"] | null;
         };
         /**
+         * Connector
+         * @description A catalog connector definition (global, reusable across fields).
+         */
+        Connector: {
+            /** Id */
+            id: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** @default builtin */
+            kind: components["schemas"]["ConnectorKind"];
+            /** Config Schema */
+            config_schema?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * ConnectorKind
+         * @enum {string}
+         */
+        ConnectorKind: "builtin" | "config_driven";
+        /**
          * Coverage
          * @description How well the retrieved mesh evidence supports the answer.
          *
@@ -1119,6 +1249,128 @@ export interface components {
          * @enum {string}
          */
         FailureMode: "unsupported_extrapolation" | "cherry_picked_evidence" | "methodological_flaw" | "outdated_by_newer_claim" | "contradicted_by_source" | "definitional_ambiguity" | "other";
+        /**
+         * Field
+         * @description A first-class field scope. Mirrors a ``knowledge.fields`` row.
+         */
+        Field: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            profile: components["schemas"]["FieldProfile"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+        };
+        /**
+         * FieldConnector
+         * @description One field's enablement + config of a catalog connector.
+         */
+        FieldConnector: {
+            /** Field Id */
+            field_id: string;
+            /** Connector Id */
+            connector_id: string;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * FieldConnectorUpdate
+         * @description Enable/disable + (re)configure a connector for a field.
+         */
+        FieldConnectorUpdate: {
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * FieldCreate
+         * @description Create a field. ``name`` is slugified into the immutable id/slug; the
+         *     rest seed the field's prompt-driving FieldProfile.
+         */
+        FieldCreate: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Entity Type Hints */
+            entity_type_hints?: string[];
+            /**
+             * Extraction Examples
+             * @default
+             */
+            extraction_examples: string;
+            /**
+             * Topic Label
+             * @default sota
+             */
+            topic_label: string;
+        };
+        /**
+         * FieldPatch
+         * @description Patch a field's mutable attributes. All optional; slug/id never change.
+         */
+        FieldPatch: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Entity Type Hints */
+            entity_type_hints?: string[] | null;
+            /** Extraction Examples */
+            extraction_examples?: string | null;
+            /** Topic Label */
+            topic_label?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+        };
+        /**
+         * FieldProfile
+         * @description Prompt-driving description of a field. Serialized to ``fields.profile``.
+         */
+        FieldProfile: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Entity Type Hints */
+            entity_type_hints?: string[];
+            /**
+             * Extraction Examples
+             * @default
+             */
+            extraction_examples: string;
+            /**
+             * Topic Label
+             * @default sota
+             */
+            topic_label: string;
+        };
         /**
          * GraphData
          * @description Bounded graph payload. ``total_entities`` lets the UI show a
@@ -1280,7 +1532,7 @@ export interface components {
             finished_at?: string | null;
             /**
              * Run Type
-             * @default pipeline
+             * @default ingest
              */
             run_type: string;
             /**
@@ -2128,6 +2380,223 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphData"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_fields_endpoint_api_v1_fields_get: {
+        parameters: {
+            query?: {
+                active_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_field_endpoint_api_v1_fields_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_field_endpoint_api_v1_fields__slug__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_field_endpoint_api_v1_fields__slug__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_connectors_endpoint_api_v1_connectors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Connector"][];
+                };
+            };
+        };
+    };
+    list_field_connectors_endpoint_api_v1_fields__slug__connectors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldConnector"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_field_connector_api_v1_fields__slug__connectors__connector_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldConnectorUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldConnector"];
                 };
             };
             /** @description Validation Error */

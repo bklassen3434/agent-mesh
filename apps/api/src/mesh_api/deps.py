@@ -6,6 +6,8 @@ from typing import Annotated
 from fastapi import Depends
 from mesh_db.connection import MeshConnection, get_connection
 
+__all__ = ["ConnDep", "WriterConnDep", "db_exists", "get_conn", "get_writer_conn"]
+
 
 def get_conn() -> Iterator[MeshConnection]:
     """Per-request read-only Postgres connection (from the reader pool).
@@ -22,6 +24,24 @@ def get_conn() -> Iterator[MeshConnection]:
 
 
 ConnDep = Annotated[MeshConnection, Depends(get_conn)]
+
+
+def get_writer_conn() -> Iterator[MeshConnection]:
+    """Per-request writer connection (mesh_writer role).
+
+    Used by the handful of operational-config write endpoints (schedules,
+    connector enablement, field onboarding). The API stays read-only for
+    knowledge content; only config rows are writable from the wiki. The caller
+    owns the transaction (commit on success, rollback on validation failure).
+    """
+    conn = get_connection(read_only=False)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+WriterConnDep = Annotated[MeshConnection, Depends(get_writer_conn)]
 
 
 def db_exists() -> bool:

@@ -24,6 +24,7 @@ dev-dependencies = [
     "mesh-agent-servers",
     "mesh-api",
     "mesh-scheduler",
+    "mesh-telegram",
 ]
 
 [tool.uv.workspace]
@@ -33,6 +34,7 @@ members = [
     "apps/agents",
     "apps/api",
     "apps/scheduler",
+    "apps/telegram",
     "packages/mesh-models",
     "packages/mesh-db",
     "packages/mesh-tracing",
@@ -53,6 +55,7 @@ mesh-a2a = { workspace = true }
 mesh-agent-servers = { workspace = true }
 mesh-api = { workspace = true }
 mesh-scheduler = { workspace = true }
+mesh-telegram = { workspace = true }
 
 [tool.pytest.ini_options]
 pythonpath = [
@@ -67,6 +70,7 @@ pythonpath = [
     "apps/agents/src",
     "apps/api/src",
     "apps/scheduler/src",
+    "apps/telegram/src",
 ]
 
 [tool.mypy]
@@ -91,6 +95,8 @@ module = [
     "arxiv.*",
     "structlog",
     "structlog.*",
+    "telegram",
+    "telegram.*",
     "a2a",
     "a2a.*",
     "google.protobuf.*",

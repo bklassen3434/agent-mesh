@@ -621,6 +621,47 @@ services:
       - scheduler
     restart: unless-stopped
 
+  # Telegram bridge — chat with the mesh + receive the daily brief from the
+  # Telegram app. Long-polling (dials out to Telegram), so no inbound port is
+  # needed; the only exposed port is the local healthcheck. Calls the read API
+  # for /ask + /briefing, so good answers need research-qa (for chat) and
+  # personalizer (for briefs) running — on the Pi overlay both sit in the `ui`
+  # profile, so promote them if you want the bot fully functional there.
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram
+    environment:
+      # Token from @BotFather — set in .env (no default → bot idles until set).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Comma-separated chat ids allowed to use the bot + receive the brief.
+      # Empty → the bot replies with your chat id so you can bootstrap it.
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      TELEGRAM_BRIEFING_ENABLED: ${TELEGRAM_BRIEFING_ENABLED:-true}
+      TELEGRAM_BRIEFING_HOUR: ${TELEGRAM_BRIEFING_HOUR:-13}
+      TELEGRAM_BRIEFING_MINUTE: ${TELEGRAM_BRIEFING_MINUTE:-0}
+      TELEGRAM_TZ: ${TELEGRAM_TZ:-UTC}
+      MESH_TELEGRAM_API_URL: "http://api:8000"
+      MESH_TELEGRAM_FIELD: ${MESH_TELEGRAM_FIELD:-ai-robotics}
+      # Optional: when set, brief items link to the wiki detail pages.
+      MESH_TELEGRAM_WIKI_URL: ${MESH_TELEGRAM_WIKI_URL:-}
+      HEALTH_HOST: "0.0.0.0"
+      HEALTH_PORT: "9110"
+    env_file:
+      - .env
+    ports:
+      - "9110:9110"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9110/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
   # Phase 12: single Postgres for the whole stack — the knowledge store
   # (`knowledge` schema, pgvector) plus the operational tables (LangGraph
   # checkpoints + the `schedules` table in `public`). pgvector replaces the

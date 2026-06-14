@@ -14,6 +14,7 @@ from mesh_api.routers import (
     beliefs,
     briefing,
     claims,
+    connectors,
     entities,
     graph,
     health,
@@ -77,8 +78,9 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         # Phase 9 adds the only writes in the API: the Pipelines page PATCHes
         # schedules and POSTs manual triggers from the browser, so the wiki
-        # origin needs more than GET.
-        allow_methods=["GET", "POST", "PATCH"],
+        # origin needs more than GET. Phase 18 adds the Connectors page, which
+        # PUTs per-field connector enablement.
+        allow_methods=["GET", "POST", "PATCH", "PUT"],
         allow_headers=["*"],
     )
 
@@ -94,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(ask.router)
     app.include_router(status_router.router)
     app.include_router(graph.router)
+    app.include_router(connectors.router)
     app.include_router(schedules.router)
     app.include_router(pipelines.router)
     app.include_router(agents.router)

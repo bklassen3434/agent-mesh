@@ -71,6 +71,11 @@ pythonpath = [
 
 [tool.mypy]
 python_version = "3.11"
+# Skill scripts under .claude/ are self-contained tools run via `uv run python
+# <path>`, not importable library code. Each skill dir conventionally carries a
+# `snapshot.py` / `check_deltas.py`, whose repeated basenames clash with mypy's
+# flat module mapping ("Duplicate module named ..."). They're still ruff-linted.
+exclude = '^\.claude/'
 strict = true
 warn_return_any = true
 warn_unused_ignores = true

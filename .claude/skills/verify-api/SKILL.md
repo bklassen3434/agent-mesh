@@ -1,6 +1,6 @@
 ---
 name: verify-api
-description: Verify the running read API (apps/api, :8000) serves internally-consistent state and capture evidence. Hits /healthz, /api/v1/stats, /beliefs, /claims, /graph and a sampled belief detail, asserts cross-response consistency (graph edges reference real nodes, pagination totals are sane, belief detail resolves its cited claims), and writes a timestamped PASS/FAIL evidence report. Use after changing the API, before pushing API/wiki work, or when asked to verify the API works / is healthy / serves consistent data.
+description: Verify the running read API (apps/api, :8000) serves internally-consistent state and capture evidence. Hits /healthz, /api/v1/stats, /beliefs, /claims, /graph, /graph/data and /agents (+ sampled belief detail, agent invocations, agent graph), asserts cross-response consistency (graph edges reference real nodes, pagination totals sane, belief detail resolves its cited claims, agent invocations resolve to their agent, the agent graph is a coordinator star), and writes a timestamped PASS/FAIL evidence report. Use after changing the API, before pushing API/wiki work, or when asked to verify the API works / is healthy / serves consistent data.
 ---
 
 # verify-api
@@ -20,6 +20,10 @@ dir, then asserts:
 - **graph_edges_reference_real_nodes** — every `/api/v1/graph` edge's `source`/`target` is present in that payload's `nodes` (the highest-value cross-consistency check).
 - **beliefs_page_total_sane / claims_page_total_sane** — paginated `total` ≥ the number of returned items.
 - **belief_detail_claims_consistent** — a sampled belief detail's resolved `supporting_claims` are all ids the belief actually cites.
+- **graph_data_edges_reference_real_nodes / graph_data_node_cap** — the pre-aggregated `/api/v1/graph/data` (Phase 9) has no dangling edges and respects its top-200-node cap.
+- **agent_invocations_match_agent** — every invocation returned for a sampled roster agent (`/api/v1/agents` → `/api/v1/agents/{agent}/invocations`) is attributed to that agent (Phase 23 observability).
+- **invocation_detail_heuristics_consistent** — a sampled invocation's detail resolves only heuristic ids the invocation actually applied.
+- **agent_graph_star_topology** — `/api/v1/agents/graph` is a coordinator star: ≤1 coordinator node, every edge sourced at it, no dangling endpoints.
 
 ## Steps
 

@@ -20,6 +20,7 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 BASE = os.environ.get("API_BASE", "http://localhost:8000").rstrip("/")
 TIMEOUT = float(os.environ.get("API_TIMEOUT", "15"))
@@ -70,6 +71,9 @@ def main() -> int:
         "beliefs": "/api/v1/beliefs?limit=10",
         "claims": "/api/v1/claims?limit=10",
         "graph": "/api/v1/graph?max_nodes=200&max_edges=400",
+        "graph_data": "/api/v1/graph/data",
+        "agents": "/api/v1/agents",
+        "agents_graph": "/api/v1/agents/graph",
     }
     for key, path in endpoints.items():
         status, body = get(path)
@@ -156,6 +160,107 @@ def main() -> int:
             record("belief_detail_claims_consistent", False, f"belief detail -> {status}")
     else:
         record("belief_detail_claims_consistent", True, "no beliefs to sample (vacuously ok)")
+
+    # 6. graph/data (pre-aggregated, Phase 9): edges reference real nodes, ≤200 nodes
+    gd = captures["graph_data"]
+    if gd["status"] == 200 and isinstance(gd["body"], dict):
+        gd_nodes = {n.get("id") for n in gd["body"].get("nodes", [])}
+        gd_edges = gd["body"].get("edges", [])
+        gd_dangling = [
+            e
+            for e in gd_edges
+            if e.get("source") not in gd_nodes or e.get("target") not in gd_nodes
+        ]
+        record(
+            "graph_data_edges_reference_real_nodes",
+            not gd_dangling,
+            f"{len(gd_edges)} edges, {len(gd_nodes)} nodes, {len(gd_dangling)} dangling",
+        )
+        record(
+            "graph_data_node_cap",
+            len(gd_nodes) <= 200,
+            f"{len(gd_nodes)} nodes (cap 200)",
+        )
+    else:
+        record("graph_data_edges_reference_real_nodes", False, f"graph/data -> {gd['status']}")
+
+    # 7. agents roster (Phase 23): sample an agent, its invocations resolve to it,
+    #    and a sampled invocation's detail resolves its applied heuristics.
+    roster = _items(captures["agents"]["body"])
+    if roster:
+        agent_name = roster[0].get("agent")
+        inv_path = f"/api/v1/agents/{quote(str(agent_name), safe='')}/invocations?limit=200"
+        status, invs = get(inv_path)
+        captures["agent_invocations"] = {"path": inv_path, "status": status, "body": invs}
+        (out / "agent_invocations.json").write_text(
+            json.dumps(captures["agent_invocations"], indent=2, default=str)
+        )
+        inv_items = invs if isinstance(invs, list) else []
+        if status == 200:
+            mismatched = [i for i in inv_items if i.get("agent") != agent_name]
+            record(
+                "agent_invocations_match_agent",
+                not mismatched,
+                f"agent {agent_name}: {len(inv_items)} invocations, {len(mismatched)} mismatched",
+            )
+        else:
+            record("agent_invocations_match_agent", False, f"{inv_path} -> {status}")
+
+        # Sample an invocation that injected heuristics; verify its detail resolves
+        # only ids the invocation actually applied.
+        sample = next((i for i in inv_items if i.get("applied_heuristic_ids")), None)
+        if sample:
+            iid = sample.get("id")
+            d_path = f"/api/v1/agents/invocations/{quote(str(iid), safe='')}"
+            d_status, detail = get(d_path)
+            captures["invocation_detail"] = {"path": d_path, "status": d_status, "body": detail}
+            (out / "invocation_detail.json").write_text(
+                json.dumps(captures["invocation_detail"], indent=2, default=str)
+            )
+            if d_status == 200 and isinstance(detail, dict):
+                applied_ids = set(sample.get("applied_heuristic_ids", []) or [])
+                resolved = {h.get("id") for h in detail.get("applied_heuristics", []) or []}
+                stray = resolved - applied_ids
+                record(
+                    "invocation_detail_heuristics_consistent",
+                    not stray,
+                    f"invocation {iid}: {len(applied_ids)} applied, {len(resolved)} resolved",
+                )
+            else:
+                record("invocation_detail_heuristics_consistent", False, f"detail -> {d_status}")
+        else:
+            record(
+                "invocation_detail_heuristics_consistent",
+                True,
+                "no invocation with applied heuristics to sample (vacuously ok)",
+            )
+    else:
+        record("agent_invocations_match_agent", True, "no agents in roster (vacuously ok)")
+        record("invocation_detail_heuristics_consistent", True, "no agents (vacuously ok)")
+
+    # 8. agent interaction graph is a coordinator star: ≤1 coordinator node, every
+    #    edge sourced at it, no dangling endpoints.
+    ag = captures["agents_graph"]
+    if ag["status"] == 200 and isinstance(ag["body"], dict):
+        ag_nodes = ag["body"].get("nodes", [])
+        ag_edges = ag["body"].get("edges", [])
+        ag_node_ids = {n.get("id") for n in ag_nodes}
+        coord_ids = {n.get("id") for n in ag_nodes if n.get("role") == "coordinator"}
+        non_star = [e for e in ag_edges if e.get("source") not in coord_ids]
+        ag_dangling = [
+            e
+            for e in ag_edges
+            if e.get("source") not in ag_node_ids or e.get("target") not in ag_node_ids
+        ]
+        ok = len(coord_ids) <= 1 and not non_star and not ag_dangling
+        record(
+            "agent_graph_star_topology",
+            ok,
+            f"{len(coord_ids)} coordinator node(s), {len(non_star)} non-star "
+            f"edge(s), {len(ag_dangling)} dangling",
+        )
+    else:
+        record("agent_graph_star_topology", False, f"agents/graph -> {ag['status']}")
 
     return _finalize(out, ts, captures, assertions)
 

@@ -44,6 +44,18 @@ const PIPELINES: { jobId: string; name: string; description: string }[] = [
     name: 'Skeptic sweep',
     description: 'Challenges held beliefs and records counter-claims.',
   },
+  {
+    jobId: 'belief_consolidation',
+    name: 'Belief consolidation',
+    description:
+      'De-duplicates held beliefs, decays stale ones, and archives long-dead beliefs (append-only).',
+  },
+  {
+    jobId: 'discovery',
+    name: 'Discovery',
+    description:
+      'Analyzes the field for evidence gaps and opens investigations to fill them.',
+  },
 ];
 
 function humanInterval(h: number): string {

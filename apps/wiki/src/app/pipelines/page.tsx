@@ -18,8 +18,9 @@ export default async function PipelinesPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Pipelines</h1>
         <p className="text-sm text-muted-foreground">
-          Schedule the coordinator and skeptic sweep, trigger runs on demand, and
-          review recent run history. Live state refreshes every 30 seconds.
+          Schedule the ingest, skeptic sweep, belief consolidation, and
+          discovery jobs, trigger runs on demand, and review recent run history.
+          Live state refreshes every 30 seconds.
         </p>
       </header>
       <PipelinesPanel

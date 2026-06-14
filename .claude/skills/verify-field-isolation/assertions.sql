@@ -10,7 +10,7 @@
 --
 -- NOTE: keep this in sync with ASSERTIONS in check_field_isolation.py.
 
-SET search_path TO knowledge, public;
+SET search_path TO knowledge, agents, runtime, catalog, public;
 
 WITH violations AS (
     SELECT 'claim_field_matches_subject_entity' AS invariant, count(*) AS violations

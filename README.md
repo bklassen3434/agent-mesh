@@ -64,14 +64,14 @@ cp .env.example .env
 
 # 2. Install Python deps (needed for the CLI) and apply the schema + roles
 uv sync
-uv run mesh.cli init-db             # idempotent: knowledge schema, roles, migrations
+uv run mesh.cli init-db             # idempotent: knowledge/agents/runtime/catalog schemas, roles, migrations
 
 # 3. Boot the full stack (10 scouts + worker agents + coordinator + API + wiki + Postgres)
 make up
 # Wait ~30s for healthchecks to pass
 
 # 4. Run one ingestion cycle (arxiv, HN, GitHub, blogs, leaderboards, …)
-make pipeline
+make ingest
 # Takes 2–5 min — claims are extracted, entities resolved, beliefs synthesized
 
 # 5. Run one falsification sweep (Skeptic challenges the beliefs)
@@ -79,7 +79,7 @@ make skeptic
 
 # 6. (optional) Other sweeps
 make discover            # autonomous gap-driven investigations
-make belief-consolidate  # semantic belief de-dup + decay/archive
+make consolidate-beliefs # semantic belief de-dup + decay/archive
 
 # 7. Open the wiki
 open http://localhost:3000
@@ -155,8 +155,13 @@ arxiv  hn  github  bluesky  reddit  blog  leaderboard  web-search  rss  rest-jso
  │  Postgres  (mesh-postgres, pgvector/pg16)     │
  │  knowledge schema: entities · claims ·        │
  │    beliefs · revisions · relationships ·      │
- │    investigations · fields · connectors ·     │
- │    agent_invocations  (+ views, HNSW indexes) │
+ │    investigations  (+ views, HNSW indexes)    │
+ │  agents schema: agent_heuristics · revisions  │
+ │    · agent_invocations                        │
+ │  runtime schema: pipeline_runs · llm_usage ·  │
+ │    processed_items                            │
+ │  catalog schema: fields · connectors ·        │
+ │    field_connectors                           │
  │  public: LangGraph checkpoints · schedules    │
  │  roles: mesh_writer (coordinator) /           │
  │         mesh_reader (API)                     │

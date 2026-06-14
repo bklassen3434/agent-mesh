@@ -75,7 +75,7 @@ class RunCheckpointState:
     """
 
     run_id: str
-    run_type: str  # "pipeline" | "skeptic_sweep" | "unknown"
+    run_type: str  # "ingest" | "skeptic" | "unknown"
     finalized: bool
     updated_at: datetime | None
     errors: list[dict[str, Any]] = field(default_factory=list)
@@ -91,9 +91,9 @@ class RunCheckpointState:
 
 def _classify_run(channel_values: dict[str, Any]) -> str:
     if "papers_scouted" in channel_values:
-        return "pipeline"
+        return "ingest"
     if "beliefs_considered" in channel_values:
-        return "skeptic_sweep"
+        return "skeptic"
     return "unknown"
 
 

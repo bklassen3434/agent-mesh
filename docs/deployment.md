@@ -20,8 +20,11 @@ the worker agents (`claim-extractor`, `entity-tracker`, `sota-tracker`,
 `coordinator` and `skeptic-sweep` jobs, the `scheduler`, the `api`,
 the `wiki`, and one `mesh-postgres` container
 (`pgvector/pgvector:pg16`). That single Postgres holds **both** the
-knowledge store (the `knowledge` schema, with `pgvector` for
-embeddings) and the operational tables (LangGraph checkpoints + the
+knowledge store (split across the `knowledge` schema for the core domain
+tables, `agents` for agent heuristics/invocations, `runtime` for
+pipeline_runs/llm_usage/processed_items, and `catalog` for
+fields/connectors — all with `pgvector` for embeddings) and the
+orchestration tables (LangGraph checkpoints + the
 `schedules` table, in `public`). There is no separate datastore —
 DuckDB was removed in Phase 12 and the `agent_tasks` durability tables
 were dropped in Phase 8. Several services live behind compose profiles
@@ -171,8 +174,8 @@ interface is wrong — re-check `MESH_BIND_INTERFACE`.
   mesh running on an interval cadence. It's a non-blocking
   `BackgroundScheduler` with an HTTP control surface on :9100 that
   reconciles interval/enabled config from the Postgres `schedules`
-  table (no restart needed). It runs four jobs — `pipeline`,
-  `skeptic_sweep`, `discovery`, and `belief_consolidation` — by
+  table (no restart needed). It runs four jobs — `ingest`,
+  `skeptic`, `discovery`, and `belief_consolidation` — by
   shelling out to the corresponding CLI entry points. See
   [scheduling.md](scheduling.md).
 - The **`make backup`** target is the official "back up the DB" path

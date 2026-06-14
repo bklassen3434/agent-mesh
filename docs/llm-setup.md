@@ -35,7 +35,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 Pricing per million tokens: **$1.00 input, $5.00 output**.
 
-A typical `make pipeline` run (20 arxiv papers, ~500 input + ~500 output tokens each) costs **roughly $0.01–$0.05**. Set a low monthly cap in the console for peace of mind.
+A typical `make ingest` run (20 arxiv papers, ~500 input + ~500 output tokens each) costs **roughly $0.01–$0.05**. Set a low monthly cap in the console for peace of mind.
 
 ### Prompt caching (Phase 11c)
 
@@ -146,7 +146,7 @@ The factory in `packages/mesh-llm/src/mesh_llm/factory.py` reads `MESH_LLM_PROVI
 
 1. Change `MESH_LLM_PROVIDER` in `.env`.
 2. `make down && make up` (the claim-extractor container picks up the new env via `env_file`).
-3. `make pipeline` — the orchestrator's `make_llm_client()` will instantiate the new backend.
+3. `make ingest` — the orchestrator's `make_llm_client()` will instantiate the new backend.
 
 No code changes needed; both clients conform to the same `LLMClient` Protocol.
 
@@ -166,7 +166,7 @@ Example: run the skeptic on Opus while keeping extraction cheap on Haiku:
 ```bash
 export MESH_LLM_MODEL_DEFAULT=claude-haiku-4-5
 export MESH_LLM_MODEL_SKEPTIC=claude-opus-4-7
-make pipeline   # extraction uses Haiku
+make ingest     # extraction uses Haiku
 make skeptic    # skeptic uses Opus, all other agents use Haiku
 ```
 

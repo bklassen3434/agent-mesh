@@ -1,7 +1,7 @@
 """Connector catalog + per-field enablement access layer (Phase 17c).
 
-Reader-safe reads over the global ``knowledge.connectors`` catalog and the
-per-field ``knowledge.field_connectors`` enablement; writer-only writes
+Reader-safe reads over the global ``catalog.connectors`` catalog and the
+per-field ``catalog.field_connectors`` enablement; writer-only writes
 (``enable_connector`` validates config against the connector's ``config_schema``
 before persisting, so bad config is rejected at write time). ``seed_connectors``
 materializes the built-in catalog + the ai-robotics enablement from the Python
@@ -124,7 +124,7 @@ def seed_connectors(conn: psycopg.Connection[Any]) -> None:
     for c in BUILTIN_CONNECTORS:
         conn.execute(
             """
-            INSERT INTO knowledge.connectors (id, slug, name, description, kind, config_schema)
+            INSERT INTO catalog.connectors (id, slug, name, description, kind, config_schema)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (id) DO UPDATE SET
                 slug = EXCLUDED.slug,
@@ -139,7 +139,7 @@ def seed_connectors(conn: psycopg.Connection[Any]) -> None:
         # Don't clobber an operator's later edits — only seed missing rows.
         conn.execute(
             """
-            INSERT INTO knowledge.field_connectors (field_id, connector_id, config, enabled)
+            INSERT INTO catalog.field_connectors (field_id, connector_id, config, enabled)
             VALUES (%s, %s, %s::jsonb, %s)
             ON CONFLICT (field_id, connector_id) DO NOTHING
             """,

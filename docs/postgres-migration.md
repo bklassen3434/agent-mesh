@@ -327,7 +327,7 @@ Proceed to **12b — Postgres schema + migrations.**
   `close`), but `close()` returns the connection to the pool. Writer/reader
   pools by DSN (`MESH_PG_WRITER_URL`/`MESH_PG_READER_URL`, falling back to the
   base owner DSN). Autocommit (matches DuckDB's implicit commit). The pool's
-  `configure` sets `search_path TO knowledge, public`, so all unqualified table/
+  `configure` sets `search_path TO knowledge, agents, runtime, catalog, public`, so all unqualified table/
   view references resolve without rewriting every query.
 - Every `mesh-db` query ported to Postgres dialect: `?`→`%s`, JSON writes wrapped
   in `Jsonb()` (reads already tolerate dict-or-str), `len()`→`cardinality()`.

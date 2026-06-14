@@ -1,7 +1,7 @@
 """Field access layer (Phase 17a).
 
 A Field is the first-class scope that partitions all field-state. This module is
-the typed interface over ``knowledge.fields``: reader-safe reads (``get_field`` /
+the typed interface over ``catalog.fields``: reader-safe reads (``get_field`` /
 ``get_field_by_slug`` / ``list_fields``) and writer-only writes (``create_field`` /
 ``set_active``). ``seed_default_field`` upserts the canonical ``ai-robotics``
 profile and is called by ``init_pg`` so Python — not the SQL migration literal —
@@ -97,7 +97,7 @@ def seed_default_field(conn: psycopg.Connection[Any]) -> None:
     profile_json = json.dumps(AI_ROBOTICS_PROFILE.model_dump())
     conn.execute(
         """
-        INSERT INTO knowledge.fields (id, name, slug, profile)
+        INSERT INTO catalog.fields (id, name, slug, profile)
         VALUES (%s, %s, %s, %s::jsonb)
         ON CONFLICT (id) DO UPDATE
             SET name = EXCLUDED.name,

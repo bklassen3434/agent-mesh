@@ -101,7 +101,7 @@ uv run mesh.cli discover --report-path /tmp/discovery.txt
 # Apply: open investigations + dispatch real search (needs the scout stack up).
 uv run mesh.cli discover --apply
 
-# As a one-shot container cycle (mirrors `make consolidate`):
+# As a one-shot container cycle (mirrors `make consolidate-memory`):
 make discover
 ```
 

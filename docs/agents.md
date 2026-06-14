@@ -6,8 +6,8 @@ The agent fleet started (Phase 1) as plain Python classes, each with a single `a
 
 Cross-cutting properties of the current fleet:
 
-- **Field-agnostic (Phase 17).** All agents operate within a **Field** (`knowledge.fields`). A run scopes to one field and the coordinator dispatches only that field's enabled connectors. The three coupled system prompts (extractor, skeptic, research-QA) are profile-driven **builders** (`mesh_llm.prompts.build_*` from a `FieldProfile`), and agents build the `cache_control` prefix once per field via `mesh_agents.profiles.load_profile`. Entity resolution and memory **never cross fields**. `field_id` is a partition, never a content axis — synthesis/confidence/curator logic never branches on it. See `docs/field-agnostic.md`.
-- **Observable (Phase 23).** Every agent dispatched through the standard skill path is recorded: a `_dispatch` wrapper in the coordinator times each skill call and writes an `AgentInvocation` (bounded input/output summary, status, trace id, latency, model/tokens/cost, injected memory) to `knowledge.agent_invocations`. Rows surface on the wiki **Agents** page (roster → an agent's recent invocations → one invocation's inputs/outputs/context + Langfuse deep-link). No per-agent code is needed for an agent to appear. See `docs/agent-observability.md`.
+- **Field-agnostic (Phase 17).** All agents operate within a **Field** (`catalog.fields`). A run scopes to one field and the coordinator dispatches only that field's enabled connectors. The three coupled system prompts (extractor, skeptic, research-QA) are profile-driven **builders** (`mesh_llm.prompts.build_*` from a `FieldProfile`), and agents build the `cache_control` prefix once per field via `mesh_agents.profiles.load_profile`. Entity resolution and memory **never cross fields**. `field_id` is a partition, never a content axis — synthesis/confidence/curator logic never branches on it. See `docs/field-agnostic.md`.
+- **Observable (Phase 23).** Every agent dispatched through the standard skill path is recorded: a `_dispatch` wrapper in the coordinator times each skill call and writes an `AgentInvocation` (bounded input/output summary, status, trace id, latency, model/tokens/cost, injected memory) to `agents.agent_invocations`. Rows surface on the wiki **Agents** page (roster → an agent's recent invocations → one invocation's inputs/outputs/context + Langfuse deep-link). No per-agent code is needed for an agent to appear. See `docs/agent-observability.md`.
 - **Memory.** Agents can inject episodic recall + learned heuristics and attach an optional debug envelope to skill output (`mesh_agents.memory`). See `docs/agent-memory.md`.
 
 ## Agent Catalogue
@@ -189,7 +189,7 @@ Out-of-band from the main pipeline. Triggered manually by `make skeptic`.
 │              extend contradicting_claim_ids)                    │
 │            - Append BeliefRevision (revised_by_agent=skeptic)   │
 │                                                                 │
-│  6. Write PipelineRun row with run_type='skeptic_sweep'         │
+│  6. Write PipelineRun row with run_type='skeptic'               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -325,7 +325,7 @@ LLM-backed digest agent behind the wiki's Daily Brief. Overridable model via the
 
 ## Connector-driven scouts (Phase 17/18)
 
-These three generic scouts are the connector catalog's universal fetchers: they take their endpoint/config from the field's enabled connector (`knowledge.field_connectors`) rather than hardcoding sources, so a new field can ingest data with no new agent code.
+These three generic scouts are the connector catalog's universal fetchers: they take their endpoint/config from the field's enabled connector (`catalog.field_connectors`) rather than hardcoding sources, so a new field can ingest data with no new agent code.
 
 ### WebSearchScoutAgent
 
@@ -371,4 +371,4 @@ These run on their own LangGraph jobs and schedules rather than inline in the ma
 
 **Responsibility**: Append-only belief de-duplication + decay/archive — the world-model analog of entity resolution, but it never deletes.
 
-Beliefs carry a `statement_embedding`; `mesh_agents.belief_consolidation`/`belief_reconcile` block held, field-scoped, family-restricted candidate beliefs, then merge on conservative bands (`MESH_BELIEF_MERGE_HIGH`/`_LOW` 0.95/0.85; middle band → LLM, defaulting to not-same). `merge_beliefs` folds claim-id unions, recomputes confidence, re-points investigation refs, and marks the duplicate not-held — never deleting a row or touching a claim. A second LLM-free pass decays stale beliefs (confidence half-life) and archives long-dead unsupported ones. Every change appends a `BeliefRevision` attributed to `belief_consolidator`, never crossing fields. Runs as the daily `mesh-belief-consolidate` job; `mesh.cli consolidate-beliefs` is the backfill/manual entry. See `docs/belief-consolidation.md`.
+Beliefs carry a `statement_embedding`; `mesh_agents.belief_consolidation`/`belief_reconcile` block held, field-scoped, family-restricted candidate beliefs, then merge on conservative bands (`MESH_BELIEF_MERGE_HIGH`/`_LOW` 0.95/0.85; middle band → LLM, defaulting to not-same). `merge_beliefs` folds claim-id unions, recomputes confidence, re-points investigation refs, and marks the duplicate not-held — never deleting a row or touching a claim. A second LLM-free pass decays stale beliefs (confidence half-life) and archives long-dead unsupported ones. Every change appends a `BeliefRevision` attributed to `belief_consolidator`, never crossing fields. Runs as the daily `mesh-consolidate-beliefs` job; `mesh.cli consolidate-beliefs` is the backfill/manual entry. See `docs/belief-consolidation.md`.

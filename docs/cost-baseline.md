@@ -39,7 +39,7 @@ Captured **2026-05-30** on `claude-haiku-4-5`.
 | Field | Value |
 |---|---|
 | run_id | `eaa847f7-da0f-4777-bd62-8b9ca5cb7026` |
-| run_type | pipeline |
+| run_type | ingest |
 | skill | `extract_claims` |
 | calls | 72 |
 | input tokens | 127,376 |
@@ -63,7 +63,7 @@ for the four narrow SOTA predicates.
 | Field | Value |
 |---|---|
 | run_id | `8c4f673f-27ea-4d57-93d3-b664b03cab55` |
-| run_type | skeptic_sweep |
+| run_type | skeptic |
 | skill | `challenge_belief` |
 | calls | 5 |
 | input tokens | 13,184 |

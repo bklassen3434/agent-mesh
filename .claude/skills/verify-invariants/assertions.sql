@@ -11,7 +11,7 @@
 -- (or pipe into psql inside any container/host that can reach the store).
 -- NOTE: keep this in sync with ASSERTIONS in check_invariants.py.
 
-SET search_path TO knowledge, public;
+SET search_path TO knowledge, agents, runtime, catalog, public;
 
 WITH violations AS (
     SELECT 'claim_supersession_pointer' AS invariant, count(*) AS violations

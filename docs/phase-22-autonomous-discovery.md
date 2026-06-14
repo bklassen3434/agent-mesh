@@ -2,7 +2,7 @@
 
 ## Context
 
-Agent Mesh ingests on a fixed cadence: the scheduler fires `mesh-pipeline`, the
+Agent Mesh ingests on a fixed cadence: the scheduler fires `mesh-ingest`, the
 enabled connectors fetch whatever their config says to fetch, and claims/beliefs
 accumulate. There is already a *reactive* seed of agency — the **Curator**
 (`mesh_agents/curator.py`) inspects held beliefs and, per its
@@ -54,7 +54,7 @@ details:
   `investigate_arxiv` (`arxiv_scout.py` `_fetch_papers_by_query`), and
   `make_empty_investigate_handler` (the stubs to replace).
 - The connector framework (Phase 17/18): `SourceConnector.investigate`,
-  `knowledge.field_connectors` (which connectors a field has enabled + config),
+  `catalog.field_connectors` (which connectors a field has enabled + config),
   and — if Phase 18 landed — the `web_search` connector + its `investigate`
   variant.
 - Signals to mine for gaps/trends: `belief_signals` / `belief_hype_substance`

@@ -19,7 +19,7 @@ field — `ai-robotics` — with all prior data backfilled into it.
 
 ## The Field + FieldProfile
 
-A **Field** (`knowledge.fields`, `mesh_models.field.Field`) is `id`, `name`,
+A **Field** (`catalog.fields`, `mesh_models.field.Field`) is `id`, `name`,
 `slug`, an `is_active` flag, and a stored **FieldProfile** (JSON). The profile is
 the prompt-driving description of a field:
 
@@ -49,16 +49,16 @@ the naive migration runner cannot carry safely.
 
 | Scoped (carries `field_id`; every read/write filters by it) | How |
 |---|---|
-| `entities`, `sources`, `claims`, `beliefs`, `relationships`, `investigations`, `agent_heuristic`, `pipeline_runs` | `field_id TEXT NOT NULL` FK → `fields(id)` (migration 009) |
-| `belief_revisions`, `agent_heuristic_revision` | inherit scope through their head FK (no column) |
+| `entities`, `sources`, `claims`, `beliefs`, `relationships`, `investigations`, `agent_heuristics`, `pipeline_runs` | `field_id TEXT NOT NULL` FK → `fields(id)` (migration 009) |
+| `belief_revisions`, `agent_heuristic_revisions` | inherit scope through their head FK (no column) |
 | `processed_items` (dedup ledger) | PK extended to `(field_id, source_type, external_id)` — one source ingested independently per field |
 | `schedules` (in `public`) | `field_id` column — each field its own cadence |
-| per-field connector config | `knowledge.field_connectors` |
+| per-field connector config | `catalog.field_connectors` |
 | `llm_usage` | inherits field via `run_id` (join) — no column |
 
 | Shared runtime (field-agnostic by design) | Why |
 |---|---|
-| the connector **catalog** (`knowledge.connectors`) | definitions are reusable across fields; only *enablement + config* is per-field |
+| the connector **catalog** (`catalog.connectors`) | definitions are reusable across fields; only *enablement + config* is per-field |
 | LangGraph checkpoints | `thread_id` is per-run; the run carries its field in state |
 | the role/permission model, the migrations | infrastructure, not field-state |
 
@@ -112,14 +112,14 @@ Build the prefix from the profile once; never interpolate per-item data into it.
 Sources are a **catalog** configured per field (built-in connectors only this
 phase):
 
-- **`knowledge.connectors`** — the global catalog. Each row is a connector
+- **`catalog.connectors`** — the global catalog. Each row is a connector
   *definition*: `slug`, `name`, `description`, `kind` (`builtin`), and a
   `config_schema` describing the fields a field must supply (arXiv → `categories`;
   github → `topics`; …). The catalog is seeded from the Python registry
   `mesh_models.connector.BUILTIN_CONNECTORS` by `init_pg` (so the schema lives in
   one place, not the SQL literal). The seven built-ins are the existing scouts:
   arxiv, hn, github, bluesky, reddit, blog, leaderboard.
-- **`knowledge.field_connectors`** — one field's *enablement + config* of a
+- **`catalog.field_connectors`** — one field's *enablement + config* of a
   catalog connector (`field_id, connector_id, config jsonb, enabled`,
   unique per `(field_id, connector_id)`, coordinator-write).
   `mesh_db.connectors.enable_connector` validates the config against the
@@ -148,11 +148,11 @@ defaults, so the seeded field behaves exactly as before (asserted in
 
 ```bash
 # Pipeline (defaults to the seeded ai-robotics field):
-uv run mesh-pipeline --a2a
-uv run mesh-pipeline --a2a --field ai-robotics
+uv run mesh-ingest --a2a
+uv run mesh-ingest --a2a --field ai-robotics
 
 # Skeptic sweep / entity reconciliation are field-scoped too:
-uv run mesh-skeptic-sweep --field ai-robotics
+uv run mesh-skeptic --field ai-robotics
 uv run mesh.cli reconcile-entities --field ai-robotics --apply
 
 # The read API scopes every knowledge endpoint by ?field=<slug> (default ai-robotics):

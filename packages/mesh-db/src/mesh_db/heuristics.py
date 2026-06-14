@@ -1,6 +1,7 @@
 """Procedural memory store access layer (Phase 16b).
 
-Typed reads/writes for ``agent_heuristic`` + ``agent_heuristic_revision``,
+Typed reads/writes for ``agents.agent_heuristics`` +
+``agents.agent_heuristic_revisions``,
 mirroring ``beliefs.py`` / ``revisions.py``. Writes go through the coordinator
 (mesh_writer role); the API and CLI read via mesh_reader. The head row is
 mutable (confidence/heuristic/activity), but every change is also recorded as
@@ -23,7 +24,7 @@ _COLS = (
     "provenance_run_ids, provenance_claim_ids, created_at, last_revised_at, "
     "revision_count, expires_at, is_currently_active"
 )
-_SELECT = f"SELECT {_COLS} FROM agent_heuristic"
+_SELECT = f"SELECT {_COLS} FROM agent_heuristics"
 
 
 def _as_dt(value: Any) -> datetime:
@@ -62,7 +63,7 @@ def create_heuristic(
 ) -> AgentHeuristic:
     conn.execute(
         """
-        INSERT INTO agent_heuristic
+        INSERT INTO agent_heuristics
             (id, field_id, agent, skill, source, entity_id, heuristic, confidence,
              provenance_run_ids, provenance_claim_ids, created_at, last_revised_at,
              revision_count, expires_at, is_currently_active)
@@ -113,7 +114,7 @@ def update_heuristic(conn: MeshConnection, id: str, **fields: Any) -> AgentHeuri
     params: list[Any] = list(updates.values())
     params.append(id)
     conn.execute(
-        f"UPDATE agent_heuristic SET {', '.join(set_clauses)} WHERE id = %s", params
+        f"UPDATE agent_heuristics SET {', '.join(set_clauses)} WHERE id = %s", params
     )
     updated = get_heuristic_by_id(conn, id)
     if updated is None:
@@ -205,7 +206,7 @@ _REV_COLS = (
     "new_confidence, provenance_run_ids, provenance_claim_ids, revised_by_agent, "
     "revised_at, rationale"
 )
-_REV_SELECT = f"SELECT {_REV_COLS} FROM agent_heuristic_revision"
+_REV_SELECT = f"SELECT {_REV_COLS} FROM agent_heuristic_revisions"
 
 
 def _row_to_revision(row: tuple[Any, ...]) -> AgentHeuristicRevision:
@@ -234,7 +235,7 @@ def create_heuristic_revision(
 ) -> AgentHeuristicRevision:
     conn.execute(
         """
-        INSERT INTO agent_heuristic_revision
+        INSERT INTO agent_heuristic_revisions
             (id, heuristic_id, previous_heuristic, new_heuristic, previous_confidence,
              new_confidence, provenance_run_ids, provenance_claim_ids, revised_by_agent,
              revised_at, rationale)

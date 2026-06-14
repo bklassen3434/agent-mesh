@@ -161,7 +161,7 @@ def test_happy_path_inserts_source_claim_entity_belief(tmp_path: Path) -> None:
     assert any(e.canonical_name == "TestModel-7B" for e in list_entities(conn, limit=50))
     beliefs = list_beliefs(conn, limit=50)
     assert len(beliefs) == 1 and beliefs[0].topic == "sota:MMLU"
-    runs = list_pipeline_runs(conn, limit=5, run_type="pipeline")
+    runs = list_pipeline_runs(conn, limit=5, run_type="ingest")
     assert len(runs) == 1
     assert runs[0].claims_inserted == 1
     assert runs[0].beliefs_created == 1
@@ -274,7 +274,7 @@ def test_capability_claims_produce_entity_anchored_belief(tmp_path: Path) -> Non
     # 14d: confidence is computed from evidence signals, not the hardcoded 0.5.
     # Two supporting claims, no attacks → above base.
     assert belief.confidence > 0.5
-    runs = list_pipeline_runs(conn, limit=5, run_type="pipeline")
+    runs = list_pipeline_runs(conn, limit=5, run_type="ingest")
     assert runs[0].beliefs_created == 1
     conn.close()
 
@@ -311,7 +311,7 @@ def test_records_one_agent_invocation_per_dispatch(tmp_path: Path) -> None:
         assert i.latency_ms is not None
         assert i.input_summary is not None
     # all share the one run id, which is the recorded pipeline run
-    runs = list_pipeline_runs(conn, limit=1, run_type="pipeline")
+    runs = list_pipeline_runs(conn, limit=1, run_type="ingest")
     assert {i.run_id for i in invs} == {runs[0].id}
 
     # roster + graph derive from the rows
@@ -350,7 +350,7 @@ def test_failed_dispatch_records_error_invocation(tmp_path: Path) -> None:
     assert extract[0].status == "error"
     assert extract[0].error_type is not None
     # the run still finalized despite the failed dispatch
-    runs = list_pipeline_runs(conn, limit=1, run_type="pipeline")
+    runs = list_pipeline_runs(conn, limit=1, run_type="ingest")
     assert len(runs) == 1 and runs[0].finished_at is not None
     conn.close()
 
@@ -381,7 +381,7 @@ def test_zero_claims_skips_entity_and_sota(tmp_path: Path) -> None:
     assert list_claims(conn, limit=50) == []
     assert list_entities(conn, limit=50) == []
     assert list_beliefs(conn, limit=50) == []
-    runs = list_pipeline_runs(conn, limit=5, run_type="pipeline")
+    runs = list_pipeline_runs(conn, limit=5, run_type="ingest")
     assert len(runs) == 1 and runs[0].claims_inserted == 0
     conn.close()
 
@@ -397,7 +397,7 @@ def test_dedup_second_run_inserts_nothing(tmp_path: Path) -> None:
     conn = get_connection(db)
     assert len(list_sources(conn, limit=50)) == 1
     assert len(list_claims(conn, limit=50)) == 1
-    runs = list_pipeline_runs(conn, limit=5, run_type="pipeline")
+    runs = list_pipeline_runs(conn, limit=5, run_type="ingest")
     assert len(runs) == 2
     assert runs[0].sources_inserted == 0  # newest run added nothing
     conn.close()
@@ -436,6 +436,6 @@ def test_checkpoint_thread_is_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert len(threads) == 1
     # The single thread id is the run id recorded in pipeline_runs.
     conn = get_connection(db)
-    run = list_pipeline_runs(conn, limit=1, run_type="pipeline")[0]
+    run = list_pipeline_runs(conn, limit=1, run_type="ingest")[0]
     conn.close()
     assert threads == {run.id}

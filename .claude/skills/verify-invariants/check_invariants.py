@@ -37,8 +37,9 @@ class Assertion:
     samples: list[dict[str, Any]] = field(default_factory=list)
 
 
-# Each query returns offending rows only. The connection sets
-# search_path TO knowledge, public, so tables are referenced unqualified.
+# Each query returns offending rows only. The connection sets search_path
+# across the knowledge / agents / runtime / catalog / public schemas, so
+# tables are referenced unqualified.
 ASSERTIONS: list[Assertion] = [
     Assertion(
         name="claim_supersession_pointer",

@@ -82,10 +82,10 @@ def test_reader_role_cannot_write_heuristics(_pg: str, tmp_db: MeshConnection) -
     only the coordinator-writer role persists heuristics (Phase 16b principle)."""
     reader_dsn = _pg.replace("test:test@", "mesh_reader:mesh_reader@")
     with psycopg.connect(reader_dsn, autocommit=True) as ro:
-        ro.execute("SET search_path TO knowledge, public")
+        ro.execute("SET search_path TO knowledge, agents, runtime, catalog, public")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             ro.execute(
-                "INSERT INTO agent_heuristic "
+                "INSERT INTO agent_heuristics "
                 "(id, agent, skill, heuristic, created_at, last_revised_at, expires_at) "
                 "VALUES ('x','skeptic','challenge_belief','h', now(), now(), now())"
             )
@@ -97,6 +97,6 @@ def test_writer_role_cannot_delete_heuristics(_pg: str, tmp_db: MeshConnection) 
     persist_heuristic(tmp_db, _proposal())
     writer_dsn = _pg.replace("test:test@", "mesh_writer:mesh_writer@")
     with psycopg.connect(writer_dsn, autocommit=True) as w:
-        w.execute("SET search_path TO knowledge, public")
+        w.execute("SET search_path TO knowledge, agents, runtime, catalog, public")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            w.execute("DELETE FROM agent_heuristic")
+            w.execute("DELETE FROM agent_heuristics")

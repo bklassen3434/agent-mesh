@@ -2,10 +2,13 @@
 
 ## Storage: Postgres only
 
-The knowledge store is a single Postgres instance (the `mesh-postgres` container, `pgvector/pgvector:pg16`). DuckDB has been fully removed (Phase 12). Two schemas live in this one database:
+The knowledge store is a single Postgres instance (the `mesh-postgres` container, `pgvector/pgvector:pg16`). DuckDB has been fully removed (Phase 12). Five schemas live in this one database. Connections set `search_path TO knowledge, agents, runtime, catalog, public`, so queries reference tables/views unqualified:
 
-- **`knowledge`** — all the domain + operational knowledge tables described below. Connections set `search_path TO knowledge, public`, so queries reference these tables/views unqualified.
-- **`public`** — the operational tables: the **LangGraph checkpoints** (one thread per run, `thread_id == run_id`) and the **`schedules`** table (interval/enabled config the scheduler reconciles). The old `agent_tasks` / `agent_task_events` durability tables were **dropped** in Phase 8 — `/status` now reads orchestration state from the checkpoint store.
+- **`knowledge`** — the core domain tables described below: `entities`, `sources`, `claims`, `beliefs`, `belief_revisions`, `relationships`, `investigations`, plus the belief-signal views.
+- **`agents`** — the agent-state tables: `agent_heuristics` + `agent_heuristic_revisions` (procedural memory) and `agent_invocations` (observability).
+- **`runtime`** — the per-run operational tables: `pipeline_runs`, `llm_usage`, and `processed_items` (the dedup ledger).
+- **`catalog`** — the field + connector catalog: `fields`, `connectors`, and `field_connectors`.
+- **`public`** — the orchestration tables: the **LangGraph checkpoints** (one thread per run, `thread_id == run_id`) and the **`schedules`** table (interval/enabled config the scheduler reconciles). The old `agent_tasks` / `agent_task_events` durability tables were **dropped** in Phase 8 — `/status` now reads orchestration state from the checkpoint store.
 
 Conventions:
 - Arrays are Postgres `text[]` (`unnest(arr)` / `cardinality(arr)` / `x = ANY(arr)`).
@@ -19,7 +22,7 @@ See `docs/postgres-migration.md` for the migration rationale and `docs/field-agn
 
 The coordinator-owned-write model is enforced at the DB level by two roles (`mesh_db.pg_migrations.ensure_roles`):
 
-- **`mesh_writer`** — coordinator / skeptic-sweep / CLI / migrations. `SELECT/INSERT/UPDATE` on the `knowledge` schema, but **no DELETE/TRUNCATE** by default — this backs the claim-immutability and revision-append-only invariants in the database itself. The only DELETE grants are narrow: **migration 006 grants DELETE on `entities` and `relationships` only** (entity merge re-points then removes the absorbed duplicate). Belief consolidation deliberately adds **no DELETE grant** (a merged-away belief is marked not-held, never deleted).
+- **`mesh_writer`** — coordinator / skeptic-sweep / CLI / migrations. `SELECT/INSERT/UPDATE` on the `knowledge`, `agents`, `runtime`, and `catalog` schemas, but **no DELETE/TRUNCATE** by default — this backs the claim-immutability and revision-append-only invariants in the database itself. The only DELETE grants are narrow: **migration 006 grants DELETE on `entities` and `relationships` only** (entity merge re-points then removes the absorbed duplicate). Belief consolidation deliberately adds **no DELETE grant** (a merged-away belief is marked not-held, never deleted).
 - **`mesh_reader`** — `apps/api`. `SELECT` only. The read-only API posture is enforced by grants, not just convention.
 
 ## Core principle: claims are immutable, beliefs are mutable
@@ -37,7 +40,7 @@ A **belief** is the system's current synthesized view on a topic. It is explicit
 
 ## Field scoping (Phase 17)
 
-The core is field-agnostic. A first-class **Field** (`knowledge.fields`) scopes all field-state. A `field_id` FK is present on `entities`, `sources`, `claims`, `beliefs`, `relationships`, `investigations`, `agent_heuristic`, `pipeline_runs`, `processed_items`, and `agent_invocations` (and on `schedules` in `public`). Revisions inherit scope through their head FK (`belief_id` / `heuristic_id`) and get no column; `llm_usage` inherits via `run_id`. `field_id` is a **partition, never a content axis** — synthesis/confidence/curator logic never branches on it. The seeded `ai-robotics` field reproduces all prior behavior. Sources are a connector catalog (`connectors`) plus per-field enablement (`field_connectors`).
+The core is field-agnostic. A first-class **Field** (`catalog.fields`) scopes all field-state. A `field_id` FK is present on `entities`, `sources`, `claims`, `beliefs`, `relationships`, `investigations`, `agent_heuristics`, `pipeline_runs`, `processed_items`, and `agent_invocations` (and on `schedules` in `public`). Revisions inherit scope through their head FK (`belief_id` / `heuristic_id`) and get no column; `llm_usage` inherits via `run_id`. `field_id` is a **partition, never a content axis** — synthesis/confidence/curator logic never branches on it. The seeded `ai-robotics` field reproduces all prior behavior. Sources are a connector catalog (`connectors`) plus per-field enablement (`field_connectors`).
 
 ---
 
@@ -187,9 +190,9 @@ Pending questions the system is trying to answer.
 | trigger_rationale | TEXT? | Human-readable "why we opened this" |
 | field_id | FK → fields | |
 
-## agent_heuristic / agent_heuristic_revision (procedural memory)
+## agent_heuristics / agent_heuristic_revisions (procedural memory)
 
-Agents accumulate revisable, provenance-grounded heuristics (Phase 16), modeled on the belief / belief_revision pair: a mutable head row (`agent_heuristic`: `agent`, `skill`, optional `source`/`entity_id`, `heuristic`, `confidence`, `provenance_run_ids`/`provenance_claim_ids`, TTL `expires_at`, `is_currently_active`, `field_id`) plus an append-only revision log (`agent_heuristic_revision`). Same invariants as beliefs: coordinator-owned writes, revisions append-only (no DELETE), provenance mandatory.
+Agents accumulate revisable, provenance-grounded heuristics (Phase 16), modeled on the belief / belief_revision pair: a mutable head row (`agent_heuristics`: `agent`, `skill`, optional `source`/`entity_id`, `heuristic`, `confidence`, `provenance_run_ids`/`provenance_claim_ids`, TTL `expires_at`, `is_currently_active`, `field_id`) plus an append-only revision log (`agent_heuristic_revisions`). Same invariants as beliefs: coordinator-owned writes, revisions append-only (no DELETE), provenance mandatory.
 
 ## agent_invocations (Phase 23, append-only, field-scoped)
 
@@ -211,7 +214,7 @@ One row per coordinator skill dispatch — the durable answer to "what was this 
 | latency_ms / input_tokens / output_tokens / cost_usd | numeric | |
 | created_at | timestamptz | |
 
-## Operational ledgers (in the `knowledge` schema)
+## Operational ledgers (in the `runtime` schema)
 
 - **pipeline_runs** — per-run counters (`papers_scouted`, `sources_inserted`, `claims_inserted`, …), `errors` JSONB, `run_type`, `triggered_by`, `field_id`.
 - **llm_usage** — per-call token/cost ledger (`run_id`, `agent_name`, `skill_id`, `model`, token counts, `estimated_cost_usd`). The realized model is recorded here — routing-tier and consolidation/discovery cost reporting read from it.

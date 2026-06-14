@@ -159,7 +159,7 @@ The Protocol-conforming wrapper that actually routes.
   the `llm_usage.model` column already captures the realized model per skill —
   **no schema change, no migration.**
 - Batch path: routing is a *hot-path / sync* concern. The Anthropic Batch API
-  (`submit_batch`) is used by `skeptic_sweep` / `consolidation` /
+  (`submit_batch`) is used by `skeptic` / `memory_consolidation` /
   `belief_consolidation` and submits a homogeneous model. For this phase, batch
   jobs choose their tier **once per batch** (cheap by default, an env to force
   strong) rather than per-item; document that per-item batch routing is out of

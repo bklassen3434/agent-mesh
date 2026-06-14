@@ -8,12 +8,15 @@ import psycopg
 import pytest
 from testcontainers.core.container import DockerContainer
 
-# Knowledge tables truncated between tests for isolation (FK-safe via CASCADE).
+# Tables truncated between tests for isolation (FK-safe via CASCADE).
+# Schema-qualified after the Phase 24 reorg (knowledge / agents / runtime).
+# The catalog schema (fields/connectors) holds seed data and is left intact.
 _KNOWLEDGE_TABLES = [
-    "entities", "sources", "claims", "beliefs", "belief_revisions",
-    "relationships", "investigations", "pipeline_runs", "llm_usage",
-    "processed_items", "agent_heuristic", "agent_heuristic_revision",
-    "agent_invocations",
+    "knowledge.entities", "knowledge.sources", "knowledge.claims",
+    "knowledge.beliefs", "knowledge.belief_revisions", "knowledge.relationships",
+    "knowledge.investigations", "runtime.pipeline_runs", "runtime.llm_usage",
+    "runtime.processed_items", "agents.agent_heuristics",
+    "agents.agent_heuristic_revisions", "agents.agent_invocations",
 ]
 
 
@@ -76,7 +79,7 @@ def _clean_knowledge(_pg: str) -> None:
     with psycopg.connect(_pg, autocommit=True) as c:
         c.execute(
             "TRUNCATE "
-            + ", ".join(f"knowledge.{t}" for t in _KNOWLEDGE_TABLES)
+            + ", ".join(_KNOWLEDGE_TABLES)
             + " RESTART IDENTITY CASCADE"
         )
 

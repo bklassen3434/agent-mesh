@@ -40,8 +40,9 @@ class Assertion:
 
 
 # Each query returns offending rows only (a row whose field_id disagrees with a
-# row it references). The connection sets search_path TO knowledge, public, so
-# tables are referenced unqualified. belief_revisions and llm_usage carry no
+# row it references). The connection sets search_path across the knowledge /
+# agents / runtime / catalog / public schemas, so tables are referenced
+# unqualified. belief_revisions and llm_usage carry no
 # field_id of their own — they inherit it via their head FK (belief / run), so
 # there is nothing to cross-check on them directly.
 ASSERTIONS: list[Assertion] = [
@@ -171,7 +172,7 @@ ASSERTIONS: list[Assertion] = [
     ),
     Assertion(
         name="all_field_ids_reference_a_real_field",
-        description="Every field_id in use must reference a row in knowledge.fields "
+        description="Every field_id in use must reference a row in catalog.fields "
         "(orphan partitions point at nothing).",
         sql="""
             SELECT 'claims' AS tbl, c.field_id

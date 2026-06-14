@@ -828,7 +828,7 @@ def show_sota_beliefs() -> None:
     conn.close()
 
     if not beliefs:
-        console.print("[dim]No SOTA beliefs recorded yet. Run mesh-pipeline first.[/dim]")
+        console.print("[dim]No SOTA beliefs recorded yet. Run mesh-ingest first.[/dim]")
         return
 
     table = Table(title="SOTA Beliefs")
@@ -1048,14 +1048,14 @@ def schedule_status() -> None:
 
     conn = _get_conn()
     try:
-        recent_pipeline = list_pipeline_runs(conn, limit=1, run_type="pipeline")
-        recent_sweep = list_pipeline_runs(conn, limit=1, run_type="skeptic_sweep")
+        recent_pipeline = list_pipeline_runs(conn, limit=1, run_type="ingest")
+        recent_sweep = list_pipeline_runs(conn, limit=1, run_type="skeptic")
     finally:
         conn.close()
 
     last_by_job = {
-        "pipeline": recent_pipeline[0] if recent_pipeline else None,
-        "skeptic_sweep": recent_sweep[0] if recent_sweep else None,
+        "ingest": recent_pipeline[0] if recent_pipeline else None,
+        "skeptic": recent_sweep[0] if recent_sweep else None,
     }
 
     # Latest checkpoint state per run_type (read_run_states is newest-first;
@@ -1073,7 +1073,7 @@ def schedule_status() -> None:
     table.add_column("Triggered by")
     table.add_column("Counts")
     table.add_column("Checkpoint")
-    for job_id in ("pipeline", "skeptic_sweep"):
+    for job_id in ("ingest", "skeptic"):
         next_run = next_runs.get(job_id)
         last = last_by_job.get(job_id)
         if last is None:
@@ -1089,7 +1089,7 @@ def schedule_status() -> None:
             else:
                 duration = "running"
             trig = last.triggered_by
-            if job_id == "pipeline":
+            if job_id == "ingest":
                 counts = (
                     f"claims +{last.claims_inserted} / "
                     f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"

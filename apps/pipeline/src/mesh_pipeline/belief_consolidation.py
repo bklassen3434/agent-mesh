@@ -19,7 +19,7 @@ Append-only and coordinator-writer-owned: every merge / decay / archive records 
 claim is touched. Field-scoped — the sweep iterates active fields and never
 compares or merges across them. No hot-path LLM: adjudication runs offline
 (batch by default). No new service — the existing scheduler shells out to
-``mesh-belief-consolidate`` like it does ``mesh-consolidate``.
+``mesh-consolidate-beliefs`` like it does ``mesh-consolidate-memory``.
 """
 from __future__ import annotations
 
@@ -436,7 +436,7 @@ def _result_from_state(
 async def run_belief_consolidation(
     db_path: str | None = None,
 ) -> BeliefConsolidationRunResult:
-    """Top-level entry point — the ``mesh-belief-consolidate`` console script
+    """Top-level entry point — the ``mesh-consolidate-beliefs`` console script
     calls this. Iterates all active fields internally (no ``--field`` flag); the
     CLI ``consolidate-beliefs`` is the per-field, dry-run-capable variant."""
     log.info("belief_consolidation_starting")
@@ -488,7 +488,7 @@ async def run_belief_consolidation(
 
 
 def main() -> None:
-    """Console-script entry point: ``uv run mesh-belief-consolidate``."""
+    """Console-script entry point: ``uv run mesh-consolidate-beliefs``."""
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,

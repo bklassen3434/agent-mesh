@@ -8,8 +8,8 @@ heuristics, and a scheduled job distills raw episodes into them offline.
 ```
  episodic (15)            procedural (16b)            consumption (16a/d)
  ───────────             ─────────────────           ────────────────────
- recall_history   ──▶    consolidation graph   ──▶   agent_heuristic   ──┐
- (claims +               (16c, batch LLM,            (knowledge schema)   │
+ recall_history   ──▶    consolidation graph   ──▶   agent_heuristics  ──┐
+ (claims +               (16c, batch LLM,            (agents schema)      │
   belief_revisions,       coordinator-written,                            │
   outcome tags)           low conf + TTL)                                 ▼
        │                                              build_memory_block prepends
@@ -42,7 +42,7 @@ Coordinator-owned **writes** are untouched — recall is read-only.
 
 ### 2. Procedural store (16b)
 
-`knowledge.agent_heuristic` + `agent_heuristic_revision` (migration 008) model a
+`agents.agent_heuristics` + `agent_heuristic_revisions` (migration 008) model a
 learned, revisable how-to, mirroring `belief` / `belief_revision`:
 
 - **Coordinator-owned writes.** `mesh_writer` gets `SELECT/INSERT/UPDATE`; no
@@ -105,11 +105,11 @@ the batch prompt matches the sync prompt.
 ## Cadence
 
 The existing scheduler fires consolidation like the skeptic sweep — a
-`consolidation` row in the Postgres `schedules` table (default **24h**) and a
-`JOB_COMMANDS["consolidation"] = mesh-consolidate` entry. **No new service or
-container.** Run one cycle manually with `make consolidate` (reuses the
+`memory_consolidation` row in the Postgres `schedules` table (default **24h**) and a
+`JOB_COMMANDS["memory_consolidation"] = mesh-consolidate-memory` entry. **No new service or
+container.** Run one cycle manually with `make consolidate-memory` (reuses the
 skeptic-sweep job container with `--no-deps` + an entrypoint override; needs
-`make up` for Postgres) or `uv run mesh-consolidate`.
+`make up` for Postgres) or `uv run mesh-consolidate-memory`.
 
 ## Inspection
 

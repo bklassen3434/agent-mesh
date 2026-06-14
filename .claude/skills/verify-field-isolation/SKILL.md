@@ -25,7 +25,7 @@ cross-field references):
 - **relationship_evidence_claim_field_matches** — every evidence claim shares the relationship's field.
 - **belief_supporting_claim_field_matches / belief_contradicting_claim_field_matches** — every cited claim shares the belief's field.
 - **investigation_field_matches_target_entity / _related_entities / _opened_belief / _resolution_belief** — an investigation shares its field with every entity/belief it points at (these are not FK-enforced, so they're the highest-value checks).
-- **all_field_ids_reference_a_real_field** — every `field_id` in use resolves to a row in `knowledge.fields` (no orphan partitions).
+- **all_field_ids_reference_a_real_field** — every `field_id` in use resolves to a row in `catalog.fields` (no orphan partitions).
 
 > `belief_revisions` and `llm_usage` carry no `field_id` of their own — they
 > inherit it through their head FK (belief / pipeline run), so there's nothing to

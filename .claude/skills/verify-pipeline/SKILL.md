@@ -1,12 +1,12 @@
 ---
 name: verify-pipeline
-description: Verify a bounded pipeline cycle actually does what it claims and capture evidence. Snapshots store state before, runs a small mesh-pipeline run, snapshots after, asserts the deltas are internally consistent (sources→claims→entities→beliefs, recorded errors), then re-runs the invariant checks on the freshly-written data. Use to verify the pipeline end-to-end, confirm a coordinator/extractor/synthesis change works on real data, or when asked to prove a pipeline run produced sane output (not just that it exited 0).
+description: Verify a bounded pipeline cycle actually does what it claims and capture evidence. Snapshots store state before, runs a small mesh-ingest run, snapshots after, asserts the deltas are internally consistent (sources→claims→entities→beliefs, recorded errors), then re-runs the invariant checks on the freshly-written data. Use to verify the pipeline end-to-end, confirm a coordinator/extractor/synthesis change works on real data, or when asked to prove a pipeline run produced sane output (not just that it exited 0).
 ---
 
 # verify-pipeline
 
 Verify that a **pipeline cycle** produces internally-consistent output — not just
-that `mesh-pipeline` exited cleanly. It captures before/after state, checks the
+that `mesh-ingest` exited cleanly. It captures before/after state, checks the
 deltas line up with what the run *reported*, and then asserts the core data
 invariants on the newly-written rows. Evidence is recorded at each step.
 
@@ -34,7 +34,7 @@ with Ollama up) and the Postgres store reachable (`make up` for the stack).
 3. **Run a bounded pipeline** and tee its stdout (the reported deltas matter):
 
    ```bash
-   uv run mesh-pipeline --max-papers 5 --since 7d 2>&1 | tee "$EV/run.log"
+   uv run mesh-ingest --max-papers 5 --since 7d 2>&1 | tee "$EV/run.log"
    ```
 
    Note the printed `Pipeline run <run_id>` block — claims/entities/beliefs
@@ -75,8 +75,8 @@ with Ollama up) and the Postgres store reachable (`make up` for the stack).
 
 ## Notes
 
-- `snapshot.py` is read-only; only `mesh-pipeline` writes.
+- `snapshot.py` is read-only; only `mesh-ingest` writes.
 - For an even lighter check that touches no LLM, snapshot before/after a
-  `POST /api/v1/pipelines/pipeline/trigger` instead — but that needs the scheduler
+  `POST /api/v1/pipelines/ingest/trigger` instead — but that needs the scheduler
   up and still runs a real cycle.
 - Pair with `/verify-invariants` (step 6) and `/verify-api` for full coverage.

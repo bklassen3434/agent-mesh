@@ -551,7 +551,7 @@ services:
       dockerfile: Dockerfile.coordinator
     # Reuse the coordinator image (same workspace install) but swap the
     # entry point. One-shot job that exits when the sweep completes.
-    entrypoint: ["uv", "run", "mesh-skeptic-sweep"]
+    entrypoint: ["uv", "run", "mesh-skeptic"]
     environment:
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
       MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
@@ -580,14 +580,14 @@ services:
       context: .
       dockerfile: Dockerfile.coordinator
     # Reuse the coordinator image — the scheduler shells out to the same CLI
-    # entry points (mesh-pipeline, mesh-skeptic-sweep) so it needs the same
+    # entry points (mesh-ingest, mesh-skeptic) so it needs the same
     # workspace install and DB volume.
     entrypoint: ["uv", "run", "mesh-scheduler"]
     environment:
       MESH_USE_A2A: "true"
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
-      # Phase 12: the scheduler shells out to mesh-pipeline / mesh-skeptic-sweep,
+      # Phase 12: the scheduler shells out to mesh-ingest / mesh-skeptic,
       # which inherit this env — owner DSN to apply schema, writer role for the
       # knowledge writes.
       MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"

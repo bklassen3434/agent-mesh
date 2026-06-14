@@ -734,7 +734,7 @@ def build_sweep_graph(
         revisions = sum(int(v["n_revisions"]) for v in verdicts)
         run = PipelineRun(
             id=state["run_id"],
-            run_type="skeptic_sweep",
+            run_type="skeptic",
             started_at=datetime.fromisoformat(state["started_at"]),
             finished_at=datetime.now(UTC),
             triggered_by=state["triggered_by"],
@@ -801,7 +801,7 @@ def _sweep_result(state: SweepState) -> SkepticSweepResult:
 async def run_skeptic_sweep(
     db_path: str | None = None, field: str = DEFAULT_FIELD_SLUG
 ) -> SkepticSweepResult:
-    """Top-level entry point — `mesh-skeptic-sweep` console script calls this.
+    """Top-level entry point — `mesh-skeptic` console script calls this.
 
     ``field`` (slug) scopes every field-state read/write of this sweep to one
     field (default ``ai-robotics`` — the seeded field that reproduces prior
@@ -875,7 +875,7 @@ async def run_skeptic_sweep(
     help="Field slug to scope this sweep to",
 )
 def main(db_path: str | None, field: str) -> None:
-    """Console-script entry point: `uv run mesh-skeptic-sweep`."""
+    """Console-script entry point: `uv run mesh-skeptic`."""
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,

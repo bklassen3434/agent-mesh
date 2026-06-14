@@ -23,7 +23,7 @@ its logic**. What couples the system to "AI + robotics research" is a thin shell
   Every field-state table lives in the `knowledge` schema with no scope column:
   the 7 knowledge tables (`entities`, `sources`, `claims`, `beliefs`,
   `belief_revisions`, `relationships`, `investigations`), the procedural store
-  (`agent_heuristic` + `agent_heuristic_revision`, migration 008), the
+  (`agent_heuristics` + `agent_heuristic_revisions`, migration 008), the
   operational ledgers (`pipeline_runs`, `llm_usage`, `processed_items`,
   migration 003), and `schedules` (in `public`). Entity resolution blocks by
   `type` only (migration 006) — so "Apple" (tech) and "Apple" (agribusiness)
@@ -48,7 +48,7 @@ or route details:
 - The full `knowledge` schema + access layer
   (`packages/mesh-db/migrations_pg/00{2,3,6,8}_*.sql`,
   `packages/mesh-db/src/mesh_db/{entities,claims,beliefs,relationships,investigations,pipeline_runs,episodic}.py`)
-- The procedural store + Phase 16 recall/consume path (`agent_heuristic`,
+- The procedural store + Phase 16 recall/consume path (`agent_heuristics`,
   `recall_history`, the heuristic retrieval query, the consolidation graph)
 - The scout family and their shared `Source`/`ScoutedPaper` output; coordinator
   scout discovery (`_DEFAULT_AGENT_URLS`, `_agent_urls`, `discover`),
@@ -86,8 +86,8 @@ today's behavior end-to-end.
   runtime.** The boundary is explicit:
   - **Scoped** (carry `field_id`, every read/write filters by it): `entities`,
     `sources`, `claims`, `beliefs`, `belief_revisions` (via belief FK),
-    `relationships`, `investigations`, `agent_heuristic`,
-    `agent_heuristic_revision` (via head FK), `pipeline_runs`, `processed_items`
+    `relationships`, `investigations`, `agent_heuristics`,
+    `agent_heuristic_revisions` (via head FK), `pipeline_runs`, `processed_items`
     (PK extended to include `field_id`), `schedules`, and the per-field connector
     config. `llm_usage` inherits field via `run_id` (join), no column needed.
   - **Shared runtime, field-agnostic by design**: the connector *catalog*
@@ -125,14 +125,14 @@ today's behavior end-to-end.
 The foundational, hardest-to-retrofit decision. Do the whole cut once.
 
 - **Migration 009** (`packages/mesh-db/migrations_pg/009_fields.sql`):
-  - `knowledge.fields(id text pk, name text not null, slug text unique not null,
+  - `catalog.fields(id text pk, name text not null, slug text unique not null,
     profile jsonb not null, created_at timestamptz not null default now(),
     is_active boolean not null default true)`. `profile` holds the serialized
     `FieldProfile`.
-  - Add `field_id TEXT NOT NULL REFERENCES knowledge.fields(id)` to: `entities`,
+  - Add `field_id TEXT NOT NULL REFERENCES catalog.fields(id)` to: `entities`,
     `sources`, `claims`, `beliefs`, `relationships`, `investigations`,
-    `agent_heuristic`, `pipeline_runs`. (`belief_revisions` and
-    `agent_heuristic_revision` inherit scope through their head FK — no column.)
+    `agent_heuristics`, `pipeline_runs`. (`belief_revisions` and
+    `agent_heuristic_revisions` inherit scope through their head FK — no column.)
   - **`processed_items`**: extend the primary key to `(field_id, source_type,
     external_id)` so the same external source can be ingested independently per
     field.
@@ -144,7 +144,7 @@ The foundational, hardest-to-retrofit decision. Do the whole cut once.
     existing row across all the above tables in the same migration, then add the
     `NOT NULL` / new PK.
   - Add `field_id` to the composite indexes on the hot filter paths (`claims`,
-    `beliefs`, `entities`, `agent_heuristic`), and a partial index for per-field
+    `beliefs`, `entities`, `agent_heuristics`), and a partial index for per-field
     resolution blocking (`entities (field_id, type)`).
   - Extend the derived views (migration 004 `belief_signals`, episodic/recall
     views, cost views) to carry/propagate `field_id`. Read the views first.
@@ -216,12 +216,12 @@ Phase 18.
   payload]` plus optional `investigate(...)`. Refactor the existing scouts to
   declare conformance (no behavior change) and read their categories/keywords/
   topics from **per-field connector config** instead of module constants.
-- **Connector catalog** (`knowledge.connectors`, seeded in the migration): each
+- **Connector catalog** (`catalog.connectors`, seeded in the migration): each
   row is a connector *definition* — `id/slug, name, description, kind`
   (`builtin`), and a JSON `config_schema` describing the fields a user must supply
   (e.g. arXiv → `categories`; github → `topics`). Seed the eight existing
   connectors. Catalog is global (reusable across fields), reader-readable.
-- **Per-field enablement** (`knowledge.field_connectors`: `field_id,
+- **Per-field enablement** (`catalog.field_connectors`: `field_id,
   connector_id, config jsonb, enabled bool, unique(field_id, connector_id)`,
   coordinator-write). The coordinator discovers/dispatches only the connectors
   enabled for the run's field, passing each its stored `config`.
@@ -268,9 +268,9 @@ table. Match existing `docs/` style (e.g. `docs/entity-resolution.md`).
 
 ## Exit Criteria
 
-- [ ] Migration 009 applies cleanly; `knowledge.fields` present; `field_id NOT
+- [ ] Migration 009 applies cleanly; `catalog.fields` present; `field_id NOT
       NULL` on entities/sources/claims/beliefs/relationships/investigations/
-      agent_heuristic/pipeline_runs; `processed_items` PK includes `field_id`;
+      agent_heuristics/pipeline_runs; `processed_items` PK includes `field_id`;
       `schedules` has `field_id`; all pre-existing rows backfilled into
       `ai-robotics`
 - [ ] `FieldProfile`/`Field` models added, round-trip through `jsonb`;
@@ -285,7 +285,7 @@ table. Match existing `docs/` style (e.g. `docs/entity-resolution.md`).
 - [ ] `SourceConnector` protocol formalized; the eight built-ins conform and read
       config from per-field `field_connectors`; coordinator dispatches only
       enabled connectors; `ai-robotics` behavior unchanged (asserted)
-- [ ] Connector catalog (`knowledge.connectors`) seeded; per-field enablement +
+- [ ] Connector catalog (`catalog.connectors`) seeded; per-field enablement +
       config validated against `config_schema` on write
 - [ ] `/api/v1/*` knowledge/cost/graph endpoints filter by field; `make types`
       clean, no OpenAPI drift

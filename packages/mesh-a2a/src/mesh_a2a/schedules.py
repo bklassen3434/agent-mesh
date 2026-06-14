@@ -10,7 +10,7 @@ There is no general Postgres migration runner — the checkpoint store
 manages its own schema via ``saver.setup()``. So the ``schedules`` table
 is created the same way: an idempotent ``ensure_schedules_table()`` that
 both the API and the scheduler call before touching the table. The seed
-rows match the env-var defaults (pipeline 6h, sweep 24h).
+rows match the env-var defaults (ingest 6h, skeptic 24h).
 """
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ from mesh_a2a.checkpoint import postgres_url
 # job_id → default interval (hours). Seeded into the table on first ensure;
 # also the fallback the scheduler uses if the table is somehow empty.
 DEFAULT_INTERVALS: dict[str, int] = {
-    "pipeline": 6,
-    "skeptic_sweep": 24,
+    "ingest": 6,
+    "skeptic": 24,
     # Phase 16c: memory consolidation runs daily, offline (batch API).
-    "consolidation": 24,
+    "memory_consolidation": 24,
     # Phase 19: belief consolidation (semantic dedup/merge + decay) runs daily,
     # offline (batch API).
     "belief_consolidation": 24,

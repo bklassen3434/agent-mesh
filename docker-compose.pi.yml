@@ -1,0 +1,71 @@
+# docker-compose.pi.yml — Raspberry Pi 5 (4 GB) accommodation overlay.
+#
+# NOT auto-merged. Opt in on the Pi only, either by passing it explicitly:
+#     docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d
+# or (recommended) by setting in the Pi's .env:
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.pi.yml
+# so every `docker compose` / `make` command picks it up automatically.
+# Your laptop never sets COMPOSE_FILE, so its behaviour is unchanged.
+#
+# What it does:
+#   * Shrinks the always-on set to fit 4 GB. Only arxiv/github/hn scouts +
+#     claim-extractor + entity-tracker + sota-tracker + api stay default-on.
+#     Unused scouts park in the `extra` profile; wiki + personalizer +
+#     research-qa park in the `ui` profile (start them on demand).
+#   * Tunes Postgres for low RAM.
+#   * Relocates the Postgres data volume to an SSD bind mount (/mnt/ssd).
+#   * Trims the scheduler's advertised agent URLs to the scouts we run, so the
+#     coordinator doesn't waste time probing cards for scouts that are down.
+#
+# Pair with these in the Pi's .env:
+#   COMPOSE_PROFILES=scheduler,skeptic   # bring up the scheduler + curator/skeptic
+#   MESH_PG_POOL_MAX=3                    # 3 conns/pool instead of 10
+
+services:
+  # ── scouts we don't run on the Pi → park in the `extra` profile ────────────
+  bluesky-scout:     { profiles: ["extra"] }
+  reddit-scout:      { profiles: ["extra"] }
+  blog-scout:        { profiles: ["extra"] }
+  leaderboard-scout: { profiles: ["extra"] }
+  web-search-scout:  { profiles: ["extra"] }
+  rss-scout:         { profiles: ["extra"] }
+  rest-json-scout:   { profiles: ["extra"] }
+
+  # ── viewing/aux services → `ui` profile (start only when you need them) ─────
+  # Browse the wiki on demand with:  docker compose up -d wiki   (naming a
+  # profiled service starts it regardless of COMPOSE_PROFILES); stop it with
+  # docker compose stop wiki.  /ask degrades cleanly when research-qa is down.
+  wiki:         { profiles: ["ui"] }
+  personalizer: { profiles: ["ui"] }
+  research-qa:  { profiles: ["ui"] }
+
+  # ── Postgres: low-RAM tuning + SSD-backed data dir ─────────────────────────
+  mesh-postgres:
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+
+  # ── scheduler: only advertise the agents we actually run on the Pi ─────────
+  scheduler:
+    environment:
+      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008"
+      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
+
+# Bind the named Postgres volume to a directory on the SSD. Postgres on the
+# microSD card is slow and wears the card out under a 24/7 write workload.
+volumes:
+  mesh_pg_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/ssd/mesh_pg_data

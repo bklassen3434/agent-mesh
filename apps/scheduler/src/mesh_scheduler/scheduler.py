@@ -166,6 +166,7 @@ class SchedulerManager:
             replace_existing=True,
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=3600,  # tolerate up to 1h of lateness, then run once
         )
         if not enabled:
             self._scheduler.pause_job(aps_id)

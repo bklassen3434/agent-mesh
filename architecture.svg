@@ -1,254 +1,215 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1100" viewBox="0 0 1400 1100">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="856" viewBox="0 0 1280 856">
 <defs>
-  <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#4c9be8"/>
-  </marker>
-  <marker id="arr_teal" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#3dd6c0"/>
-  </marker>
-  <marker id="arr_purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#9b7fe8"/>
-  </marker>
-  <marker id="arr_orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#e8974c"/>
-  </marker>
-  <marker id="arr_grey" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#6b7280"/>
-  </marker>
-  <marker id="arr_green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#5ccc8a"/>
-  </marker>
+  <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#4c9be8"/></marker>
+  <marker id="arr_teal" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#3dd6c0"/></marker>
+  <marker id="arr_purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#9b7fe8"/></marker>
+  <marker id="arr_orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#e8974c"/></marker>
+  <marker id="arr_grey" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#6b7280"/></marker>
+  <marker id="arr_green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#5ccc8a"/></marker>
+  <marker id="arr_red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#e85c5c"/></marker>
+  <marker id="arr_amber" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#f6a623"/></marker>
 </defs>
-<rect x="0" y="0" width="1400" height="1100" rx="0" fill="#0f1117" stroke="none" />
-<text x="700" y="36" font-size="18" fill="#ffffff" text-anchor="middle" font-weight="bold" font-family="monospace">Agent Mesh — A2A + LangGraph Architecture</text>
-<text x="700" y="56" font-size="12" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">How research sources become up-to-date Beliefs</text>
-<text x="30" y="94" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">SOURCES</text>
-<rect x="30" y="100" width="130" height="320" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
-<rect x="38" y="116" width="120" height="36" rx="5" fill="#0f1117" stroke="#4c9be8" stroke-width="1.5" />
-<text x="98" y="138" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">arXiv</text>
-<rect x="38" y="158" width="120" height="36" rx="5" fill="#0f1117" stroke="#e8974c" stroke-width="1.5" />
-<text x="98" y="180" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">Hacker News</text>
-<rect x="38" y="200" width="120" height="36" rx="5" fill="#0f1117" stroke="#6b7280" stroke-width="1.5" />
-<text x="98" y="222" font-size="10" fill="#6b7280" text-anchor="middle" font-weight="bold" font-family="monospace">GitHub</text>
-<rect x="38" y="242" width="120" height="36" rx="5" fill="#0f1117" stroke="#3dd6c0" stroke-width="1.5" />
-<text x="98" y="264" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">Bluesky</text>
-<rect x="38" y="284" width="120" height="36" rx="5" fill="#0f1117" stroke="#e85c5c" stroke-width="1.5" />
-<text x="98" y="306" font-size="10" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">Reddit</text>
-<rect x="38" y="326" width="120" height="36" rx="5" fill="#0f1117" stroke="#5ccc8a" stroke-width="1.5" />
-<text x="98" y="348" font-size="10" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">Blogs</text>
-<rect x="38" y="368" width="120" height="36" rx="5" fill="#0f1117" stroke="#e8d44c" stroke-width="1.5" />
-<text x="98" y="390" font-size="10" fill="#e8d44c" text-anchor="middle" font-weight="bold" font-family="monospace">Leaderboards</text>
-<text x="200" y="94" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">SCOUT AGENTS  (A2A servers, :8001–:8012)</text>
-<rect x="200" y="100" width="140" height="320" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
-<rect x="208" y="116" width="130" height="36" rx="5" fill="#12151f" stroke="#4c9be8" stroke-width="1.5" />
-<text x="273" y="130" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">arxiv-scout</text>
-<text x="273" y="143" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8001</text>
-<rect x="208" y="158" width="130" height="36" rx="5" fill="#12151f" stroke="#e8974c" stroke-width="1.5" />
-<text x="273" y="172" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">hn-scout</text>
-<text x="273" y="185" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8005</text>
-<rect x="208" y="200" width="130" height="36" rx="5" fill="#12151f" stroke="#6b7280" stroke-width="1.5" />
-<text x="273" y="214" font-size="10" fill="#6b7280" text-anchor="middle" font-weight="bold" font-family="monospace">github-scout</text>
-<text x="273" y="227" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8008</text>
-<rect x="208" y="242" width="130" height="36" rx="5" fill="#12151f" stroke="#3dd6c0" stroke-width="1.5" />
-<text x="273" y="256" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">bluesky-scout</text>
-<text x="273" y="269" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8009</text>
-<rect x="208" y="284" width="130" height="36" rx="5" fill="#12151f" stroke="#e85c5c" stroke-width="1.5" />
-<text x="273" y="298" font-size="10" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">reddit-scout</text>
-<text x="273" y="311" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8010</text>
-<rect x="208" y="326" width="130" height="36" rx="5" fill="#12151f" stroke="#5ccc8a" stroke-width="1.5" />
-<text x="273" y="340" font-size="10" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">blog-scout</text>
-<text x="273" y="353" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8011</text>
-<rect x="208" y="368" width="130" height="36" rx="5" fill="#12151f" stroke="#e8d44c" stroke-width="1.5" />
-<text x="273" y="382" font-size="10" fill="#e8d44c" text-anchor="middle" font-weight="bold" font-family="monospace">leaderboard-scout</text>
-<text x="273" y="395" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8012</text>
-<line x1="158" y1="134" x2="208" y2="134" stroke="#4c9be8" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<line x1="158" y1="176" x2="208" y2="176" stroke="#e8974c" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<line x1="158" y1="218" x2="208" y2="218" stroke="#6b7280" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<line x1="158" y1="260" x2="208" y2="260" stroke="#3dd6c0" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<line x1="158" y1="302" x2="208" y2="302" stroke="#e85c5c" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<line x1="158" y1="344" x2="208" y2="344" stroke="#5ccc8a" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<line x1="158" y1="386" x2="208" y2="386" stroke="#e8d44c" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
-<rect x="370" y="160" width="140" height="130" rx="8" fill="#111827" stroke="#9b7fe8" stroke-width="1.5" />
-<text x="440" y="178" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">A2A Wire Protocol</text>
-<text x="378" y="196" font-size="8" fill="#94a3b8" text-anchor="start" font-weight="normal" font-family="monospace">1. GET /.well-known/</text>
-<text x="378" y="207" font-size="8" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">agent-card.json</text>
-<text x="378" y="220" font-size="8" fill="#94a3b8" text-anchor="start" font-weight="normal" font-family="monospace">2. POST /mesh/tasks/</text>
-<text x="378" y="231" font-size="8" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">submit → 202 task_id</text>
-<text x="378" y="244" font-size="8" fill="#94a3b8" text-anchor="start" font-weight="normal" font-family="monospace">3. GET /mesh/tasks/</text>
-<text x="378" y="255" font-size="8" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">{task_id} → poll</text>
-<text x="378" y="268" font-size="8" fill="#94a3b8" text-anchor="start" font-weight="normal" font-family="monospace">4. status=completed</text>
-<text x="378" y="279" font-size="8" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">→ return result</text>
-<rect x="540" y="75" width="380" height="680" rx="10" fill="#0d1220" stroke="#4c9be8" stroke-width="2" />
-<text x="730" y="95" font-size="13" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">LangGraph Coordinator Graph</text>
-<text x="730" y="110" font-size="9" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">coordinator.py  •  thread_id == run_id</text>
-<rect x="570" y="125" width="320" height="34" rx="5" fill="#0f1117" stroke="#5ccc8a" stroke-width="2" />
-<text x="730" y="146" font-size="11" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">START</text>
-<rect x="570" y="171" width="320" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" />
-<text x="730" y="184" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">scout</text>
-<text x="730" y="197" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">discover A2A agents, build skill registry</text>
-<rect x="570" y="217" width="320" height="34" rx="5" fill="#16102a" stroke="#9b7fe8" stroke-width="1.5" />
-<text x="730" y="230" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">fan_scouts →  Send</text>
-<text x="730" y="243" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">one Send per scout skill_id (fan-out)</text>
-<rect x="570" y="263" width="320" height="34" rx="5" fill="#1a1d27" stroke="#3dd6c0" stroke-width="1.5" />
-<text x="730" y="276" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">scout_one  ×N</text>
-<text x="730" y="289" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">call scout_arxiv / scout_hn / … via A2A</text>
-<rect x="570" y="309" width="320" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" />
-<text x="730" y="322" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">ingest</text>
-<text x="730" y="335" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">dedup + insert sources into DuckDB</text>
-<rect x="570" y="355" width="320" height="34" rx="5" fill="#16102a" stroke="#9b7fe8" stroke-width="1.5" />
-<text x="730" y="368" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">route_after_ingest →  Send</text>
-<text x="730" y="381" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">one Send per new paper (fan-out)</text>
-<rect x="570" y="401" width="320" height="34" rx="5" fill="#1a1d27" stroke="#3dd6c0" stroke-width="1.5" />
-<text x="730" y="414" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">extract_one  ×N</text>
-<text x="730" y="427" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">LLM claim extraction via claim-extractor</text>
-<rect x="570" y="447" width="320" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" />
-<text x="730" y="460" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">track_entities</text>
-<text x="730" y="473" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">entity resolution + claim insert</text>
-<rect x="570" y="493" width="320" height="34" rx="5" fill="#1a1d27" stroke="#e8974c" stroke-width="1.5" />
-<text x="730" y="506" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">track_sota</text>
-<text x="730" y="519" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">update SOTA beliefs via sota-tracker</text>
-<rect x="570" y="539" width="320" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" />
-<text x="730" y="552" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">curate</text>
-<text x="730" y="565" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">check for open investigations</text>
-<rect x="570" y="585" width="320" height="34" rx="5" fill="#1a1d27" stroke="#e8974c" stroke-width="1.5" />
-<text x="730" y="598" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">dispatch_investigations</text>
-<text x="730" y="611" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">targeted re-scouting for open investigations</text>
-<rect x="570" y="631" width="320" height="34" rx="5" fill="#1a1d27" stroke="#5ccc8a" stroke-width="1.5" />
-<text x="730" y="644" font-size="10" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">finalize</text>
-<text x="730" y="657" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">write PipelineRun, emit metrics</text>
-<rect x="570" y="677" width="320" height="34" rx="5" fill="#0f1117" stroke="#5ccc8a" stroke-width="2" />
-<text x="730" y="698" font-size="11" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">END</text>
-<line x1="730" y1="159" x2="730" y2="171" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="205" x2="730" y2="217" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="251" x2="730" y2="263" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="297" x2="730" y2="309" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="343" x2="730" y2="355" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="389" x2="730" y2="401" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="435" x2="730" y2="447" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="481" x2="730" y2="493" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="527" x2="730" y2="539" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="573" x2="730" y2="585" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="619" x2="730" y2="631" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="730" y1="665" x2="730" y2="677" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
-<path d="M 890 326 L 932 326 L 932 648 L 890 648" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr_grey)"/>
-<text x="934" y="339" font-size="7" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="monospace">no new papers</text>
-<path d="M 890 418 L 950 418 L 950 648 L 890 648" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr_grey)"/>
-<text x="952" y="431" font-size="7" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="monospace">no claims</text>
-<text x="960" y="69" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">SPECIALIST AGENTS  (A2A servers)</text>
-<rect x="960" y="75" width="170" height="440" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
-<rect x="968" y="95" width="160" height="48" rx="5" fill="#12151f" stroke="#3dd6c0" stroke-width="1.5" />
-<text x="1048" y="109" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">claim-extractor</text>
-<text x="1048" y="122" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8002</text>
-<text x="1048" y="135" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">LLM: extract claims</text>
-<rect x="968" y="159" width="160" height="48" rx="5" fill="#12151f" stroke="#e8974c" stroke-width="1.5" />
-<text x="1048" y="173" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">entity-tracker</text>
-<text x="1048" y="186" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8003</text>
-<text x="1048" y="199" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">resolve + find/create entities</text>
-<rect x="968" y="223" width="160" height="48" rx="5" fill="#12151f" stroke="#e8974c" stroke-width="1.5" />
-<text x="1048" y="237" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">sota-tracker</text>
-<text x="1048" y="250" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8004</text>
-<text x="1048" y="263" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">update SOTA beliefs</text>
-<rect x="968" y="287" width="160" height="48" rx="5" fill="#12151f" stroke="#e85c5c" stroke-width="1.5" />
-<text x="1048" y="301" font-size="10" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">skeptic</text>
-<text x="1048" y="314" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8006</text>
-<text x="1048" y="327" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">LLM: challenge beliefs</text>
-<rect x="968" y="351" width="160" height="48" rx="5" fill="#12151f" stroke="#9b7fe8" stroke-width="1.5" />
-<text x="1048" y="365" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">curator</text>
-<text x="1048" y="378" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:8007</text>
-<text x="1048" y="391" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">LLM: pick beliefs to challenge</text>
-<rect x="968" y="415" width="160" height="48" rx="5" fill="#12151f" stroke="#e8d44c" stroke-width="1.5" />
-<text x="1048" y="429" font-size="10" fill="#e8d44c" text-anchor="middle" font-weight="bold" font-family="monospace">investigation-*</text>
-<text x="1048" y="442" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">:850x</text>
-<text x="1048" y="455" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">targeted re-scouting</text>
-<text x="960" y="517" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">DATA STORES</text>
-<rect x="960" y="525" width="160" height="60" rx="6" fill="#1a1d27" stroke="#f6a623" stroke-width="1.5" />
-<text x="1040" y="545" font-size="10" fill="#f6a623" text-anchor="middle" font-weight="bold" font-family="monospace">DuckDB  (mesh.db)</text>
-<text x="1040" y="558" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">Sources · Claims · Entities</text>
-<text x="1040" y="571" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">Beliefs · Revisions · Runs</text>
-<rect x="960" y="597" width="160" height="50" rx="6" fill="#1a1d27" stroke="#336791" stroke-width="1.5" />
-<text x="1040" y="615" font-size="9" fill="#336791" text-anchor="middle" font-weight="bold" font-family="monospace">Postgres  (langgraph-db)</text>
-<text x="1040" y="629" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">LangGraph checkpoints</text>
-<text x="1040" y="641" font-size="8" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">(thread_id = run_id)</text>
-<rect x="960" y="659" width="390" height="180" rx="8" fill="#0d1220" stroke="#e85c5c" stroke-width="2" />
-<text x="1155" y="677" font-size="12" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">LangGraph Skeptic Sweep Graph</text>
-<text x="1155" y="691" font-size="9" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">skeptic_sweep.py  •  out-of-band falsification</text>
-<rect x="980" y="704" width="350" height="18" rx="3" fill="#0f1117" stroke="#5ccc8a" stroke-width="1" />
-<text x="1155" y="717" font-size="9" fill="#5ccc8a" text-anchor="middle" font-weight="normal" font-family="monospace">START</text>
-<line x1="1155" y1="722" x2="1155" y2="725" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
-<rect x="980" y="725" width="350" height="18" rx="3" fill="#0f1117" stroke="#9b7fe8" stroke-width="1" />
-<text x="1155" y="738" font-size="9" fill="#9b7fe8" text-anchor="middle" font-weight="normal" font-family="monospace">load_beliefs  →  Curator A2A call</text>
-<line x1="1155" y1="743" x2="1155" y2="746" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
-<rect x="980" y="746" width="350" height="18" rx="3" fill="#0f1117" stroke="#e85c5c" stroke-width="1" />
-<text x="1155" y="759" font-size="9" fill="#e85c5c" text-anchor="middle" font-weight="normal" font-family="monospace">Send fan-out: evaluate_one ×N</text>
-<line x1="1155" y1="764" x2="1155" y2="767" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
-<rect x="980" y="767" width="350" height="18" rx="3" fill="#0f1117" stroke="#e85c5c" stroke-width="1" />
-<text x="1155" y="780" font-size="9" fill="#e85c5c" text-anchor="middle" font-weight="normal" font-family="monospace">  Skeptic A2A call per belief  </text>
-<line x1="1155" y1="785" x2="1155" y2="788" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
-<rect x="980" y="788" width="350" height="18" rx="3" fill="#0f1117" stroke="#9b7fe8" stroke-width="1" />
-<text x="1155" y="801" font-size="9" fill="#9b7fe8" text-anchor="middle" font-weight="normal" font-family="monospace">trigger_curator  (if contradiction)</text>
-<line x1="1155" y1="806" x2="1155" y2="809" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
-<rect x="980" y="809" width="350" height="18" rx="3" fill="#0f1117" stroke="#5ccc8a" stroke-width="1" />
-<text x="1155" y="822" font-size="9" fill="#5ccc8a" text-anchor="middle" font-weight="normal" font-family="monospace">finalize</text>
-<line x1="1155" y1="827" x2="1155" y2="830" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
-<rect x="980" y="830" width="350" height="18" rx="3" fill="#0f1117" stroke="#5ccc8a" stroke-width="1" />
-<text x="1155" y="843" font-size="9" fill="#5ccc8a" text-anchor="middle" font-weight="normal" font-family="monospace">END</text>
-<rect x="30" y="470" width="480" height="120" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
-<text x="40" y="486" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">CONSUMERS / TRIGGERS</text>
-<rect x="50" y="500" width="120" height="40" rx="4" fill="#0f1117" stroke="#e8974c" stroke-width="1.5" />
-<text x="110" y="513" font-size="9" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">APScheduler</text>
-<text x="110" y="524" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">mesh-scheduler</text>
-<text x="110" y="534" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">cron triggers</text>
-<rect x="190" y="500" width="120" height="40" rx="4" fill="#0f1117" stroke="#3dd6c0" stroke-width="1.5" />
-<text x="250" y="513" font-size="9" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">FastAPI :8000</text>
-<text x="250" y="524" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">read-only REST API</text>
-<text x="250" y="534" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">/api/v1/*</text>
-<rect x="330" y="500" width="120" height="40" rx="4" fill="#0f1117" stroke="#5ccc8a" stroke-width="1.5" />
-<text x="390" y="513" font-size="9" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">Next.js :3000</text>
-<text x="390" y="524" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">wiki (server</text>
-<text x="390" y="534" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">components)</text>
-<rect x="50" y="548" width="120" height="32" rx="4" fill="#0f1117" stroke="#4c9be8" stroke-width="1.5" />
-<text x="110" y="561" font-size="9" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">CLI  mesh.cli</text>
-<text x="110" y="572" font-size="7" fill="#94a3b8" text-anchor="middle" font-weight="normal" font-family="monospace">manual triggers</text>
-<rect x="190" y="548" width="260" height="32" rx="4" fill="#0f1117" stroke="#9b7fe8" stroke-width="1.5" />
-<text x="320" y="561" font-size="9" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">/status  →  reads LangGraph checkpoints (Postgres)</text>
-<line x1="920" y1="418" x2="968" y2="119" stroke="#3dd6c0" stroke-width="1.5"  marker-end="url(#arr_teal)"/>
-<text x="944" y="412" font-size="8" fill="#3dd6c0" text-anchor="middle" font-weight="normal" font-family="monospace">extract_claims</text>
-<line x1="920" y1="464" x2="968" y2="183" stroke="#e8974c" stroke-width="1.5"  marker-end="url(#arr_orange)"/>
-<text x="944" y="458" font-size="8" fill="#e8974c" text-anchor="middle" font-weight="normal" font-family="monospace">resolve_entities</text>
-<line x1="920" y1="510" x2="968" y2="247" stroke="#e8974c" stroke-width="1.5"  marker-end="url(#arr_orange)"/>
-<text x="944" y="504" font-size="8" fill="#e8974c" text-anchor="middle" font-weight="normal" font-family="monospace">update_sota</text>
-<line x1="920" y1="602" x2="968" y2="439" stroke="#e8d44c" stroke-width="1.5"  marker-end="url(#arr)"/>
-<text x="944" y="596" font-size="8" fill="#e8d44c" text-anchor="middle" font-weight="normal" font-family="monospace">investigate_*</text>
-<line x1="1155" y1="659" x2="1048" y2="395" stroke="#9b7fe8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr_purple)"/>
-<line x1="1155" y1="689" x2="1048" y2="331" stroke="#e85c5c" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr)"/>
-<line x1="730" y1="755" x2="1040" y2="525" stroke="#f6a623" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr_orange)"/>
-<text x="760" y="785" font-size="8" fill="#f6a623" text-anchor="middle" font-weight="normal" font-family="monospace">reads + writes</text>
-<line x1="890" y1="415" x2="960" y2="622" stroke="#336791" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arr_grey)"/>
-<text x="900" y="607" font-size="8" fill="#336791" text-anchor="middle" font-weight="normal" font-family="monospace">checkpoint</text>
-<text x="900" y="618" font-size="8" fill="#336791" text-anchor="middle" font-weight="normal" font-family="monospace">each node</text>
-<path d="M 338 260 L 370 260" fill="none" stroke="#4c9be8" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr)"/>
-<path d="M 510 260 L 540 280" fill="none" stroke="#4c9be8" stroke-width="1.5" marker-end="url(#arr)"/>
-<line x1="110" y1="548" x2="580" y2="755" stroke="#e8974c" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr_orange)"/>
-<text x="80" y="578" font-size="8" fill="#e8974c" text-anchor="middle" font-weight="normal" font-family="monospace">trigger run</text>
-<line x1="250" y1="590" x2="1020" y2="585" stroke="#3dd6c0" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr_teal)"/>
-<rect x="30" y="970" width="880" height="100" rx="6" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
-<text x="40" y="986" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">Legend</text>
-<rect x="44" y="992" width="12" height="12" rx="2" fill="#4c9be8" stroke="none" />
-<text x="62" y="1002" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">LangGraph graph node</text>
-<rect x="339" y="992" width="12" height="12" rx="2" fill="#9b7fe8" stroke="none" />
-<text x="357" y="1002" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">Send fan-out (parallel dispatch)</text>
-<rect x="634" y="992" width="12" height="12" rx="2" fill="#3dd6c0" stroke="none" />
-<text x="652" y="1002" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">LLM-backed specialist agent</text>
-<rect x="44" y="1014" width="12" height="12" rx="2" fill="#e8974c" stroke="none" />
-<text x="62" y="1024" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">Rule-based specialist / DB write</text>
-<rect x="339" y="1014" width="12" height="12" rx="2" fill="#e85c5c" stroke="none" />
-<text x="357" y="1024" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">Skeptic sweep path</text>
-<rect x="634" y="1014" width="12" height="12" rx="2" fill="#e8d44c" stroke="none" />
-<text x="652" y="1024" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">Investigation dispatch</text>
-<rect x="44" y="1036" width="12" height="12" rx="2" fill="#6b7280" stroke="none" />
-<text x="62" y="1046" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">Conditional skip edge</text>
-<rect x="339" y="1036" width="12" height="12" rx="2" fill="#336791" stroke="none" />
-<text x="357" y="1046" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">LangGraph checkpoint store</text>
-<rect x="634" y="1036" width="12" height="12" rx="2" fill="#f6a623" stroke="none" />
-<text x="652" y="1046" font-size="9" fill="#e2e8f0" text-anchor="start" font-weight="normal" font-family="monospace">Primary knowledge store</text>
+<rect x="0" y="0" width="1280" height="856" fill="#0f1117" stroke="none" />
+<text x="640" y="34" font-size="18" fill="#ffffff" text-anchor="middle" font-weight="bold" font-family="monospace">Agent Mesh — A2A + LangGraph Architecture</text>
+<text x="640" y="54" font-size="11" fill="#94a3b8" text-anchor="middle" font-family="monospace">How research sources become continuously-revised Beliefs  —  one Postgres store (pgvector), coordinator-owned writes</text>
+
+<!-- ============ SOURCES ============ -->
+<text x="24" y="84" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">SOURCES</text>
+<rect x="24" y="90" width="148" height="312" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
+<rect x="32" y="98"  width="132" height="24" rx="4" fill="#0f1117" stroke="#4c9be8" stroke-width="1.3" /><text x="98" y="114" font-size="9" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">arXiv</text>
+<rect x="32" y="128" width="132" height="24" rx="4" fill="#0f1117" stroke="#e8974c" stroke-width="1.3" /><text x="98" y="144" font-size="9" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">Hacker News</text>
+<rect x="32" y="158" width="132" height="24" rx="4" fill="#0f1117" stroke="#6b7280" stroke-width="1.3" /><text x="98" y="174" font-size="9" fill="#9aa3b2" text-anchor="middle" font-weight="bold" font-family="monospace">GitHub</text>
+<rect x="32" y="188" width="132" height="24" rx="4" fill="#0f1117" stroke="#3dd6c0" stroke-width="1.3" /><text x="98" y="204" font-size="9" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">Bluesky</text>
+<rect x="32" y="218" width="132" height="24" rx="4" fill="#0f1117" stroke="#e85c5c" stroke-width="1.3" /><text x="98" y="234" font-size="9" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">Reddit</text>
+<rect x="32" y="248" width="132" height="24" rx="4" fill="#0f1117" stroke="#5ccc8a" stroke-width="1.3" /><text x="98" y="264" font-size="9" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">Blogs</text>
+<rect x="32" y="278" width="132" height="24" rx="4" fill="#0f1117" stroke="#e8d44c" stroke-width="1.3" /><text x="98" y="294" font-size="9" fill="#e8d44c" text-anchor="middle" font-weight="bold" font-family="monospace">Leaderboards</text>
+<rect x="32" y="308" width="132" height="24" rx="4" fill="#0f1117" stroke="#4c9be8" stroke-width="1.3" /><text x="98" y="324" font-size="9" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">Web search</text>
+<rect x="32" y="338" width="132" height="24" rx="4" fill="#0f1117" stroke="#9b7fe8" stroke-width="1.3" /><text x="98" y="354" font-size="9" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">RSS (generic)</text>
+<rect x="32" y="368" width="132" height="24" rx="4" fill="#0f1117" stroke="#3dd6c0" stroke-width="1.3" /><text x="98" y="384" font-size="9" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">REST / JSON</text>
+
+<!-- ============ SCOUT AGENTS ============ -->
+<text x="188" y="84" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">SCOUT AGENTS  (A2A servers)</text>
+<rect x="188" y="90" width="176" height="312" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
+<rect x="196" y="98"  width="160" height="24" rx="4" fill="#12151f" stroke="#4c9be8" stroke-width="1.3" /><text x="276" y="114" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">arxiv-scout  :8001</text>
+<rect x="196" y="128" width="160" height="24" rx="4" fill="#12151f" stroke="#e8974c" stroke-width="1.3" /><text x="276" y="144" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">hn-scout  :8005</text>
+<rect x="196" y="158" width="160" height="24" rx="4" fill="#12151f" stroke="#6b7280" stroke-width="1.3" /><text x="276" y="174" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">github-scout  :8008</text>
+<rect x="196" y="188" width="160" height="24" rx="4" fill="#12151f" stroke="#3dd6c0" stroke-width="1.3" /><text x="276" y="204" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">bluesky-scout  :8009</text>
+<rect x="196" y="218" width="160" height="24" rx="4" fill="#12151f" stroke="#e85c5c" stroke-width="1.3" /><text x="276" y="234" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">reddit-scout  :8010</text>
+<rect x="196" y="248" width="160" height="24" rx="4" fill="#12151f" stroke="#5ccc8a" stroke-width="1.3" /><text x="276" y="264" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">blog-scout  :8011</text>
+<rect x="196" y="278" width="160" height="24" rx="4" fill="#12151f" stroke="#e8d44c" stroke-width="1.3" /><text x="276" y="294" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">leaderboard-scout  :8012</text>
+<rect x="196" y="308" width="160" height="24" rx="4" fill="#12151f" stroke="#4c9be8" stroke-width="1.3" /><text x="276" y="324" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">web-search-scout  :8017</text>
+<rect x="196" y="338" width="160" height="24" rx="4" fill="#12151f" stroke="#9b7fe8" stroke-width="1.3" /><text x="276" y="354" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">rss-scout  :8014</text>
+<rect x="196" y="368" width="160" height="24" rx="4" fill="#12151f" stroke="#3dd6c0" stroke-width="1.3" /><text x="276" y="384" font-size="9" fill="#cfe2f5" text-anchor="middle" font-family="monospace">rest-json-scout  :8015</text>
+<line x1="164" y1="110" x2="196" y2="110" stroke="#4c9be8" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
+<line x1="164" y1="140" x2="196" y2="140" stroke="#e8974c" stroke-width="1" opacity="0.5" marker-end="url(#arr_orange)"/>
+<line x1="164" y1="170" x2="196" y2="170" stroke="#6b7280" stroke-width="1" opacity="0.5" marker-end="url(#arr_grey)"/>
+<line x1="164" y1="200" x2="196" y2="200" stroke="#3dd6c0" stroke-width="1" opacity="0.5" marker-end="url(#arr_teal)"/>
+<line x1="164" y1="230" x2="196" y2="230" stroke="#e85c5c" stroke-width="1" opacity="0.5" marker-end="url(#arr_red)"/>
+<line x1="164" y1="260" x2="196" y2="260" stroke="#5ccc8a" stroke-width="1" opacity="0.5" marker-end="url(#arr_green)"/>
+<line x1="164" y1="290" x2="196" y2="290" stroke="#e8d44c" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
+<line x1="164" y1="320" x2="196" y2="320" stroke="#4c9be8" stroke-width="1" opacity="0.5" marker-end="url(#arr)"/>
+<line x1="164" y1="350" x2="196" y2="350" stroke="#9b7fe8" stroke-width="1" opacity="0.5" marker-end="url(#arr_purple)"/>
+<line x1="164" y1="380" x2="196" y2="380" stroke="#3dd6c0" stroke-width="1" opacity="0.5" marker-end="url(#arr_teal)"/>
+
+<!-- ============ COORDINATOR GRAPH ============ -->
+<rect x="392" y="78" width="350" height="612" rx="10" fill="#0d1220" stroke="#4c9be8" stroke-width="2" />
+<text x="567" y="100" font-size="13" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">LangGraph Coordinator</text>
+<text x="567" y="115" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="monospace">coordinator.py · mesh-pipeline · thread_id = run_id</text>
+
+<rect x="414" y="125" width="306" height="34" rx="5" fill="#0f1117" stroke="#5ccc8a" stroke-width="2" /><text x="567" y="147" font-size="11" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">START</text>
+<rect x="414" y="167" width="306" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" /><text x="567" y="182" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">scout</text><text x="567" y="194" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">discover A2A agents · build skill registry</text>
+<rect x="414" y="209" width="306" height="34" rx="5" fill="#16102a" stroke="#9b7fe8" stroke-width="1.5" /><text x="567" y="224" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">fan_scouts  →  Send</text><text x="567" y="236" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">one Send per enabled connector  (fan-out)</text>
+<rect x="414" y="251" width="306" height="34" rx="5" fill="#1a1d27" stroke="#3dd6c0" stroke-width="1.5" /><text x="567" y="266" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">scout_one  ×N</text><text x="567" y="278" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">call scout_* via the A2A wire protocol</text>
+<rect x="414" y="293" width="306" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" /><text x="567" y="308" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">ingest</text><text x="567" y="320" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">dedup + insert new Sources  (Postgres)</text>
+<rect x="414" y="335" width="306" height="34" rx="5" fill="#16102a" stroke="#9b7fe8" stroke-width="1.5" /><text x="567" y="350" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">route_after_ingest  →  Send</text><text x="567" y="362" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">one Send per new Source  (fan-out)</text>
+<rect x="414" y="377" width="306" height="34" rx="5" fill="#1a1d27" stroke="#3dd6c0" stroke-width="1.5" /><text x="567" y="392" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">extract_one  ×N</text><text x="567" y="404" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">LLM claim extraction  (claim-extractor)</text>
+<rect x="414" y="419" width="306" height="34" rx="5" fill="#1a1d27" stroke="#e8974c" stroke-width="1.5" /><text x="567" y="434" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">track_entities</text><text x="567" y="446" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">semantic entity resolution + insert Claims</text>
+<rect x="414" y="461" width="306" height="34" rx="5" fill="#1a1d27" stroke="#e8974c" stroke-width="1.5" /><text x="567" y="476" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">synthesize</text><text x="567" y="488" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">claim_type → SOTA · capability · relationships</text>
+<rect x="414" y="503" width="306" height="34" rx="5" fill="#1a1d27" stroke="#4c9be8" stroke-width="1.5" /><text x="567" y="518" font-size="10" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">curate</text><text x="567" y="530" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">check for open Investigations</text>
+<rect x="414" y="545" width="306" height="34" rx="5" fill="#1a1d27" stroke="#e8d44c" stroke-width="1.5" /><text x="567" y="560" font-size="10" fill="#e8d44c" text-anchor="middle" font-weight="bold" font-family="monospace">dispatch_investigations</text><text x="567" y="572" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">targeted search (reuses scouts' investigate_*)</text>
+<rect x="414" y="587" width="306" height="34" rx="5" fill="#1a1d27" stroke="#5ccc8a" stroke-width="1.5" /><text x="567" y="602" font-size="10" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">finalize</text><text x="567" y="614" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">write PipelineRun · capture agent_invocations</text>
+<rect x="414" y="629" width="306" height="34" rx="5" fill="#0f1117" stroke="#5ccc8a" stroke-width="2" /><text x="567" y="651" font-size="11" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">END</text>
+
+<line x1="567" y1="159" x2="567" y2="167" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="201" x2="567" y2="209" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="243" x2="567" y2="251" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="285" x2="567" y2="293" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="327" x2="567" y2="335" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="369" x2="567" y2="377" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="411" x2="567" y2="419" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="453" x2="567" y2="461" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="495" x2="567" y2="503" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="537" x2="567" y2="545" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="579" x2="567" y2="587" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="567" y1="621" x2="567" y2="629" stroke="#2e3347" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- conditional skip edges -->
+<path d="M 720 352 L 732 352 L 732 604 L 720 604" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr_grey)"/>
+<text x="736" y="349" font-size="7" fill="#6b7280" text-anchor="start" font-family="monospace">no new sources → finalize</text>
+<path d="M 414 520 L 402 520 L 402 604 L 414 604" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr_grey)"/>
+<text x="398" y="517" font-size="7" fill="#6b7280" text-anchor="end" font-family="monospace">no investigations</text>
+
+<!-- scout_one → scouts (A2A call) -->
+<line x1="414" y1="268" x2="366" y2="258" stroke="#3dd6c0" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr_teal)"/>
+<text x="384" y="246" font-size="7" fill="#3dd6c0" text-anchor="middle" font-family="monospace">A2A</text>
+
+<!-- ============ SPECIALIST AGENTS ============ -->
+<text x="768" y="72" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">SPECIALIST AGENTS  (A2A)</text>
+<rect x="768" y="78" width="190" height="336" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
+<rect x="776" y="90"  width="174" height="42" rx="5" fill="#12151f" stroke="#3dd6c0" stroke-width="1.4" /><text x="863" y="105" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">claim-extractor  :8002</text><text x="863" y="124" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">LLM — extract Claims</text>
+<rect x="776" y="136" width="174" height="42" rx="5" fill="#12151f" stroke="#e8974c" stroke-width="1.4" /><text x="863" y="151" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">entity-tracker  :8003</text><text x="863" y="170" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">semantic resolve · find/create</text>
+<rect x="776" y="182" width="174" height="42" rx="5" fill="#12151f" stroke="#e8974c" stroke-width="1.4" /><text x="863" y="197" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">sota-tracker  :8004</text><text x="863" y="216" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">synthesize Beliefs &amp; edges</text>
+<rect x="776" y="228" width="174" height="42" rx="5" fill="#12151f" stroke="#e85c5c" stroke-width="1.4" /><text x="863" y="243" font-size="10" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">skeptic  :8006</text><text x="863" y="262" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">LLM — challenge Beliefs</text>
+<rect x="776" y="274" width="174" height="42" rx="5" fill="#12151f" stroke="#9b7fe8" stroke-width="1.4" /><text x="863" y="289" font-size="10" fill="#9b7fe8" text-anchor="middle" font-weight="bold" font-family="monospace">curator  :8007</text><text x="863" y="308" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">select beliefs · merge entities</text>
+<rect x="776" y="320" width="174" height="42" rx="5" fill="#12151f" stroke="#3dd6c0" stroke-width="1.4" /><text x="863" y="335" font-size="10" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">research-qa  :8016</text><text x="863" y="354" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">LLM — knowledge Q&amp;A chatbot</text>
+<rect x="776" y="366" width="174" height="42" rx="5" fill="#12151f" stroke="#e8974c" stroke-width="1.4" /><text x="863" y="381" font-size="10" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">personalizer  :8013</text><text x="863" y="400" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">rank the Daily Brief</text>
+
+<!-- coordinator → specialist skill calls -->
+<line x1="720" y1="394" x2="776" y2="111" stroke="#3dd6c0" stroke-width="1.3" marker-end="url(#arr_teal)"/><text x="748" y="250" font-size="7" fill="#3dd6c0" text-anchor="middle" font-family="monospace">extract</text>
+<line x1="720" y1="436" x2="776" y2="157" stroke="#e8974c" stroke-width="1.3" marker-end="url(#arr_orange)"/><text x="748" y="296" font-size="7" fill="#e8974c" text-anchor="middle" font-family="monospace">resolve</text>
+<line x1="720" y1="478" x2="776" y2="203" stroke="#e8974c" stroke-width="1.3" marker-end="url(#arr_orange)"/><text x="748" y="342" font-size="7" fill="#e8974c" text-anchor="middle" font-family="monospace">synth</text>
+
+<!-- ============ DATA STORE ============ -->
+<text x="975" y="72" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">DATA STORE  (single instance)</text>
+<rect x="975" y="78" width="290" height="210" rx="8" fill="#0d1220" stroke="#f6a623" stroke-width="2" />
+<text x="1120" y="98" font-size="12" fill="#f6a623" text-anchor="middle" font-weight="bold" font-family="monospace">Postgres — mesh-postgres</text>
+<text x="1120" y="112" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">pgvector/pgvector:pg16  ·  roles: mesh_writer / mesh_reader</text>
+<rect x="987" y="120" width="266" height="96" rx="5" fill="#1a1d27" stroke="#f6a623" stroke-width="1.2" />
+<text x="993" y="135" font-size="9" fill="#f6a623" text-anchor="start" font-weight="bold" font-family="monospace">knowledge schema  (field-scoped)</text>
+<text x="993" y="149" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">Entities · Sources · Claims (immutable)</text>
+<text x="993" y="161" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">Beliefs · BeliefRevisions (append-only)</text>
+<text x="993" y="173" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">Relationships · Investigations · Fields</text>
+<text x="993" y="185" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">agent_invocations (observability)</text>
+<text x="993" y="197" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">pgvector embeddings (HNSW cosine)</text>
+<rect x="987" y="222" width="266" height="56" rx="5" fill="#1a1d27" stroke="#336791" stroke-width="1.2" />
+<text x="993" y="237" font-size="9" fill="#5b9bd5" text-anchor="start" font-weight="bold" font-family="monospace">public  (operational)</text>
+<text x="993" y="250" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">LangGraph checkpoints  (thread_id = run_id)</text>
+<text x="993" y="262" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">schedules  (interval + enabled, per field)</text>
+
+<!-- coordinator writes → store -->
+<path d="M 742 520 L 968 520 L 968 168 L 975 168" fill="none" stroke="#f6a623" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr_amber)"/>
+<text x="858" y="514" font-size="8" fill="#f6a623" text-anchor="middle" font-family="monospace">writes (mesh_writer)</text>
+
+<!-- ============ READ / SERVE ============ -->
+<text x="975" y="304" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">READ / SERVE</text>
+<rect x="975" y="310" width="290" height="92" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
+<rect x="987" y="322" width="130" height="68" rx="5" fill="#0f1117" stroke="#3dd6c0" stroke-width="1.4" />
+<text x="1052" y="338" font-size="9" fill="#3dd6c0" text-anchor="middle" font-weight="bold" font-family="monospace">FastAPI  :8000</text>
+<text x="1052" y="352" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">read-only (mesh_reader)</text>
+<text x="1052" y="364" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">/api/v1/*  ·  /docs</text>
+<text x="1052" y="378" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">?field=&lt;slug&gt;</text>
+<rect x="1125" y="322" width="128" height="68" rx="5" fill="#0f1117" stroke="#5ccc8a" stroke-width="1.4" />
+<text x="1189" y="338" font-size="9" fill="#5ccc8a" text-anchor="middle" font-weight="bold" font-family="monospace">Next.js  :3000</text>
+<text x="1189" y="352" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">Daily Brief · Knowledge</text>
+<text x="1189" y="364" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">Graph · Agents</text>
+<text x="1189" y="378" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">Pipelines</text>
+<line x1="1052" y1="288" x2="1052" y2="322" stroke="#f6a623" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr_amber)"/>
+<text x="1075" y="306" font-size="7" fill="#f6a623" text-anchor="start" font-family="monospace">reads</text>
+<line x1="1117" y1="356" x2="1125" y2="356" stroke="#5ccc8a" stroke-width="1.3" marker-end="url(#arr_green)"/>
+
+<!-- ============ SKEPTIC SWEEP GRAPH ============ -->
+<text x="975" y="416" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">FALSIFICATION  (scheduled job)</text>
+<rect x="975" y="422" width="290" height="234" rx="8" fill="#0d1220" stroke="#e85c5c" stroke-width="2" />
+<text x="1120" y="440" font-size="11" fill="#e85c5c" text-anchor="middle" font-weight="bold" font-family="monospace">LangGraph Skeptic Sweep</text>
+<text x="1120" y="453" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">skeptic_sweep.py · mesh-skeptic-sweep</text>
+<rect x="987" y="460" width="266" height="20" rx="3" fill="#0f1117" stroke="#5ccc8a" stroke-width="1" /><text x="1120" y="474" font-size="9" fill="#5ccc8a" text-anchor="middle" font-family="monospace">START</text>
+<rect x="987" y="484" width="266" height="20" rx="3" fill="#0f1117" stroke="#9b7fe8" stroke-width="1" /><text x="1120" y="498" font-size="9" fill="#9b7fe8" text-anchor="middle" font-family="monospace">load_beliefs  (curator: select)</text>
+<rect x="987" y="508" width="266" height="20" rx="3" fill="#0f1117" stroke="#e85c5c" stroke-width="1" /><text x="1120" y="522" font-size="9" fill="#e85c5c" text-anchor="middle" font-family="monospace">Send fan-out: evaluate_one ×N</text>
+<rect x="987" y="532" width="266" height="20" rx="3" fill="#0f1117" stroke="#e8974c" stroke-width="1" /><text x="1120" y="546" font-size="9" fill="#e8974c" text-anchor="middle" font-family="monospace">submit / poll / collect  (Batch API)</text>
+<rect x="987" y="556" width="266" height="20" rx="3" fill="#0f1117" stroke="#9b7fe8" stroke-width="1" /><text x="1120" y="570" font-size="9" fill="#9b7fe8" text-anchor="middle" font-family="monospace">trigger_curator  (on contradiction)</text>
+<rect x="987" y="580" width="266" height="20" rx="3" fill="#0f1117" stroke="#5ccc8a" stroke-width="1" /><text x="1120" y="594" font-size="9" fill="#5ccc8a" text-anchor="middle" font-family="monospace">finalize</text>
+<rect x="987" y="604" width="266" height="20" rx="3" fill="#0f1117" stroke="#5ccc8a" stroke-width="1" /><text x="1120" y="618" font-size="9" fill="#5ccc8a" text-anchor="middle" font-family="monospace">END</text>
+<text x="1120" y="644" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="monospace">adds counter-Claims + a BeliefRevision — never edits a Claim</text>
+<line x1="1120" y1="480" x2="1120" y2="484" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="1120" y1="504" x2="1120" y2="508" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="1120" y1="528" x2="1120" y2="532" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="1120" y1="552" x2="1120" y2="556" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="1120" y1="576" x2="1120" y2="580" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="1120" y1="600" x2="1120" y2="604" stroke="#2e3347" stroke-width="1" marker-end="url(#arr)"/>
+<!-- skeptic sweep → specialist agents -->
+<line x1="975" y1="516" x2="952" y2="252" stroke="#e85c5c" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr_red)"/>
+<line x1="975" y1="494" x2="952" y2="298" stroke="#9b7fe8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr_purple)"/>
+
+<!-- ============ SCHEDULER + JOBS ============ -->
+<text x="24" y="420" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">ORCHESTRATION  (triggers)</text>
+<rect x="24" y="426" width="340" height="250" rx="8" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
+<rect x="40" y="438" width="150" height="46" rx="5" fill="#0f1117" stroke="#e8974c" stroke-width="1.4" />
+<text x="115" y="454" font-size="9" fill="#e8974c" text-anchor="middle" font-weight="bold" font-family="monospace">mesh-scheduler  :9100</text>
+<text x="115" y="466" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">BackgroundScheduler</text>
+<text x="115" y="477" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">/scheduler/status|reload|run</text>
+<rect x="204" y="438" width="150" height="46" rx="5" fill="#0f1117" stroke="#4c9be8" stroke-width="1.4" />
+<text x="279" y="454" font-size="9" fill="#4c9be8" text-anchor="middle" font-weight="bold" font-family="monospace">CLI  mesh.cli</text>
+<text x="279" y="466" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">manual runs · reports</text>
+<text x="279" y="477" font-size="7" fill="#94a3b8" text-anchor="middle" font-family="monospace">init-db · reconcile · discover</text>
+<text x="34" y="502" font-size="8" fill="#94a3b8" text-anchor="start" font-family="monospace">Scheduled jobs (per field; config in Postgres schedules):</text>
+<rect x="40" y="510" width="312" height="22" rx="4" fill="#0f1117" stroke="#4c9be8" stroke-width="1.2" /><text x="48" y="525" font-size="8" fill="#e2e8f0" text-anchor="start" font-family="monospace">pipeline  —  ingest sources → claims → beliefs</text>
+<rect x="40" y="536" width="312" height="22" rx="4" fill="#0f1117" stroke="#e85c5c" stroke-width="1.2" /><text x="48" y="551" font-size="8" fill="#e2e8f0" text-anchor="start" font-family="monospace">skeptic_sweep  —  challenge held beliefs</text>
+<rect x="40" y="562" width="312" height="22" rx="4" fill="#0f1117" stroke="#e8d44c" stroke-width="1.2" /><text x="48" y="577" font-size="8" fill="#e2e8f0" text-anchor="start" font-family="monospace">discovery  —  find gaps → open investigations</text>
+<rect x="40" y="588" width="312" height="22" rx="4" fill="#0f1117" stroke="#9b7fe8" stroke-width="1.2" /><text x="48" y="603" font-size="8" fill="#e2e8f0" text-anchor="start" font-family="monospace">belief_consolidation  —  merge dupes · decay stale</text>
+<rect x="40" y="614" width="312" height="22" rx="4" fill="#0f1117" stroke="#3dd6c0" stroke-width="1.2" /><text x="48" y="629" font-size="8" fill="#e2e8f0" text-anchor="start" font-family="monospace">consolidation  —  episodic memory → heuristics</text>
+<text x="34" y="654" font-size="7" fill="#6b7280" text-anchor="start" font-family="monospace">each job is its own checkpointed LangGraph graph;</text>
+<text x="34" y="664" font-size="7" fill="#6b7280" text-anchor="start" font-family="monospace">scheduler reconciles config from Postgres every 30s.</text>
+
+<!-- scheduler → graphs -->
+<path d="M 352 516 L 378 516 L 378 142 L 392 142" fill="none" stroke="#e8974c" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr_orange)"/>
+<text x="384" y="135" font-size="7" fill="#e8974c" text-anchor="start" font-family="monospace">fires pipeline</text>
+<path d="M 352 547 L 372 547 L 372 700 L 1120 700 L 1120 656" fill="none" stroke="#e85c5c" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr_red)"/>
+<text x="730" y="694" font-size="8" fill="#e85c5c" text-anchor="middle" font-family="monospace">fires skeptic_sweep  (discovery / belief_consolidation / consolidation run their own graphs the same way)</text>
+
+<!-- ============ LEGEND ============ -->
+<rect x="24" y="712" width="1240" height="132" rx="6" fill="#1a1d27" stroke="#2e3347" stroke-width="1.5" />
+<text x="34" y="730" font-size="10" fill="#94a3b8" text-anchor="start" font-weight="bold" font-family="monospace">Legend</text>
+<rect x="38" y="738" width="12" height="12" rx="2" fill="#4c9be8" /><text x="56" y="748" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">LangGraph graph node (pipeline)</text>
+<rect x="360" y="738" width="12" height="12" rx="2" fill="#9b7fe8" /><text x="378" y="748" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">Send fan-out / curator</text>
+<rect x="640" y="738" width="12" height="12" rx="2" fill="#3dd6c0" /><text x="658" y="748" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">LLM-backed specialist / A2A call</text>
+<rect x="960" y="738" width="12" height="12" rx="2" fill="#e8974c" /><text x="978" y="748" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">rule-based agent / DB write / synthesis</text>
+<rect x="38" y="762" width="12" height="12" rx="2" fill="#e85c5c" /><text x="56" y="772" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">skeptic / falsification path</text>
+<rect x="360" y="762" width="12" height="12" rx="2" fill="#e8d44c" /><text x="378" y="772" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">investigation / discovery</text>
+<rect x="640" y="762" width="12" height="12" rx="2" fill="#5ccc8a" /><text x="658" y="772" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">START / END · read &amp; serve path</text>
+<rect x="960" y="762" width="12" height="12" rx="2" fill="#f6a623" /><text x="978" y="772" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">Postgres knowledge store + writes</text>
+<rect x="38" y="786" width="12" height="12" rx="2" fill="#336791" /><text x="56" y="796" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">operational tables (checkpoints / schedules)</text>
+<rect x="360" y="786" width="12" height="12" rx="2" fill="#6b7280" /><text x="378" y="796" font-size="9" fill="#e2e8f0" text-anchor="start" font-family="monospace">conditional skip edge</text>
+<text x="640" y="796" font-size="9" fill="#94a3b8" text-anchor="start" font-family="monospace">Invariants:  Claims immutable · BeliefRevisions append-only · agents are pure (no DB)</text>
+<text x="34" y="822" font-size="8" fill="#6b7280" text-anchor="start" font-family="monospace">Knowledge flows one way:  scout → ingest → extract → resolve → synthesize.  The coordinator is the sole writer; every other path only adds evidence or reads.</text>
+<text x="34" y="836" font-size="8" fill="#6b7280" text-anchor="start" font-family="monospace">All state is partitioned by Field (default: ai-robotics); the core never branches on field. Optional tiered model routing escalates hard requests to a stronger model.</text>
 </svg>

@@ -38,11 +38,15 @@ export type Answer = Schemas['Answer'];
 export type Citation = Schemas['Citation'];
 export type Coverage = Schemas['Coverage'];
 
-// Connectors page (Phase 18)
+// Connectors + fields pages (Phase 18)
 export type Connector = Schemas['Connector'];
 export type ConnectorKind = Schemas['ConnectorKind'];
 export type FieldConnector = Schemas['FieldConnector'];
 export type FieldConnectorUpdate = Schemas['FieldConnectorUpdate'];
+export type Field = Schemas['Field'];
+export type FieldProfile = Schemas['FieldProfile'];
+export type FieldCreate = Schemas['FieldCreate'];
+export type FieldPatch = Schemas['FieldPatch'];
 
 // Agent observability (Phase 23)
 export type AgentRosterEntry = Schemas['AgentRosterEntry'];
@@ -207,6 +211,14 @@ export const api = {
       `/api/v1/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`,
       { question },
     ),
+
+  // Fields page (Phase 18) --------------------------------------------------
+  listFields: (activeOnly = false) =>
+    apiGet<Field[]>('/api/v1/fields', { query: { active_only: activeOnly } }),
+  field: (slug: string) => apiGet<Field>(`/api/v1/fields/${encodeURIComponent(slug)}`),
+  createField: (body: FieldCreate) => apiSend<Field>('POST', '/api/v1/fields', body),
+  updateField: (slug: string, body: FieldPatch) =>
+    apiSend<Field>('PATCH', `/api/v1/fields/${encodeURIComponent(slug)}`, body),
 
   // Connectors page (Phase 18) ----------------------------------------------
   connectors: () => apiGet<Connector[]>('/api/v1/connectors'),

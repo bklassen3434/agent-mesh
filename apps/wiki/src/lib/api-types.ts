@@ -381,6 +381,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List fields
+         * @description Every field scope, each with its stored FieldProfile.
+         */
+        get: operations["list_fields_endpoint_api_v1_fields_get"];
+        put?: never;
+        /**
+         * Create a field
+         * @description Create a new field scope from a name + profile. The name is slugified into the immutable id/slug. A field starts with no connectors enabled — enable sources for it via the connectors endpoints.
+         */
+        post: operations["create_field_endpoint_api_v1_fields_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fields/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a field */
+        get: operations["get_field_endpoint_api_v1_fields__slug__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a field
+         * @description Patch a field's name, profile fields, and/or active flag. slug/id are immutable. Profile edits take effect on the next pipeline run.
+         */
+        patch: operations["patch_field_endpoint_api_v1_fields__slug__patch"];
+        trace?: never;
+    };
     "/api/v1/connectors": {
         parameters: {
             query?: never;
@@ -1205,6 +1250,29 @@ export interface components {
          */
         FailureMode: "unsupported_extrapolation" | "cherry_picked_evidence" | "methodological_flaw" | "outdated_by_newer_claim" | "contradicted_by_source" | "definitional_ambiguity" | "other";
         /**
+         * Field
+         * @description A first-class field scope. Mirrors a ``knowledge.fields`` row.
+         */
+        Field: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            profile: components["schemas"]["FieldProfile"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+        };
+        /**
          * FieldConnector
          * @description One field's enablement + config of a catalog connector.
          */
@@ -1237,6 +1305,71 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+        };
+        /**
+         * FieldCreate
+         * @description Create a field. ``name`` is slugified into the immutable id/slug; the
+         *     rest seed the field's prompt-driving FieldProfile.
+         */
+        FieldCreate: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Entity Type Hints */
+            entity_type_hints?: string[];
+            /**
+             * Extraction Examples
+             * @default
+             */
+            extraction_examples: string;
+            /**
+             * Topic Label
+             * @default sota
+             */
+            topic_label: string;
+        };
+        /**
+         * FieldPatch
+         * @description Patch a field's mutable attributes. All optional; slug/id never change.
+         */
+        FieldPatch: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Entity Type Hints */
+            entity_type_hints?: string[] | null;
+            /** Extraction Examples */
+            extraction_examples?: string | null;
+            /** Topic Label */
+            topic_label?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+        };
+        /**
+         * FieldProfile
+         * @description Prompt-driving description of a field. Serialized to ``fields.profile``.
+         */
+        FieldProfile: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Entity Type Hints */
+            entity_type_hints?: string[];
+            /**
+             * Extraction Examples
+             * @default
+             */
+            extraction_examples: string;
+            /**
+             * Topic Label
+             * @default sota
+             */
+            topic_label: string;
         };
         /**
          * GraphData
@@ -2247,6 +2380,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphData"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_fields_endpoint_api_v1_fields_get: {
+        parameters: {
+            query?: {
+                active_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_field_endpoint_api_v1_fields_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_field_endpoint_api_v1_fields__slug__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_field_endpoint_api_v1_fields__slug__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Field"];
                 };
             };
             /** @description Validation Error */

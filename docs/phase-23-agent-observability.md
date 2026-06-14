@@ -121,8 +121,8 @@ The durable per-call capture, coordinator-written.
 
 - Migration `014_agent_invocations.sql` (014 is the next free number after Phase
   22's `013`; coordinate via the roadmap if numbering shifts):
-  `knowledge.agent_invocations(id text pk, run_id text not null, field_id text
-  not null references knowledge.fields(id), agent text not null, skill text not
+  `agents.agent_invocations(id text pk, run_id text not null, field_id text
+  not null references catalog.fields(id), agent text not null, skill text not
   null, traceparent text, trace_id text, status text not null, error_type text,
   error_message text, input_summary jsonb, output_summary jsonb, memory_block
   text, applied_heuristic_ids text[], system_prefix_hash text, model text,

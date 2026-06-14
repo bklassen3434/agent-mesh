@@ -78,13 +78,13 @@ The pipeline needs an LLM provider — by default Anthropic (`ANTHROPIC_API_KEY`
 
 ```bash
 # Run with defaults (cs.AI, cs.RO, cs.LG; last 24h; max 20 papers)
-uv run mesh-pipeline
+uv run mesh-ingest
 
 # Fetch up to 50 papers from cs.LG in the last 7 days
-uv run mesh-pipeline --categories cs.LG --max-papers 50 --since 7d
+uv run mesh-ingest --categories cs.LG --max-papers 50 --since 7d
 
 # Scope a run to a specific field
-uv run mesh-pipeline --field ai-robotics
+uv run mesh-ingest --field ai-robotics
 
 # Check results
 uv run mesh.cli pipeline-stats
@@ -222,7 +222,7 @@ cp .env.example .env
 make up
 
 # Run one full pipeline cycle
-make pipeline
+make ingest
 
 # Show pipeline stats
 uv run mesh.cli pipeline-stats --last 1
@@ -271,7 +271,7 @@ ports, and skills, and the `docker-compose.yml` services list for what `make up`
 
 ### Orchestration: A2A coordinator vs. legacy orchestrator
 
-By default `mesh-pipeline` runs the in-process legacy orchestrator. Pass `--a2a` (or set
+By default `mesh-ingest` runs the in-process legacy orchestrator. Pass `--a2a` (or set
 `MESH_USE_A2A=true`) to run the LangGraph **A2A coordinator** instead — the current,
 production orchestration path (stateful LangGraph graphs checkpointed to Postgres, per-field
 connector dispatch). The docker `coordinator` service sets `MESH_USE_A2A=true`, so `make
@@ -327,10 +327,10 @@ full architectural rationale.
 
 ```bash
 make up                # the agent fleet + api + wiki + mesh-postgres
-make pipeline          # one-shot coordinator run; populates the DB
+make ingest            # one-shot coordinator run; populates the DB
 make skeptic           # one falsification sweep (skeptic profile)
-make consolidate       # one memory-consolidation cycle
-make belief-consolidate  # one belief-consolidation cycle
+make consolidate-memory  # one memory-consolidation cycle
+make consolidate-beliefs # one belief-consolidation cycle
 make discover          # one autonomous-discovery cycle
 make smoke             # up + one pipeline + row-count + A2A discovery check
 make wiki              # opens the wiki dashboard
@@ -350,7 +350,7 @@ worth challenging, Skeptic assesses each, and applicable assessments land as
 counter-claims plus BeliefRevisions in the existing DB.
 
 ```bash
-make pipeline      # populate beliefs
+make ingest        # populate beliefs
 make skeptic       # one-shot falsification sweep
 ```
 

@@ -8,8 +8,8 @@ adding scheduled `pipeline_runs` rows — no structural drift.
 
 | Entity | Count |
 |---|---|
-| `pipeline_runs` (`run_type='pipeline'`) | 0 |
-| `pipeline_runs` (`run_type='skeptic_sweep'`) | 1 |
+| `pipeline_runs` (`run_type='ingest'`) | 0 |
+| `pipeline_runs` (`run_type='skeptic'`) | 1 |
 | `claims` | 0 |
 | `beliefs` | 0 |
 | `belief_revisions` | 0 |

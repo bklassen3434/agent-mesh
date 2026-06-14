@@ -174,8 +174,8 @@ def test_weakened_assessment_inserts_counter_claim_and_revision(tmp_path: Path) 
     # `weakened` does NOT touch contradicting_claim_ids
     assert belief.contradicting_claim_ids == []
 
-    # pipeline_runs row recorded as skeptic_sweep
-    runs = list_pipeline_runs(conn, limit=10, run_type="skeptic_sweep")
+    # pipeline_runs row recorded as skeptic
+    runs = list_pipeline_runs(conn, limit=10, run_type="skeptic")
     assert len(runs) == 1
     assert runs[0].beliefs_revised == 1
     assert runs[0].claims_inserted == 1
@@ -324,7 +324,7 @@ def test_no_held_beliefs_records_empty_run(tmp_path: Path) -> None:
     _run(db, {})  # discovery never called because we short-circuit
 
     conn = get_connection(db)
-    runs = list_pipeline_runs(conn, limit=10, run_type="skeptic_sweep")
+    runs = list_pipeline_runs(conn, limit=10, run_type="skeptic")
     assert len(runs) == 1
     assert runs[0].beliefs_revised == 0
     conn.close()

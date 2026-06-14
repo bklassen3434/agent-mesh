@@ -35,12 +35,12 @@ const INTERVAL_OPTIONS = [1, 2, 4, 6, 12, 24, 48];
 
 const PIPELINES: { jobId: string; name: string; description: string }[] = [
   {
-    jobId: 'pipeline',
-    name: 'Coordinator',
+    jobId: 'ingest',
+    name: 'Ingest',
     description: 'Scouts sources, extracts claims, resolves entities, updates beliefs.',
   },
   {
-    jobId: 'skeptic_sweep',
+    jobId: 'skeptic',
     name: 'Skeptic sweep',
     description: 'Challenges held beliefs and records counter-claims.',
   },

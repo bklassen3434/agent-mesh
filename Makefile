@@ -1,4 +1,4 @@
-.PHONY: up down logs pipeline skeptic consolidate belief-consolidate discover smoke wiki api types \
+.PHONY: up down logs ingest skeptic consolidate-memory consolidate-beliefs discover smoke wiki api types \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
@@ -14,9 +14,9 @@ down:
 logs:
 	docker compose logs -f
 
-# Run one full pipeline cycle via the coordinator container.
+# Run one full ingest cycle via the coordinator container.
 # Starts the coordinator profile (which normally stays stopped), runs once, exits.
-pipeline:
+ingest:
 	docker compose build coordinator
 	docker compose run --rm \
 		-e MESH_PIPELINE_CATEGORIES=$${MESH_PIPELINE_CATEGORIES:-cs.AI,cs.RO,cs.LG} \
@@ -37,15 +37,15 @@ skeptic:
 # it reuses the skeptic-sweep job container (same coordinator image, has the
 # writer + LLM env) with the entry point overridden and --no-deps, rather than
 # adding a new service. Requires `make up` (mesh-postgres) first.
-consolidate:
+consolidate-memory:
 	docker compose --profile skeptic build skeptic-sweep
 	docker compose --profile skeptic run --rm --no-deps \
-		--entrypoint "uv run mesh-consolidate" skeptic-sweep
+		--entrypoint "uv run mesh-consolidate-memory" skeptic-sweep
 
-belief-consolidate:
+consolidate-beliefs:
 	docker compose --profile skeptic build skeptic-sweep
 	docker compose --profile skeptic run --rm --no-deps \
-		--entrypoint "uv run mesh-belief-consolidate" skeptic-sweep
+		--entrypoint "uv run mesh-consolidate-beliefs" skeptic-sweep
 
 # Run one autonomous-discovery cycle — analyzes each active field for knowledge
 # gaps/trends, opens discovery investigations, and dispatches real search through
@@ -57,10 +57,10 @@ discover:
 	docker compose run --rm --no-deps \
 		--entrypoint "uv run mesh-discover" coordinator
 
-# Smoke test: bring up the stack, run one pipeline cycle, check row counts.
+# Smoke test: bring up the stack, run one ingest cycle, check row counts.
 smoke: up
-	@echo "Running smoke pipeline..."
-	$(MAKE) pipeline
+	@echo "Running smoke ingest..."
+	$(MAKE) ingest
 	@echo ""
 	@echo "Checking DB row counts..."
 	uv run mesh.cli pipeline-stats --last 1

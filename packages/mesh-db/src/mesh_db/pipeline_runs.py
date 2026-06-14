@@ -22,7 +22,7 @@ class PipelineRun(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
-    run_type: str = "pipeline"  # "pipeline" | "skeptic_sweep" | future job types
+    run_type: str = "ingest"  # "ingest" | "skeptic" | future job types
     triggered_by: str = "manual"  # "manual" | "scheduled"
     papers_scouted: int = 0
     sources_inserted: int = 0
@@ -126,7 +126,7 @@ def _row_to_run(row: tuple[Any, ...]) -> PipelineRun:
         id=id_,
         started_at=_dt(started_at),
         finished_at=None if finished_at is None else _dt(finished_at),
-        run_type=str(run_type) if run_type is not None else "pipeline",
+        run_type=str(run_type) if run_type is not None else "ingest",
         triggered_by=str(triggered_by) if triggered_by is not None else "manual",
         papers_scouted=int(papers_scouted),
         sources_inserted=int(sources_inserted),

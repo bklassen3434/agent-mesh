@@ -7,8 +7,8 @@ complete and tagged through `v0.17.0-phase-17c`. After Phase 17 the system hosts
 multiple fully-isolated fields: each carries a `field_id` on all field-state
 (knowledge, heuristics, runs, cost, de-dup, schedules), the active `FieldProfile`
 drives the extractor/skeptic/personalizer prompts, and sources are dispatched
-from a formalized **connector catalog** (`knowledge.connectors`) + per-field
-enablement (`knowledge.field_connectors`) — with the **eight existing scouts as
+from a formalized **connector catalog** (`catalog.connectors`) + per-field
+enablement (`catalog.field_connectors`) — with the **eight existing scouts as
 built-in connectors** conforming to the `SourceConnector` protocol.
 
 What Phase 17 does **not** provide: a way for a user to ingest from a source the
@@ -18,7 +18,7 @@ without hand-writing rows. This phase delivers both.
 Read before writing any code — do not guess details:
 
 - The Phase 17 connector framework: the `SourceConnector` protocol, the
-  `knowledge.connectors` catalog (+ `config_schema`), `knowledge.field_connectors`
+  `catalog.connectors` catalog (+ `config_schema`), `catalog.field_connectors`
   (per-field config), and how the coordinator dispatches enabled connectors
   (`packages/mesh-agents/`, `apps/pipeline/coordinator.py`)
 - An existing config-driven-shaped scout for the fetch/emit pattern + the shared

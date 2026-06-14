@@ -26,7 +26,7 @@ Canonicalization rules:
 
 The dev DB is essentially empty (`pipeline_runs.claims = 0`) so the
 script produces no data. Findings will be updated after the first
-populated `make pipeline` run.
+populated `make ingest` run.
 
 For the 7b design we proceed with the canonicalization shape above as
 the default tolerant-match. If a populated run shows the rule is too

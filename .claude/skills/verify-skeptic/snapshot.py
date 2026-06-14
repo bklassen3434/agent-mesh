@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Snapshot live store state for before/after skeptic-sweep verification.
 
-Prints a JSON snapshot (skeptic-relevant row counts + the latest skeptic_sweep
+Prints a JSON snapshot (skeptic-relevant row counts + the latest skeptic
 run) to stdout, and writes it to the path given as the first arg if provided.
 Read-only.
 
@@ -54,7 +54,7 @@ def snapshot() -> dict[str, Any]:
     conn = get_connection(read_only=True)
     try:
         counts = {label: conn.execute(sql).fetchone()[0] for label, sql in COUNTS.items()}
-        runs = list_pipeline_runs(conn, limit=1, run_type="skeptic_sweep")
+        runs = list_pipeline_runs(conn, limit=1, run_type="skeptic")
     finally:
         conn.close()
     latest = _to_jsonable(runs[0]) if runs else None

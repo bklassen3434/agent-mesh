@@ -40,12 +40,12 @@ def _seed(conn: MeshConnection) -> dict[str, str]:
     """
     run_a = create_pipeline_run(
         conn,
-        PipelineRun(started_at=_dt(10, 0), finished_at=_dt(10, 10), run_type="pipeline"),
+        PipelineRun(started_at=_dt(10, 0), finished_at=_dt(10, 10), run_type="ingest"),
     )
     run_b = create_pipeline_run(
         conn,
         PipelineRun(
-            started_at=_dt(11, 0), finished_at=_dt(11, 10), run_type="skeptic_sweep"
+            started_at=_dt(11, 0), finished_at=_dt(11, 10), run_type="skeptic"
         ),
     )
 

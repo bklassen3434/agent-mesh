@@ -20,7 +20,7 @@ At a glance: **sources flow in → become immutable Claims → Claims synthesize
 
 ### 1. The core knowledge loop (ingestion)
 
-The `mesh-pipeline` coordinator (a LangGraph state machine) drives one run from raw sources to beliefs. Scouts, the extractor, and the skeptic are pure A2A agents — they hold no database; the coordinator owns every read and write.
+The `mesh-ingest` coordinator (a LangGraph state machine) drives one run from raw sources to beliefs. Scouts, the extractor, and the skeptic are pure A2A agents — they hold no database; the coordinator owns every read and write.
 
 ```mermaid
 flowchart TD
@@ -71,11 +71,11 @@ Beyond ingestion, a `BackgroundScheduler` fires five recurring jobs (intervals c
 flowchart LR
     SCHED["⏱️ Scheduler<br/>(BackgroundScheduler, :9100)<br/>config in Postgres"]
 
-    SCHED --> P["pipeline<br/>ingest new sources"]
-    SCHED --> SK["skeptic_sweep<br/>challenge weak beliefs →<br/>counter-claims, confidence ↓"]
+    SCHED --> P["ingest<br/>ingest new sources"]
+    SCHED --> SK["skeptic<br/>challenge weak beliefs →<br/>counter-claims, confidence ↓"]
     SCHED --> DISC["discovery<br/>find knowledge gaps →<br/>open investigations"]
     SCHED --> BC["belief_consolidation<br/>merge duplicate beliefs +<br/>decay/archive stale ones"]
-    SCHED --> CON["consolidation<br/>distill agent episodic<br/>memory → heuristics"]
+    SCHED --> CON["memory_consolidation<br/>distill agent episodic<br/>memory → heuristics"]
 
     P --> DB[("🗄️ Postgres knowledge store")]
     SK --> DB
@@ -86,16 +86,16 @@ flowchart LR
 
 | Loop | What it does | Invariant it respects |
 |---|---|---|
-| **pipeline** | Pulls new sources, extracts claims, synthesizes beliefs | Coordinator-owned writes only |
-| **skeptic_sweep** | Picks shaky beliefs, attacks them with an LLM, files counter-claims + adjusts confidence | Adds *new* claims; never edits existing ones |
+| **ingest** | Pulls new sources, extracts claims, synthesizes beliefs | Coordinator-owned writes only |
+| **skeptic** | Picks shaky beliefs, attacks them with an LLM, files counter-claims + adjusts confidence | Adds *new* claims; never edits existing ones |
 | **discovery** | Analyzes the whole field for gaps/stale areas, opens `origin=discovery` investigations | Proposes evidence-gathering, never facts |
 | **belief_consolidation** | Semantic-merges duplicate beliefs, decays/archives stale ones | Append-only — a merged belief is absorbed, never deleted |
-| **consolidation** | Turns agents' episodic history into reusable heuristics (memory) | Never crosses fields |
+| **memory_consolidation** | Turns agents' episodic history into reusable heuristics (memory) | Never crosses fields |
 
 ### 3. How it's deployed
 
 - **Long-running services** (`make up`): `mesh-postgres`, `apps/api` (:8000), `apps/wiki` (:3000), `apps/scheduler` (:9100), and the A2A agent servers (scouts/extractor/skeptic/curator on :8001–:8013).
-- **On-demand jobs**: the coordinator and the four other loops run when the scheduler fires them — or by hand via `make pipeline` / `mesh.cli`.
+- **On-demand jobs**: the coordinator and the four other loops run when the scheduler fires them — or by hand via `make ingest` / `mesh.cli`.
 - **Field-scoped**: every knowledge row carries a `field_id`. The seeded `ai-robotics` field is the default; the core never branches on field, so new fields drop in as config, not code.
 
 The sections below trace how the system reached this shape, phase by phase.
@@ -106,7 +106,7 @@ Phase 0 establishes the substrate. It includes:
 
 - **Repository structure** — uv workspace monorepo with `packages/` and `apps/`
 - **Pydantic v2 models** — typed representations of all seven domain entities
-- **Postgres schema** — migrations for all tables in the `knowledge` schema of the single `mesh-postgres` instance (pgvector)
+- **Postgres schema** — migrations for all tables, split across four schemas in the single `mesh-postgres` instance (pgvector): `knowledge` (core domain — entities, sources, claims, beliefs, revisions, relationships, investigations + belief-signal views), `agents` (agent heuristics/revisions + invocations), `runtime` (pipeline_runs, llm_usage, processed_items), and `catalog` (fields, connectors, field_connectors)
 - **Database access layer** — typed read/write functions for each entity; immutability enforced on Claims
 - **CLI** — `mesh.cli` with subcommands to create and inspect all entity types
 - **Tracing plumbing** — Langfuse wrapper that no-ops without env vars
@@ -125,7 +125,7 @@ New components:
 
 - **`packages/mesh-llm`** — thin Ollama wrapper (`OllamaClient`) with structured output, retry on transient errors, and latency tracking
 - **`packages/mesh-agents`** — four agent classes: `ArxivScoutAgent`, `ClaimExtractorAgent`, `EntityTrackerAgent`, `SotaTrackerAgent`
-- **`apps/pipeline`** — async orchestrator (`run_pipeline`) with bounded concurrency (Semaphore(3)); CLI entry point `mesh-pipeline`
+- **`apps/pipeline`** — async orchestrator (`run_pipeline`) with bounded concurrency (Semaphore(3)); CLI entry point `mesh-ingest`
 
 End-to-end flow (see [agents.md](agents.md) for detail):
 
@@ -227,7 +227,7 @@ front of Postgres.
 
 Both `api` and `wiki` are long-running services brought up by `make up`.
 The coordinator remains in the `pipeline` profile — invoked on demand by
-`make pipeline`. See [docs/wiki.md](wiki.md) for the full Phase 3 narrative.
+`make ingest`. See [docs/wiki.md](wiki.md) for the full Phase 3 narrative.
 
 ## Phase 4 — Falsification loop (complete)
 
@@ -239,7 +239,7 @@ existing beliefs.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  skeptic_sweep  (apps/pipeline/skeptic_sweep.py, on demand)      │
+│  skeptic  (apps/pipeline/skeptic_sweep.py, on demand)            │
 │                                                                  │
 │  1. Read held beliefs + derive last_challenged_at per belief     │
 │  2. call_skill("select_beliefs_to_challenge", {beliefs, …})      │
@@ -252,7 +252,7 @@ existing beliefs.
 │       - update belief (confidence delta;                         │
 │         contradicting_claim_ids if "contradicted")               │
 │       - append BeliefRevision (revised_by_agent=skeptic)         │
-│  5. Write PipelineRun row with run_type='skeptic_sweep'          │
+│  5. Write PipelineRun row with run_type='skeptic'               │
 │                                                                  │
 └──────────┬────────────────────────────────┬──────────────────────┘
            │                                │  JSON-RPC 2.0 (A2A)
@@ -401,7 +401,7 @@ its own doc):
   search. Discovery proposes evidence-gathering, never facts
   (`docs/autonomous-discovery.md`).
 - **23 Agent observability.** A field-scoped, append-only
-  `knowledge.agent_invocations` table records one row per coordinator skill
+  `agents.agent_invocations` table records one row per coordinator skill
   dispatch (bounded I/O summaries, status, trace id, latency, model/tokens/cost,
   injected memory). A read-only `/api/v1/agents*` router + an **Agents** wiki
   page expose it. Extensible: any agent dispatched through the standard skill

@@ -65,14 +65,14 @@ stay out of `make up` by default.
 
 The crucial detail is what the scheduler doesn't do. It is not an
 orchestrator. It shells out to the existing CLI entry points
-(`mesh-pipeline`, `mesh-skeptic-sweep`) the same way `make pipeline` does
+(`mesh-ingest`, `mesh-skeptic`) the same way `make ingest` does
 when a human runs it manually. The only extra information the scheduler
 threads in is a `MESH_TRIGGERED_BY=scheduled` env var that lands on the
 `pipeline_runs.triggered_by` column.
 
 This means: manual runs and scheduled runs go through identical code
 paths. There's no second pipeline for scheduled execution. The audit log
-is shared. A manual `make pipeline` while the scheduler is also running
+is shared. A manual `make ingest` while the scheduler is also running
 doesn't collide — the `pipeline_runs` row insertion is the lock.
 
 ```
@@ -81,8 +81,8 @@ $ uv run mesh.cli schedule status
 ┌──────────────┬─────────────────────┬───────────────────┬──────────┬──────────────┬──────────────────────────┐
 │ Job          │ Next run            │ Last run          │ Duration │ Triggered by │ Counts                   │
 ├──────────────┼─────────────────────┼───────────────────┼──────────┼──────────────┼──────────────────────────┤
-│ pipeline     │ 2026-05-28 06:00 …  │ 2026-05-28 00:00  │ 142s     │ scheduled    │ claims +18 / beliefs …  │
-│ skeptic_sweep│ 2026-05-28 03:00 …  │ 2026-05-27 03:00  │ 38s      │ scheduled    │ beliefs ~3              │
+│ ingest       │ 2026-05-28 06:00 …  │ 2026-05-28 00:00  │ 142s     │ scheduled    │ claims +18 / beliefs …  │
+│ skeptic      │ 2026-05-28 03:00 …  │ 2026-05-27 03:00  │ 38s      │ scheduled    │ beliefs ~3              │
 └──────────────┴─────────────────────┴───────────────────┴──────────┴──────────────┴──────────────────────────┘
 ```
 

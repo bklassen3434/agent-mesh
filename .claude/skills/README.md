@@ -26,8 +26,8 @@ and record what they saw.
 
 | Skill | What it verifies | Evidence |
 |---|---|---|
-| `/verify-pipeline` | A bounded `mesh-pipeline` cycle: before/after snapshot, delta consistency (sources→claims→entities→beliefs), recorded errors, then re-asserts invariants. | before/after counts + run row + diff |
-| `/verify-skeptic` | A `mesh-skeptic-sweep`: deltas match the reported run (critique counter-claims, skeptic-attributed revisions, agent_reasoning sources), then re-asserts invariants. | before/after counts + run row + diff |
+| `/verify-pipeline` | A bounded `mesh-ingest` cycle: before/after snapshot, delta consistency (sources→claims→entities→beliefs), recorded errors, then re-asserts invariants. | before/after counts + run row + diff |
+| `/verify-skeptic` | A `mesh-skeptic`: deltas match the reported run (critique counter-claims, skeptic-attributed revisions, agent_reasoning sources), then re-asserts invariants. | before/after counts + run row + diff |
 | `/verify-entity-resolution` | A `reconcile-entities` merge only shrank entities/relationships while leaving the claim set byte-identical; no self-loops or dangling investigation entity refs. | before/after counts + structural samples |
 | `/verify-belief-consolidation` | A `consolidate-beliefs` pass stayed strictly append-only: no belief/revision row deleted, claims untouched, merged-away beliefs un-held with a revision, confidence in range. | before/after counts + structural samples |
 

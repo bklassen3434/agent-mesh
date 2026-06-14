@@ -62,7 +62,7 @@ def _next_runs() -> dict[str, datetime | None]:
     try:
         from mesh_scheduler import configured_cron_triggers
     except ImportError:
-        return {"pipeline": None, "skeptic_sweep": None}
+        return {"ingest": None, "skeptic": None}
     now = datetime.now(UTC)
     out: dict[str, datetime | None] = {}
     for job_id, trig in configured_cron_triggers().items():
@@ -146,13 +146,13 @@ def _row(k: str, v: str, *, cls: str = "") -> str:
 
 
 def _section_runs(conn: MeshConnection) -> str:
-    pipeline = _last_run(conn, "pipeline")
-    sweep = _last_run(conn, "skeptic_sweep")
+    pipeline = _last_run(conn, "ingest")
+    sweep = _last_run(conn, "skeptic")
     nexts = _next_runs()
     rows: list[str] = []
     for label, run, next_run_key in (
-        ("Pipeline", pipeline, "pipeline"),
-        ("Skeptic sweep", sweep, "skeptic_sweep"),
+        ("Ingest", pipeline, "ingest"),
+        ("Skeptic sweep", sweep, "skeptic"),
     ):
         if run is None:
             rows.append(_row(f"{label} — last run", "never", cls="muted"))
@@ -170,7 +170,7 @@ def _section_runs(conn: MeshConnection) -> str:
                     f"<span class='{err_class}'>{errs} errors</span>",
                 )
             )
-            if label == "Pipeline":
+            if label == "Ingest":
                 rows.append(
                     _row(
                         "&nbsp;&nbsp;&nbsp;deltas",

@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Assert a skeptic-sweep run's store deltas match what the run reported.
 
-Loads two snapshots from snapshot.py (before + after a `mesh-skeptic-sweep` run)
-plus the skeptic_sweep run row recorded in the *after* snapshot, and checks the
+Loads two snapshots from snapshot.py (before + after a `mesh-skeptic` run)
+plus the skeptic run row recorded in the *after* snapshot, and checks the
 observed store deltas line up with the reported counts. Writes a timestamped
 evidence report; exits non-zero on any FAIL.
 
@@ -34,7 +34,7 @@ def check(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]
     def record(name: str, passed: bool, detail: str) -> None:
         out.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    # A new skeptic_sweep run must have been recorded.
+    # A new skeptic run must have been recorded.
     before_run = before.get("latest_skeptic_run")
     new_run = run is not None and (before_run is None or run["id"] != before_run["id"])
     record(

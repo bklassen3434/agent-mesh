@@ -1,13 +1,13 @@
 ---
 name: verify-skeptic
-description: Verify a skeptic sweep actually challenged beliefs and capture evidence. Snapshots store state before, runs mesh-skeptic-sweep, snapshots after, asserts the deltas match what the run reported (critique counter-claims, skeptic-attributed belief revisions, synthetic agent_reasoning sources), then re-runs the invariant checks on the freshly-written data. Use to verify the skeptic end-to-end, confirm a skeptic/curator change works on real data, or when asked to prove a sweep produced sane output (not just that it exited 0).
+description: Verify a skeptic sweep actually challenged beliefs and capture evidence. Snapshots store state before, runs mesh-skeptic, snapshots after, asserts the deltas match what the run reported (critique counter-claims, skeptic-attributed belief revisions, synthetic agent_reasoning sources), then re-runs the invariant checks on the freshly-written data. Use to verify the skeptic end-to-end, confirm a skeptic/curator change works on real data, or when asked to prove a sweep produced sane output (not just that it exited 0).
 ---
 
 # verify-skeptic
 
 Verify that a **skeptic sweep** does what it claims — challenge held beliefs,
 inserting critique counter-claims and revising belief confidence — not just that
-`mesh-skeptic-sweep` exited cleanly. It captures before/after state, checks the
+`mesh-skeptic` exited cleanly. It captures before/after state, checks the
 deltas line up with what the run *reported* in `pipeline_runs`, then asserts the
 core data invariants on the newly-written rows.
 
@@ -41,7 +41,7 @@ with Ollama up) and the Postgres store reachable (`make up`).
 3. **Run the sweep** and tee its stdout (the reported deltas matter):
 
    ```bash
-   uv run mesh-skeptic-sweep --field ai-robotics 2>&1 | tee "$EV/run.log"
+   uv run mesh-skeptic --field ai-robotics 2>&1 | tee "$EV/run.log"
    ```
 
    Note the printed run block — counter-claims, beliefs revised, errors.
@@ -60,7 +60,7 @@ with Ollama up) and the Postgres store reachable (`make up`).
 
    It writes its own evidence dir and asserts (PASS only if all hold):
 
-   - **new_skeptic_run_recorded** — a fresh `run_type='skeptic_sweep'` row exists.
+   - **new_skeptic_run_recorded** — a fresh `run_type='skeptic'` row exists.
    - **critique_claims_delta_matches_run** — store Δ critique claims == reported `claims_inserted`.
    - **skeptic_revisions_delta_matches_run** — store Δ skeptic revisions == reported `beliefs_revised`.
    - **skeptic_sources_delta_matches_run** — store Δ agent_reasoning sources == reported `sources_inserted`.
@@ -87,7 +87,7 @@ with Ollama up) and the Postgres store reachable (`make up`).
 
 ## Notes
 
-- `snapshot.py` is read-only; only `mesh-skeptic-sweep` writes.
+- `snapshot.py` is read-only; only `mesh-skeptic` writes.
 - Scope the sweep with `--field` (default `ai-robotics`); behavior knobs live in
   env (`MESH_SKEPTIC_APPLY_THRESHOLD`, `MESH_CURATOR_PICK_COUNT`,
   `MESH_CURATOR_COOLDOWN_DAYS`).

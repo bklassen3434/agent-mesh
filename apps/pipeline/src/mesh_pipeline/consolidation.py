@@ -13,8 +13,8 @@ Graph shape::
       distill_one (fan-out) → finalize → END
 
 No hot-path LLM: this runs offline (scheduler-fired, batch by default). No new
-service — the existing scheduler shells out to ``mesh-consolidate`` like it does
-``mesh-skeptic-sweep``. Writes go through the coordinator-writer role; agents
+service — the existing scheduler shells out to ``mesh-consolidate-memory`` like
+it does ``mesh-skeptic``. Writes go through the coordinator-writer role; agents
 never write the procedural store.
 """
 from __future__ import annotations
@@ -427,7 +427,7 @@ def build_consolidation_graph(
             )
         run = PipelineRun(
             id=state["run_id"],
-            run_type="consolidation",
+            run_type="memory_consolidation",
             started_at=datetime.fromisoformat(state["started_at"]),
             finished_at=datetime.now(UTC),
             triggered_by=state["triggered_by"],
@@ -472,7 +472,7 @@ def _result_from_state(state: ConsolidationState) -> ConsolidationRunResult:
 
 
 async def run_consolidation(db_path: str | None = None) -> ConsolidationRunResult:
-    """Top-level entry point — the `mesh-consolidate` console script calls this."""
+    """Top-level entry point — the `mesh-consolidate-memory` console script calls this."""
     log.info("consolidation_starting")
 
     conn = get_connection(db_path)
@@ -520,7 +520,7 @@ async def run_consolidation(db_path: str | None = None) -> ConsolidationRunResul
 
 
 def main() -> None:
-    """Console-script entry point: `uv run mesh-consolidate`."""
+    """Console-script entry point: `uv run mesh-consolidate-memory`."""
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,

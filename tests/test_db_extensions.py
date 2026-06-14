@@ -214,7 +214,7 @@ def test_read_only_connection_blocks_writes(_pg: str, tmp_db: MeshConnection) ->
 
     reader_dsn = _pg.replace("test:test@", "mesh_reader:mesh_reader@")
     with psycopg.connect(reader_dsn, autocommit=True) as ro:
-        ro.execute("SET search_path TO knowledge, public")
+        ro.execute("SET search_path TO knowledge, agents, runtime, catalog, public")
         # Reads work.
         assert ro.execute("SELECT count(*) FROM entities").fetchone() == (1,)
         # Writes are refused at the DB level.

@@ -99,7 +99,7 @@ def test_consolidation_writes_grounded_heuristic(tmp_db: Any) -> None:
     assert h.source == "reddit"
     assert h.provenance_claim_ids  # grounded in the claims it was distilled from
 
-    runs = list_pipeline_runs(tmp_db, limit=10, run_type="consolidation")
+    runs = list_pipeline_runs(tmp_db, limit=10, run_type="memory_consolidation")
     assert len(runs) == 1
 
 

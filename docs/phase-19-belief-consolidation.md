@@ -10,10 +10,10 @@ Today three maintenance mechanisms exist, on three different layers:
   dedup/merge of `entities` (block → match → merge), inline in the coordinator
   before any entity is created, plus a one-time `reconcile-entities` backfill.
 - **The memory-consolidation job (Phase 16c)** cleans the *agents' know-how* — a
-  scheduled LangGraph job (`mesh-consolidate`, `apps/pipeline/consolidation.py`)
-  that distills episodic history into procedural `agent_heuristic` rows. **This
+  scheduled LangGraph job (`mesh-consolidate-memory`, `apps/pipeline/consolidation.py`)
+  that distills episodic history into procedural `agent_heuristics` rows. **This
   is not belief consolidation** — do not confuse the two; this phase adds a
-  *separate* job (`mesh-belief-consolidate`).
+  *separate* job (`mesh-consolidate-beliefs`).
 - **Belief synthesis (Phase 14)** writes the *facts* — the coordinator's
   `synthesize` node turns claims into `beliefs` (`score`/`capability`/relational),
   with confidence derived from `belief_signals` via
@@ -54,7 +54,7 @@ route details:
 - `mesh_agents.confidence.compute_confidence` and the `belief_signals` view
   (migration `004_derived_signal_views.sql`)
 - The Phase 16c job: `apps/pipeline/consolidation.py` (cloned from
-  `skeptic_sweep.py`), its `mesh-consolidate` entry point, the batch/sync path,
+  `skeptic_sweep.py`), its `mesh-consolidate-memory` entry point, the batch/sync path,
   the `MESH_CONSOLIDATION_BATCH` flags, the finalize-idempotency guard
   (`pipeline_run_exists`), `open_checkpointer`, traceparent, and Langfuse cost
   attribution
@@ -71,7 +71,7 @@ route details:
 
 ## Goal
 
-A scheduled, offline LangGraph job (`mesh-belief-consolidate`) that keeps each
+A scheduled, offline LangGraph job (`mesh-consolidate-beliefs`) that keeps each
 field's belief corpus coherent: it semantically de-duplicates currently-held
 beliefs (block → match → merge, conservative bands with batch-API LLM
 adjudication in the ambiguous middle), folding each duplicate's evidence onto a
@@ -113,7 +113,7 @@ merges or compares beliefs across fields.
   in the batch sweep with a sync fallback.
 - **No new service or container.** The sweep is fired by the existing scheduler
   via a new `schedules` row + `JOB_COMMANDS` entry, exactly like
-  `skeptic_sweep` / `consolidation`.
+  `skeptic` / `memory_consolidation`.
 - **Stamp a distinct agent identity.** Every revision this phase writes is
   attributed to `belief_consolidator` (`revised_by_agent`), never an existing
   agent's id.
@@ -250,16 +250,16 @@ guard, and Langfuse cost attribution). Job:
 - Apply confirmed merges through `merge_beliefs` under the coordinator-writer
   connection. De-dup decisions so A↔B isn't applied twice in one run; never merge
   a belief that was already absorbed earlier in the same run.
-- Entry point `mesh-belief-consolidate =
+- Entry point `mesh-consolidate-beliefs =
   mesh_pipeline.belief_consolidation:main` in `apps/pipeline/pyproject.toml`.
 - Scheduler: add `belief_consolidation` to `DEFAULT_INTERVALS` (default **24h**)
   in `mesh_a2a.schedules`, and
-  `JOB_COMMANDS["belief_consolidation"] = ["uv","run","mesh-belief-consolidate"]`
+  `JOB_COMMANDS["belief_consolidation"] = ["uv","run","mesh-consolidate-beliefs"]`
   in `apps/scheduler/.../scheduler.py`. No new container — the scheduler
   registers it from the `schedules` table per field automatically.
-- `Makefile`: add a `belief-consolidate` target mirroring `consolidate`
+- `Makefile`: add a `consolidate-beliefs` target mirroring `consolidate-memory`
   (`docker compose run --rm --no-deps --entrypoint "uv run
-  mesh-belief-consolidate" …` on the coordinator/skeptic-sweep image).
+  mesh-consolidate-beliefs" …` on the coordinator/skeptic-sweep image).
 - One-time backfill + dry-run report in `apps/cli`, mirroring
   `reconcile-entities` / `mesh_agents.reconcile`: `mesh.cli consolidate-beliefs
   [--field <slug>] [--apply] [--report-path …] [-k …]` — first backfills
@@ -268,7 +268,7 @@ guard, and Langfuse cost attribution). Job:
   reports/optionally-applies merges across the existing corpus. Read-only by
   default (`--apply` to write).
 
-**Exit:** `make belief-consolidate` runs end-to-end and merges ≥1 duplicate on a
+**Exit:** `make consolidate-beliefs` runs end-to-end and merges ≥1 duplicate on a
 seeded corpus (or cleanly no-ops on a clean one), appending revisions and leaving
 the duplicate not-held; batch path used with a working sync fallback; cost
 attributed in Langfuse; no hot-path LLM added; `mesh.cli consolidate-beliefs`
@@ -356,7 +356,7 @@ phase-status paragraph and the environment-variable table with the new
 - [ ] `belief_consolidation.py` agent returns merge/reject/adjudicate by band;
       the middle band adjudicates via LLM and **defaults to not-same** on any
       failure; agent performs no writes
-- [ ] `make belief-consolidate` runs end-to-end per active field; merges
+- [ ] `make consolidate-beliefs` runs end-to-end per active field; merges
       confirmed duplicates; uses the batch API with a working sync fallback; cost
       attributed in Langfuse; no hot-path LLM added
 - [ ] Stale beliefs decay (confidence ↓, revision recorded) and long-dead

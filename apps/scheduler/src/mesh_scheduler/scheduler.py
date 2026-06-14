@@ -1,9 +1,9 @@
 """APScheduler wiring for the mesh (Phase 9).
 
 The scheduler is a *trigger*, not an orchestrator: each job shells out to
-the same CLI entry point a human would run (``mesh-pipeline``,
-``mesh-skeptic-sweep``). All DB writes happen on the coordinator/sweep
-side, exactly as when the user runs ``make pipeline`` by hand.
+the same CLI entry point a human would run (``mesh-ingest``,
+``mesh-skeptic``). All DB writes happen on the coordinator/sweep
+side, exactly as when the user runs ``make ingest`` by hand.
 
 Phase 9 changes the control model:
 
@@ -60,14 +60,14 @@ def _aps_id(job_id: str, field_id: str) -> str:
 
 # job_id → CLI command. The set of job_ids the scheduler will run.
 JOB_COMMANDS: dict[str, list[str]] = {
-    "pipeline": ["uv", "run", "mesh-pipeline", "--a2a"],
-    "skeptic_sweep": ["uv", "run", "mesh-skeptic-sweep"],
+    "ingest": ["uv", "run", "mesh-ingest", "--a2a"],
+    "skeptic": ["uv", "run", "mesh-skeptic"],
     # Phase 16c: offline memory consolidation (distills episodic history into
     # procedural heuristics). Fired by the existing scheduler — no new container.
-    "consolidation": ["uv", "run", "mesh-consolidate"],
+    "memory_consolidation": ["uv", "run", "mesh-consolidate-memory"],
     # Phase 19: offline belief consolidation (semantic dedup/merge + staleness
     # decay/archival). Iterates active fields internally — no --field flag.
-    "belief_consolidation": ["uv", "run", "mesh-belief-consolidate"],
+    "belief_consolidation": ["uv", "run", "mesh-consolidate-beliefs"],
     # Phase 22d: proactive autonomous discovery (gap/trend analysis → opens
     # discovery investigations → dispatches real search). No new container.
     "discovery": ["uv", "run", "mesh-discover"],
@@ -88,8 +88,8 @@ def configured_cron_triggers() -> dict[str, CronTrigger]:
     Decoupled from the live interval-based schedule now driven by Postgres.
     """
     return {
-        "pipeline": CronTrigger.from_crontab(_env("MESH_SCHEDULE_PIPELINE_CRON", "0 */6 * * *")),
-        "skeptic_sweep": CronTrigger.from_crontab(_env("MESH_SCHEDULE_SWEEP_CRON", "0 3 * * *")),
+        "ingest": CronTrigger.from_crontab(_env("MESH_SCHEDULE_PIPELINE_CRON", "0 */6 * * *")),
+        "skeptic": CronTrigger.from_crontab(_env("MESH_SCHEDULE_SWEEP_CRON", "0 3 * * *")),
     }
 
 
@@ -200,9 +200,9 @@ class SchedulerManager:
     ) -> None:
         aps_id = _aps_id(job_id, field_id)
         cmd = list(JOB_COMMANDS[job_id])
-        # Only the pipeline command accepts --field; sweep/consolidation
+        # Only the ingest command accepts --field; sweep/consolidation
         # process all fields / their own scope.
-        if job_id == "pipeline":
+        if job_id == "ingest":
             cmd += ["--field", field_id]
         env = dict(os.environ)
         env["MESH_TRIGGERED_BY"] = triggered_by

@@ -27,12 +27,12 @@ def test_patch_unknown_job_404(empty_client: TestClient) -> None:
 
 
 def test_patch_rejects_bad_interval(empty_client: TestClient) -> None:
-    r = empty_client.patch("/api/v1/schedules/pipeline", json={"interval_hours": 5})
+    r = empty_client.patch("/api/v1/schedules/ingest", json={"interval_hours": 5})
     assert r.status_code == 422
 
 
 def test_patch_requires_a_field(empty_client: TestClient) -> None:
-    r = empty_client.patch("/api/v1/schedules/pipeline", json={})
+    r = empty_client.patch("/api/v1/schedules/ingest", json={})
     assert r.status_code == 422
 
 

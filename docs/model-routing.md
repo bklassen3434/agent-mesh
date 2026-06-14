@@ -120,7 +120,7 @@ Routing knobs:
 ## The batch caveat
 
 Routing is a **hot-path / sync** concern. The Anthropic Batch API
-(`submit_batch`, used by `skeptic_sweep` / `consolidation` /
+(`submit_batch`, used by `skeptic` / `memory_consolidation` /
 `belief_consolidation`) submits a homogeneous model, so batch jobs choose their
 tier **once per batch** (cheap by default), not per item. Per-item batch routing
 is out of scope for this phase. The router exposes its `strong_client` so a batch

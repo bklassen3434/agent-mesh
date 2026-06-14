@@ -47,9 +47,12 @@ def _reader_dsn() -> str:
 
 
 def _configure(conn: psycopg.Connection[Any]) -> None:
-    # Resolve the knowledge tables/views without qualifying every query, while
-    # keeping `public` reachable for the schedules + LangGraph checkpoint tables.
-    conn.execute("SET search_path TO knowledge, public")
+    # Resolve tables/views across the delineated schemas without qualifying every
+    # query: `knowledge` (the domain), `agents` (memory + observability),
+    # `runtime` (operational ledgers), `catalog` (fields/connectors), and
+    # `public` (the schedules + LangGraph checkpoint tables). There are no
+    # cross-schema name collisions, so unqualified references resolve uniquely.
+    conn.execute("SET search_path TO knowledge, agents, runtime, catalog, public")
 
 
 def _pool_for(dsn: str) -> ConnectionPool:

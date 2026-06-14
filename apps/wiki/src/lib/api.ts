@@ -38,6 +38,12 @@ export type Answer = Schemas['Answer'];
 export type Citation = Schemas['Citation'];
 export type Coverage = Schemas['Coverage'];
 
+// Connectors page (Phase 18)
+export type Connector = Schemas['Connector'];
+export type ConnectorKind = Schemas['ConnectorKind'];
+export type FieldConnector = Schemas['FieldConnector'];
+export type FieldConnectorUpdate = Schemas['FieldConnectorUpdate'];
+
 // Agent observability (Phase 23)
 export type AgentRosterEntry = Schemas['AgentRosterEntry'];
 export type AgentInvocation = Schemas['AgentInvocation'];
@@ -100,7 +106,7 @@ export async function apiGet<T>(path: string, opts: ApiOptions = {}): Promise<T>
 }
 
 export async function apiSend<T>(
-  method: 'POST' | 'PATCH',
+  method: 'POST' | 'PATCH' | 'PUT',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -200,5 +206,16 @@ export const api = {
       'POST',
       `/api/v1/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`,
       { question },
+    ),
+
+  // Connectors page (Phase 18) ----------------------------------------------
+  connectors: () => apiGet<Connector[]>('/api/v1/connectors'),
+  fieldConnectors: (field: string) =>
+    apiGet<FieldConnector[]>(`/api/v1/fields/${encodeURIComponent(field)}/connectors`),
+  updateFieldConnector: (field: string, connectorId: string, body: FieldConnectorUpdate) =>
+    apiSend<FieldConnector>(
+      'PUT',
+      `/api/v1/fields/${encodeURIComponent(field)}/connectors/${encodeURIComponent(connectorId)}`,
+      body,
     ),
 };

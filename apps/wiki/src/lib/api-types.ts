@@ -381,6 +381,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the connector catalog
+         * @description The global catalog of source connectors a field can enable, each with its config_schema (the fields a field must supply to use it).
+         */
+        get: operations["list_connectors_endpoint_api_v1_connectors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fields/{slug}/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a field's connector enablement
+         * @description The connectors configured for a field — enabled flag + per-field config. Join against /connectors by connector_id (== connector slug) for the catalog metadata.
+         */
+        get: operations["list_field_connectors_endpoint_api_v1_fields__slug__connectors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fields/{slug}/connectors/{connector_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Enable/disable or reconfigure a connector for a field
+         * @description Upsert one field's enablement + config of a catalog connector. The config is validated against the connector's config_schema; an unknown key, wrong type, or missing required field is a 422. Persisted on the mesh_writer role; the next pipeline run dispatches the field's enabled connectors.
+         */
+        put: operations["put_field_connector_api_v1_fields__slug__connectors__connector_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/schedules": {
         parameters: {
             query?: never;
@@ -1064,6 +1124,31 @@ export interface components {
             subject_entity: components["schemas"]["Entity"] | null;
         };
         /**
+         * Connector
+         * @description A catalog connector definition (global, reusable across fields).
+         */
+        Connector: {
+            /** Id */
+            id: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** @default builtin */
+            kind: components["schemas"]["ConnectorKind"];
+            /** Config Schema */
+            config_schema?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * ConnectorKind
+         * @enum {string}
+         */
+        ConnectorKind: "builtin" | "config_driven";
+        /**
          * Coverage
          * @description How well the retrieved mesh evidence supports the answer.
          *
@@ -1119,6 +1204,40 @@ export interface components {
          * @enum {string}
          */
         FailureMode: "unsupported_extrapolation" | "cherry_picked_evidence" | "methodological_flaw" | "outdated_by_newer_claim" | "contradicted_by_source" | "definitional_ambiguity" | "other";
+        /**
+         * FieldConnector
+         * @description One field's enablement + config of a catalog connector.
+         */
+        FieldConnector: {
+            /** Field Id */
+            field_id: string;
+            /** Connector Id */
+            connector_id: string;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * FieldConnectorUpdate
+         * @description Enable/disable + (re)configure a connector for a field.
+         */
+        FieldConnectorUpdate: {
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
         /**
          * GraphData
          * @description Bounded graph payload. ``total_entities`` lets the UI show a
@@ -1280,7 +1399,7 @@ export interface components {
             finished_at?: string | null;
             /**
              * Run Type
-             * @default pipeline
+             * @default ingest
              */
             run_type: string;
             /**
@@ -2128,6 +2247,93 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphData"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_connectors_endpoint_api_v1_connectors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Connector"][];
+                };
+            };
+        };
+    };
+    list_field_connectors_endpoint_api_v1_fields__slug__connectors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldConnector"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_field_connector_api_v1_fields__slug__connectors__connector_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldConnectorUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldConnector"];
                 };
             };
             /** @description Validation Error */

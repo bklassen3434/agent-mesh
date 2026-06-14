@@ -17,7 +17,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ def _items(page: Any) -> list[Any]:
 
 
 def main() -> int:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     repo_root = Path(__file__).resolve().parents[3]
     out = repo_root / ".evidence" / "verify-api" / ts
     out.mkdir(parents=True, exist_ok=True)
@@ -134,8 +134,14 @@ def main() -> int:
     if beliefs:
         bid = beliefs[0].get("id")
         status, detail = get(f"/api/v1/beliefs/{bid}")
-        captures["belief_detail"] = {"path": f"/api/v1/beliefs/{bid}", "status": status, "body": detail}
-        (out / "belief_detail.json").write_text(json.dumps(captures["belief_detail"], indent=2, default=str))
+        captures["belief_detail"] = {
+            "path": f"/api/v1/beliefs/{bid}",
+            "status": status,
+            "body": detail,
+        }
+        (out / "belief_detail.json").write_text(
+            json.dumps(captures["belief_detail"], indent=2, default=str)
+        )
         if status == 200 and isinstance(detail, dict):
             support_ids = set(detail.get("supporting_claim_ids", []) or [])
             resolved = {c.get("id") for c in detail.get("supporting_claims", []) or []}

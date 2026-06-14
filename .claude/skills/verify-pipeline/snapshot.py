@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +51,7 @@ def snapshot() -> dict[str, Any]:
         conn.close()
     latest = _to_jsonable(runs[0]) if runs else None
     return {
-        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "captured_at": datetime.now(UTC).isoformat(),
         "counts": counts,
         "latest_pipeline_run": latest,
     }

@@ -387,7 +387,7 @@ function RunRow({
   onToggle: () => void;
   langfuseUrl: string | null;
 }) {
-  const isCoordinator = run.run_type === 'pipeline';
+  const isCoordinator = run.run_type === 'ingest';
   return (
     <>
       <TableRow className="cursor-pointer" onClick={onToggle}>

@@ -88,7 +88,7 @@ const pipelineRuns = [
     id: 'run-pipeline-1',
     started_at: daysAgo(0),
     finished_at: iso(new Date(Date.now() - 0 * 86_400_000 + 90_000)),
-    run_type: 'pipeline',
+    run_type: 'ingest',
     triggered_by: 'scheduled',
     papers_scouted: 12,
     sources_inserted: 8,
@@ -103,7 +103,7 @@ const pipelineRuns = [
     id: 'run-skeptic-1',
     started_at: daysAgo(1),
     finished_at: daysAgo(1),
-    run_type: 'skeptic_sweep',
+    run_type: 'skeptic',
     triggered_by: 'manual',
     papers_scouted: 0,
     sources_inserted: 2,
@@ -118,7 +118,7 @@ const pipelineRuns = [
     id: 'run-pipeline-2',
     started_at: daysAgo(2),
     finished_at: daysAgo(2),
-    run_type: 'pipeline',
+    run_type: 'ingest',
     triggered_by: 'scheduled',
     papers_scouted: 9,
     sources_inserted: 5,
@@ -140,14 +140,14 @@ const pipelineRuns = [
 // Mutable so PATCH /schedules/:job_id is reflected by a follow-up GET.
 // A /__test__/reset endpoint restores these defaults between mutation specs.
 const defaultSchedules = () => [
-  { job_id: 'pipeline', interval_hours: 6, enabled: true, updated_at: daysAgo(3) },
-  { job_id: 'skeptic_sweep', interval_hours: 24, enabled: true, updated_at: daysAgo(3) },
+  { job_id: 'ingest', interval_hours: 6, enabled: true, updated_at: daysAgo(3) },
+  { job_id: 'skeptic', interval_hours: 24, enabled: true, updated_at: daysAgo(3) },
 ];
 let schedules = defaultSchedules();
 
 const schedulerStatus = [
-  { job_id: 'pipeline', next_run_at: hoursFromNow(4), last_run_at: daysAgo(0), state: 'idle' },
-  { job_id: 'skeptic_sweep', next_run_at: hoursFromNow(20), last_run_at: daysAgo(1), state: 'idle' },
+  { job_id: 'ingest', next_run_at: hoursFromNow(4), last_run_at: daysAgo(0), state: 'idle' },
+  { job_id: 'skeptic', next_run_at: hoursFromNow(20), last_run_at: daysAgo(1), state: 'idle' },
 ];
 
 // Exactly NODE_CAP (200) nodes; total_entities above the cap so the wiki shows
@@ -387,12 +387,12 @@ app.patch('/api/v1/schedules/:jobId', (req: Request, res: Response) => {
 app.get('/api/v1/scheduler/status', (_req, res) => res.json(schedulerStatus));
 
 app.post('/api/v1/pipelines/:jobId/trigger', (req: Request, res: Response) => {
-  // skeptic_sweep is wired to 409 ("already in progress"); pipeline returns 200.
-  if (req.params.jobId === 'skeptic_sweep') {
+  // skeptic is wired to 409 ("already in progress"); ingest returns 200.
+  if (req.params.jobId === 'skeptic') {
     res.status(409).json({ detail: 'A run is already in progress' });
     return;
   }
-  if (req.params.jobId !== 'pipeline') {
+  if (req.params.jobId !== 'ingest') {
     res.status(404).json({ detail: `Unknown job ${req.params.jobId}` });
     return;
   }

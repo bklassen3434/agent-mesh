@@ -1,0 +1,4 @@
+# Conductor "Files to copy": gitignored files copied into every new workspace.
+# Without this, Conductor falls back to a default `.env*` pattern; listing it
+# explicitly documents intent and lets you add more patterns over time.
+.env*

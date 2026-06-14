@@ -12,6 +12,22 @@ This document covers two flows:
 2. Tailscale-only access — same `make up`, but services bind to the
    tailnet interface and not localhost.
 
+The stack is a single Docker Compose project (`agent-mesh`): roughly
+ten scout/connector services (`arxiv`, `hn`, `github`, `bluesky`,
+`reddit`, `blog`, `leaderboard`, `web-search`, `rss`, `rest-json`),
+the worker agents (`claim-extractor`, `entity-tracker`, `sota-tracker`,
+`curator`, `skeptic`, `personalizer`, `research-qa`), the
+`coordinator` and `skeptic-sweep` jobs, the `scheduler`, the `api`,
+the `wiki`, and one `mesh-postgres` container
+(`pgvector/pgvector:pg16`). That single Postgres holds **both** the
+knowledge store (the `knowledge` schema, with `pgvector` for
+embeddings) and the operational tables (LangGraph checkpoints + the
+`schedules` table, in `public`). There is no separate datastore —
+DuckDB was removed in Phase 12 and the `agent_tasks` durability tables
+were dropped in Phase 8. Several services live behind compose profiles
+(`pipeline`, `skeptic`, `scheduler`), so the always-on core is the
+scouts + worker agents + `api` + `wiki` + `mesh-postgres`.
+
 ## Prerequisites
 
 - A Tailscale account. Free tier covers everything here (3 users, 100
@@ -146,10 +162,19 @@ interface is wrong — re-check `MESH_BIND_INTERFACE`.
 
 - The **status page** at `/status` is the canonical "is the mesh
   healthy?" surface. Meta-refresh every 60s, no JS. Shows last + next
-  runs, row counts, agent_tasks status, recent task failures, and
-  Langfuse 24h trace count when configured.
+  runs, total row counts, LangGraph checkpoint run state (in-flight /
+  interrupted runs and recent run errors, read from the Postgres
+  checkpoint store), and the Langfuse 24h trace count when configured.
+  (The old `agent_tasks` durability tables were dropped in Phase 8 when
+  orchestration moved to LangGraph.)
 - The **scheduler container** (compose profile `scheduler`) keeps the
-  mesh ingesting on cron cadence — see [scheduling.md](scheduling.md).
+  mesh running on an interval cadence. It's a non-blocking
+  `BackgroundScheduler` with an HTTP control surface on :9100 that
+  reconciles interval/enabled config from the Postgres `schedules`
+  table (no restart needed). It runs four jobs — `pipeline`,
+  `skeptic_sweep`, `discovery`, and `belief_consolidation` — by
+  shelling out to the corresponding CLI entry points. See
+  [scheduling.md](scheduling.md).
 - The **`make backup`** target is the official "back up the DB" path
   if/when added; for now a manual `docker compose exec mesh-postgres pg_dump -U langgraph langgraph > backup.sql`
   is the recommended habit before destructive operations.

@@ -41,13 +41,13 @@ Phase 5a moves the wire protocol from sync `send_message` (which blocked until t
 
 A2A supports both polling (`tasks/get`) and push notifications. The mesh uses polling-only in Phase 5a. Push notifications are a possible Phase 6 addition if polling intervals become a problem; they aren't now.
 
-### Task state is in-memory on the agent, durable on the orchestrator
+### Task state is in-memory on the agent, durable in the LangGraph checkpoint store
 
 Each agent process holds an in-memory `TaskRegistry` (`packages/mesh-a2a/src/mesh_a2a/task_registry.py`): a `dict[task_id, TaskRecord]` protected by an `asyncio.Lock`. Records carry status (`pending | running | completed | failed`), result dict, error string, and timestamps. Agent-side state is still ephemeral — if an agent process restarts mid-task, that task is lost on the agent side.
 
-**Orchestrator-side, every dispatch is now durable (Phase 6b).** `call_skill_blocking` accepts an optional `task_recorder: TaskRecorder` and drives it through the dispatch lifecycle: `record_pending` after submit, `record_running` on the first non-pending status, `record_heartbeat` every N polls, and `record_completed` / `record_failed` on terminal states. The coordinator and skeptic-sweep construct a `DuckDBTaskRecorder` bound to the current run id and pass it in, so every skill call leaves a trail in the `agent_tasks` + `agent_task_events` tables. The status page reads those tables.
+**Orchestrator-side, durability now lives in LangGraph (Phase 8).** The old Phase 6b model — a `DuckDBTaskRecorder` driving `record_pending`/`record_running`/`record_completed` against `agent_tasks` + `agent_task_events` tables — has been removed. Orchestration moved to LangGraph: `coordinator.py` (`run_pipeline`) and `skeptic_sweep.py` (`run_skeptic_sweep`) are stateful `StateGraph`s checkpointed via `mesh_a2a.checkpoint.open_checkpointer` — an `AsyncPostgresSaver` against the `mesh-postgres` container when `LANGGRAPH_POSTGRES_URL` is set, an in-memory saver locally/in tests. There is one checkpoint thread per run (`thread_id == run_id`, via `mesh_a2a.checkpoint.thread_config`), so a thread's checkpoint history is the run's history. The `agent_tasks`/`agent_task_events` tables were dropped, and DuckDB is fully removed (Phase 12) — the knowledge store is a single pgvector Postgres. `/status` reads orchestration state directly from the checkpoint store (`mesh_a2a.checkpoint` exposes per-thread latest state — which nodes ran, whether the run finalized, the errors each run accumulated).
 
-If the orchestrator crashes mid-run, the recovery story is "fail visibly, don't try to resume." On startup, the coordinator and sweep call `sweep_orphaned_tasks(threshold_seconds=MESH_TASK_RESUME_THRESHOLD)` (default 600s) which marks any pending/running tasks whose `updated_at` is older than the threshold as `failed` with `error='orphaned_on_restart'`. No retry, no resumption — the operator can re-run the pipeline manually and the status page surfaces the orphans in the "recent failures" panel.
+If the orchestrator crashes mid-run, the recovery story is still "fail visibly, don't try to resume": a run that never reached its `finalize` node leaves an un-finalized checkpoint that `/status` surfaces as interrupted. No automatic retry — the operator re-runs the pipeline manually.
 
 ### No auth
 
@@ -208,6 +208,7 @@ packages/mesh-a2a/
   task_registry.py   — TaskRegistry (asyncio-safe in-memory task table)
   task_server.py     — build_task_app(agent_card, skill_handlers): Starlette factory
   tracing.py         — W3C traceparent encode/decode helpers
+  checkpoint.py      — LangGraph checkpointer selection (Postgres / in-memory) + per-run thread state for /status
 
 packages/mesh-agents/
   base.py            — BaseAgent (run() + to_a2a_server())
@@ -229,7 +230,7 @@ apps/agents/src/mesh_agent_servers/
   curator.py         — uvicorn entry point, port 8007
 
 apps/pipeline/src/mesh_pipeline/
-  orchestrator.py    — Phase 1 in-process orchestrator (kept for tests / Phase 1 path)
-  coordinator.py     — A2A coordinator; submits + polls via call_skill_blocking
-  skeptic_sweep.py   — falsification orchestrator; same pattern
+  orchestrator.py    — legacy Phase 1 in-process orchestrator (still present; reachable via __main__ but predates per-field connectors)
+  coordinator.py     — LangGraph coordinator (run_pipeline); the default entry point. A2A dispatch via call_skill_blocking, state checkpointed per run
+  skeptic_sweep.py   — LangGraph falsification orchestrator (run_skeptic_sweep); same checkpointed-StateGraph pattern
 ```

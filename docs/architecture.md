@@ -27,7 +27,11 @@ Phase 0 establishes the substrate. It includes:
 - **Test suite** — model validation, migration, DB round-trip, and CLI tests
 - **CI** — GitHub Actions running ruff, mypy, pytest
 
-## Phase 1 — Local pipeline (current)
+## Phase 1 — Local pipeline (complete, since superseded)
+
+> Historical. The in-process orchestrator described here was replaced by the
+> A2A coordinator (Phase 2) and then by the LangGraph coordinator (Phase 8).
+> The flow it describes is still the spine of the pipeline.
 
 Phase 1 wires the first end-to-end loop: arxiv → claims → entities → SOTA beliefs. Everything runs locally; no A2A protocol, no cloud APIs.
 
@@ -96,7 +100,7 @@ The coordinator:
 
 See [docs/a2a.md](a2a.md) for full protocol documentation.
 
-## Phase 3 — Read-Only Wiki (current)
+## Phase 3 — Read-Only Wiki (complete)
 
 Phase 3 makes the mesh legible. The accumulated knowledge — entities, claims,
 beliefs, the revision timeline that proves "claims immutable, beliefs
@@ -250,13 +254,80 @@ scout was added by publishing its agent card with a `scout_*` skill
 id; the coordinator's existing prefix-loop dispatch picks them up
 automatically. See `docs/agents.md` for per-scout config knobs.
 
+## Phases 5c–16 — Fleet, scheduling, signals, orchestration, store (complete)
+
+The reactive pipeline became a self-running system. In brief (each phase has
+its own doc):
+
+- **5c Personalizer + 6a scheduling + 6b durability.** A `Personalizer` ranks
+  the last 24h against a markdown profile (`docs/personalization.md`); an
+  APScheduler service runs the pipeline and sweeps on a cadence
+  (`docs/scheduling.md`).
+- **7 Investigations + derived signals.** Curator/Skeptic open Investigations
+  that the coordinator dispatches to `investigate_*` skills
+  (`docs/investigations.md`); belief quality is a set of read-time Postgres
+  views (`docs/derived-signals.md`).
+- **8 LangGraph orchestration.** `coordinator.py` and `skeptic_sweep.py` are
+  now stateful `StateGraph`s (conditional routing + `Send` fan-out)
+  checkpointed to Postgres, one thread per run (`thread_id == run_id`). The old
+  `agent_tasks` / `agent_task_events` durability tables were **dropped**;
+  `/status` reads orchestration state from the checkpoint store.
+- **9 Wiki redesign + schedule control.** The nav, `/knowledge/*` sections, the
+  force-directed `/graph`, and a `/pipelines` schedule-control page; schedule
+  config lives in a Postgres `schedules` table reconciled by a non-blocking
+  `BackgroundScheduler` (`docs/scheduling.md`).
+- **12 Postgres consolidation.** DuckDB is fully removed. A single
+  `pgvector/pgvector:pg16` instance (`mesh-postgres`) holds the `knowledge`
+  schema (with `pgvector` replacing `duckdb-vss`) and the operational tables
+  (checkpoints + `schedules`). Writer/reader roles are enforced by Postgres
+  (`docs/postgres-migration.md`).
+
+## Phases 13–23 — Semantic core, field-agnostic, autonomy, observability (complete)
+
+- **13 Entity resolution.** Exact-match dedup → semantic resolution (block →
+  match → merge); entities carry a populated `name_embedding` (pgvector HNSW
+  cosine). Conservative bands; the middle band goes to an LLM
+  (`docs/entity-resolution.md`).
+- **14 Generalized synthesis.** Every claim carries a `claim_type`; the
+  `synthesize` node dispatches on it — `score` → SOTA beliefs, `capability` →
+  entity-anchored beliefs, relational types → `relationships` edges (so
+  `/graph` has edges). Confidence is derived from evidence signals, not
+  hardcoded (`docs/belief-synthesis.md`).
+- **17 Field-agnostic core.** A first-class **Field** scopes all field-state via
+  a `field_id` FK on every knowledge table; the three coupled system prompts
+  become profile-driven builders; sources become a connector catalog with
+  per-field enablement. `field_id` is a partition, never a content axis;
+  resolution and memory never cross fields (`docs/field-agnostic.md`).
+- **19 Belief consolidation.** The world-model analog of entity resolution, but
+  **strictly append-only** — beliefs carry a `statement_embedding`, consolidate
+  by similarity, and a merged-away belief is marked not-held, never deleted. A
+  second LLM-free pass decays stale beliefs and archives long-dead ones
+  (`docs/belief-consolidation.md`).
+- **20 Tiered model routing.** A `RoutedLLMClient` picks a cheap tier by default
+  and escalates to a strong tier on a pure difficulty signal or a parse
+  failure. Off by default; additive (`docs/model-routing.md`).
+- **21 Knowledge chatbot.** A `research-qa` agent + `/ask` page answers
+  questions with cited, store-grounded answers and a coverage badge
+  (`docs/knowledge-chatbot.md`).
+- **22 Autonomous discovery.** A rule-based field analyzer mines gaps into
+  ranked signals; one LLM pass drafts testable hypotheses; a `mesh-discover`
+  sweep opens capped `origin="discovery"` investigations and dispatches real
+  search. Discovery proposes evidence-gathering, never facts
+  (`docs/autonomous-discovery.md`).
+- **23 Agent observability.** A field-scoped, append-only
+  `knowledge.agent_invocations` table records one row per coordinator skill
+  dispatch (bounded I/O summaries, status, trace id, latency, model/tokens/cost,
+  injected memory). A read-only `/api/v1/agents*` router + an **Agents** wiki
+  page expose it. Extensible: any agent dispatched through the standard skill
+  path appears with no per-agent code (`docs/agent-observability.md`).
+
 ## Package layout
 
 ```
 packages/mesh-models   — Pydantic models; no I/O dependencies
 packages/mesh-db       — Postgres access (psycopg pool); depends on mesh-models
 packages/mesh-tracing  — Langfuse wrapper; no required dependencies
-packages/mesh-llm      — Ollama client; depends on mesh-tracing
+packages/mesh-llm      — LLM clients (Anthropic + Ollama), embedder, routing; depends on mesh-tracing
 packages/mesh-agents   — Agent classes; depends on mesh-llm, mesh-db, mesh-models
 packages/mesh-a2a      — A2A client + card builder; depends on mesh-tracing
 apps/cli               — Click CLI; depends on mesh-db, mesh-models, mesh-llm
@@ -276,4 +347,4 @@ See [schema.md](schema.md) for full rationale. Key decisions:
 2. **Claims immutable by design** — enforced at the access layer (no `update_claim()` function exists). Only `update_claim_status()` is allowed.
 3. **Arrays stored as Postgres `text[]`** — cleaner than JSON arrays for list fields like `aliases`, `supporting_claim_ids`.
 4. **JSON for flexible dicts** — `attributes` and `object` stored as JSON strings, parsed on read.
-5. **VSS installed early** — the `name_embedding` column on entities is inert in Phase 0 but positions us for entity resolution in Phase 2 without a schema migration.
+5. **pgvector throughout** — `name_embedding` on entities (Phase 13) and `statement_embedding` on beliefs (Phase 19) are populated `vector(384)` columns with HNSW cosine indexes, powering semantic entity resolution and belief consolidation.

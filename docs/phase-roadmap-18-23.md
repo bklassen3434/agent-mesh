@@ -1,5 +1,13 @@
 # Roadmap — Phases 18–23: Parallelization & Launch Guide
 
+> **Status (historical planning doc).** Phases 19–23 have shipped (belief
+> consolidation, model routing, knowledge chatbot, autonomous discovery, agent
+> observability — each has its own doc and is summarized in
+> [`architecture.md`](architecture.md)). Phase 18's connector *catalog* shipped
+> (it backs the field-agnostic core, see [`field-agnostic.md`](field-agnostic.md)),
+> but the self-serve onboarding UX remains deferred. This file is kept as a record
+> of how the work was parallelized.
+
 This is the coordination doc for six features specced as Phases 18–23. It answers
 one question: **can these run in parallel across separate Conductor workspaces,
 and what must be coordinated?** Short answer: **yes — all six can run

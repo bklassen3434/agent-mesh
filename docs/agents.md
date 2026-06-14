@@ -2,9 +2,13 @@
 
 ## Overview
 
-Phase 1 introduces four agents as plain Python classes. Each has a single `async run()` method with Pydantic input/output models. The orchestrator drives them sequentially; no agent schedules itself or reads from a queue.
+The agent fleet started (Phase 1) as plain Python classes, each with a single `async run()` method over Pydantic input/output models. **Every agent is now an A2A server** (Phase 2 onward): each subclasses `BaseAgent`, advertises one or more skills (`skill_id`), and is dispatched by the LangGraph coordinator over the A2A protocol via `mesh_a2a.node.call_skill_node`. Core agent logic is unchanged from the original classes; the transport and orchestration moved out into `apps/pipeline/` and `mesh-a2a`.
 
-Phase 2 will promote these to A2A servers by subclassing `BaseAgent` with an A2A transport layer. Agent logic stays unchanged.
+Cross-cutting properties of the current fleet:
+
+- **Field-agnostic (Phase 17).** All agents operate within a **Field** (`knowledge.fields`). A run scopes to one field and the coordinator dispatches only that field's enabled connectors. The three coupled system prompts (extractor, skeptic, research-QA) are profile-driven **builders** (`mesh_llm.prompts.build_*` from a `FieldProfile`), and agents build the `cache_control` prefix once per field via `mesh_agents.profiles.load_profile`. Entity resolution and memory **never cross fields**. `field_id` is a partition, never a content axis — synthesis/confidence/curator logic never branches on it. See `docs/field-agnostic.md`.
+- **Observable (Phase 23).** Every agent dispatched through the standard skill path is recorded: a `_dispatch` wrapper in the coordinator times each skill call and writes an `AgentInvocation` (bounded input/output summary, status, trace id, latency, model/tokens/cost, injected memory) to `knowledge.agent_invocations`. Rows surface on the wiki **Agents** page (roster → an agent's recent invocations → one invocation's inputs/outputs/context + Langfuse deep-link). No per-agent code is needed for an agent to appear. See `docs/agent-observability.md`.
+- **Memory.** Agents can inject episodic recall + learned heuristics and attach an optional debug envelope to skill output (`mesh_agents.memory`). See `docs/agent-memory.md`.
 
 ## Agent Catalogue
 
@@ -17,38 +21,42 @@ Phase 2 will promote these to A2A servers by subclassing `BaseAgent` with an A2A
 
 Queries the arxiv API, sorts by submission date descending, filters by `since` date, and wraps each result in a `ScoutedPaper` containing the pre-built `Source` model (with `raw_content_hash = sha256(abstract)`). No LLM calls.
 
-**Phase 2 note**: Becomes a Scout A2A server that emits `NewSource` events.
+**Skill**: `scout_arxiv` (port `8001`). Also serves the `investigate_arxiv` skill used by the investigation/discovery path.
 
 ---
 
 ### ClaimExtractorAgent
 
-**Responsibility**: Extract structured claims from a paper abstract using a local LLM.
+**Responsibility**: Extract structured claims from a source's content using the configured LLM.
 
 **Input**: `ClaimExtractorInput(paper: ScoutedPaper)`  
 **Output**: `ClaimExtractorOutput(claims, entities_referenced, latency_ms)`
 
-Calls `OllamaClient.complete_with_latency()` with structured output (`ClaimExtractionResult` schema). Allowed predicates: `achieves_score`, `outperforms`, `developed_by`, `evaluated_on`.
+Calls the configured `LLMClient` with structured output (`ClaimExtractionResult` schema) under a field-profile-driven, cache-controlled system prompt. Allowed predicates: `achieves_score`, `outperforms`, `developed_by`, `evaluated_on`, plus the five Phase 14 predicates `has_capability`, `based_on`, `reproduces`, `critiques`, `speculates`. Each predicate maps 1:1 to a `claim_type` consumed by synthesis.
+
+Opts into tiered model routing via `make_routed_llm_client(agent_name="claim_extractor")` (Phase 20) and ships the Phase 23 memory debug envelope.
 
 On LLM parse failure: logs and returns empty list (pipeline continues).  
-On Ollama connection failure: re-raises (pipeline must abort).
+On provider connection failure: re-raises (pipeline must abort).
 
-**Phase 2 note**: Becomes an Extractor A2A server; subscribes to `NewSource` events.
+**Skill**: `extract_claims` (port `8002`).
 
 ---
 
 ### EntityTrackerAgent
 
-**Responsibility**: Resolve entity names to IDs, creating new entities as needed.
+**Responsibility**: Resolve entity names to IDs, creating new entities as needed — now via **semantic entity resolution** (Phase 13), not just exact match.
 
 **Input**: `EntityTrackerInput(names, type_hints)`  
 **Output**: `EntityTrackerOutput(resolved: dict[str, str], created_count)`
 
-Case-insensitive exact match against `canonical_name` and `aliases`. Embedding-based fuzzy resolution is deferred to Phase 2.
+**Skill**: `resolve_entities` (port `8003`).
+
+Resolution is **block → match → merge** on `name_embedding` similarity (pgvector, HNSW cosine; embedder `fastembed`/`BAAI/bge-small-en-v1.5` via the `Embedder` protocol). An alias/canonical exact-match fast-path still wins first; otherwise the coordinator runs `resolve_entity_semantic` (`mesh_agents.entity_resolution`) before creating any new entity: type-filtered blocking finds candidates, then conservative bands decide — cosine ≥ `MESH_ENTITY_MERGE_HIGH` (0.93) auto-merges, ≤ `MESH_ENTITY_MERGE_LOW` (0.80) auto-rejects, and the middle band is adjudicated by the LLM (defaulting to not-same). Blocking and the name fast-path **never cross fields**.
+
+A transactional `merge_entities` re-points claim/relationship/investigation references B→A, aggregates colliding edges, folds aliases, and deletes B — never touching claim content. The one-time backfill is `mesh.cli reconcile-entities` (Batch API). The coordinator's adjudication call opts into tiered routing. See `docs/entity-resolution.md`.
 
 **DB exception**: This agent reads and writes the DB directly (find-or-create pattern).
-
-**Phase 2 note**: Becomes a Curator A2A server with deduplication and merge capabilities.
 
 ---
 
@@ -59,14 +67,20 @@ Case-insensitive exact match against `canonical_name` and `aliases`. Embedding-b
 **Input**: `SotaTrackerInput(claims_with_resolved_entities: list[ResolvedClaim])`  
 **Output**: `SotaTrackerOutput(belief_updates: list[BeliefUpdate])`
 
+**Skill**: `update_sota` (port `8004`).
+
 Groups `achieves_score` claims by `object["benchmark"]`. For each benchmark:
 - No existing belief → `BeliefUpdate(is_new_belief=True)`
 - New score beats existing → `BeliefUpdate(is_new_belief=False, existing_belief_id=...)`
 - New score ≤ existing → no update
 
-No LLM calls. Phase 4 introduces the Skeptic agent for nuanced confidence calibration.
+No LLM calls. This is one branch of a **generalized synthesis** layer (Phase 14): the coordinator's `synthesize` node dispatches on each claim's `claim_type` (`mesh_agents.synthesis`):
 
-**Phase 2 note**: Becomes a Synthesizer A2A server; subscribes to `NewClaim` events.
+- `score` → this SOTA handler (unchanged).
+- `capability` → entity-anchored beliefs keyed `capability:<entity_id>` that converge per canonical entity.
+- relational types (`comparison`/`attribution`/`lineage`/`evaluation`) → claim-grounded edges in the `relationships` table (so `/graph` has edges), mapping to `outperforms`/`developed_by`/`based_on`/`evaluated_on`.
+
+Belief confidence is no longer a hardcoded `0.5` — `mesh_agents.confidence.compute_confidence` derives it from the `belief_signals` view (source diversity, reproduction, skeptic attacks) with config-tunable `MESH_CONFIDENCE_*` weights. See `docs/belief-synthesis.md`.
 
 ---
 
@@ -296,3 +310,65 @@ claims.
 The exact public endpoints these sub-fetchers hit can change. When one
 breaks, the agent stays up and the other lanes keep working — the user
 can iterate on the broken lane without redeploying everything.
+
+---
+
+### PersonalizerAgent (Phase 7)
+
+**Responsibility**: Rank and frame the day's belief activity into a personalized Daily Brief.
+
+**Skill**: `personalize_digest` (port `8013`).
+
+LLM-backed digest agent behind the wiki's Daily Brief. Overridable model via the standard per-agent env. See `docs/personalization.md`.
+
+---
+
+## Connector-driven scouts (Phase 17/18)
+
+These three generic scouts are the connector catalog's universal fetchers: they take their endpoint/config from the field's enabled connector (`knowledge.field_connectors`) rather than hardcoding sources, so a new field can ingest data with no new agent code.
+
+### WebSearchScoutAgent
+
+**Responsibility**: Brave web search, config-driven.
+
+**Skill**: `scout_web_search` (port `8017`); emits `Source(type=web)`. Also serves `investigate_web` — the universal fallback for the investigation/discovery path.
+
+### RssScoutAgent
+
+**Responsibility**: Generic RSS/Atom feed ingestion, config-driven.
+
+**Skill**: `scout_rss` (port `8014`); emits `Source(type=rss)`.
+
+### RestJsonScoutAgent
+
+**Responsibility**: Generic REST/JSON endpoint ingestion, config-driven.
+
+**Skill**: `scout_rest_json` (port `8015`); emits `Source(type=rest)`.
+
+---
+
+## ResearchQAAgent (Phase 21)
+
+**Responsibility**: The knowledge chatbot backing the wiki `/ask` page — cited, store-grounded answers.
+
+**Skill**: `research_qa` (port `8016`; wired via `MESH_ASK_AGENT_URLS`).
+
+A deterministic, field-scoped context pack is assembled from the knowledge store (`mesh_db.gather_context`), then a single LLM pass (`build_research_qa_system` profile prompt) synthesizes a grounded `Answer` with `Citation`s and a `Coverage` verdict. Citations whose id was not in the retrieved pack are dropped, so every claim in the answer traces back to stored evidence; no-evidence questions return `uncovered`. See `docs/knowledge-chatbot.md`.
+
+---
+
+## Synthesis-side / out-of-band agents
+
+These run on their own LangGraph jobs and schedules rather than inline in the main pipeline.
+
+### discovery analyzer (Phase 22)
+
+**Responsibility**: Proactively propose investigations from whole-field gaps — never proposes facts.
+
+`mesh_agents.discovery.analyze_field` is a rule-based pass that mines under-evidenced entities, thin/stale beliefs, rising-activity topics, and missing reciprocal edges into ranked `GapSignal`s; one LLM pass (`draft_hypotheses`, `make_routed_llm_client(agent_name="discovery")`, field-framed via `build_discovery_system`) turns them into testable proposals, degrading to `[]` on failure and deduping against open investigations. The `mesh-discover` job opens capped `origin="discovery"` investigations per active field and dispatches real search via `dispatch_open_investigations` (only to connectors enabled for the field). Fired by a daily scheduler job; `mesh.cli discover [--field --apply]` is the dry-run/manual entry. See `docs/autonomous-discovery.md`.
+
+### belief_consolidator (Phase 19)
+
+**Responsibility**: Append-only belief de-duplication + decay/archive — the world-model analog of entity resolution, but it never deletes.
+
+Beliefs carry a `statement_embedding`; `mesh_agents.belief_consolidation`/`belief_reconcile` block held, field-scoped, family-restricted candidate beliefs, then merge on conservative bands (`MESH_BELIEF_MERGE_HIGH`/`_LOW` 0.95/0.85; middle band → LLM, defaulting to not-same). `merge_beliefs` folds claim-id unions, recomputes confidence, re-points investigation refs, and marks the duplicate not-held — never deleting a row or touching a claim. A second LLM-free pass decays stale beliefs (confidence half-life) and archives long-dead unsupported ones. Every change appends a `BeliefRevision` attributed to `belief_consolidator`, never crossing fields. Runs as the daily `mesh-belief-consolidate` job; `mesh.cli consolidate-beliefs` is the backfill/manual entry. See `docs/belief-consolidation.md`.

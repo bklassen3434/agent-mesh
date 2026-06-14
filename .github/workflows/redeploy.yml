@@ -1,0 +1,86 @@
+name: Redeploy
+
+# Manually re-run the self-hosted deployment (the Pi / laptop running docker
+# compose). Trigger from the GitHub UI: Actions → Redeploy → "Run workflow",
+# then pick the branch to deploy.
+#
+# Requires a self-hosted runner installed on the deployment host (the machine
+# that runs `docker compose`). See:
+#   https://docs.github.com/actions/hosting-your-own-runners
+#
+# The runner does NOT deploy from its own ephemeral checkout — it operates on a
+# fixed clone on the host (DEPLOY_DIR) so named volumes, the SSD bind mount, and
+# the host `.env` are reused. Set the repo variable DEPLOY_DIR (Settings →
+# Secrets and variables → Actions → Variables) to that clone's path; it defaults
+# to ~/agent-mesh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to deploy"
+        type: string
+        required: true
+        default: main
+
+# Never let two redeploys run at once.
+concurrency:
+  group: redeploy
+  cancel-in-progress: false
+
+jobs:
+  redeploy:
+    runs-on: self-hosted
+    env:
+      # The on-host clone the deployment actually runs from. Override via the
+      # DEPLOY_DIR repo variable if your clone lives elsewhere.
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || format('{0}/agent-mesh', github.workspace) }}
+      # Pin the compose project so we always update the same stack regardless of
+      # which directory we run from (compose otherwise derives it from the dir
+      # name, which would spin up a duplicate stack).
+      COMPOSE_PROJECT_NAME: agent-mesh
+      BRANCH: ${{ inputs.branch }}
+    steps:
+      - name: Show target
+        run: |
+          echo "Deploying branch '$BRANCH' from $DEPLOY_DIR on $(hostname)"
+
+      - name: Sync deploy clone to the chosen branch
+        run: |
+          set -euo pipefail
+          if [ ! -d "$DEPLOY_DIR/.git" ]; then
+            echo "::error::$DEPLOY_DIR is not a git clone. Clone the repo there first, e.g.:"
+            echo "::error::  git clone <repo-url> $DEPLOY_DIR  (and create its .env)"
+            exit 1
+          fi
+          cd "$DEPLOY_DIR"
+          git fetch --prune origin
+          git checkout "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+          echo "Now at: $(git rev-parse --short HEAD) ($(git log -1 --pretty=%s))"
+
+      - name: Rebuild and recreate containers
+        run: |
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          # COMPOSE_FILE / COMPOSE_PROFILES from the host .env (e.g. the Pi
+          # overlay + scheduler/skeptic profiles) are picked up automatically.
+          docker compose up -d --build --remove-orphans
+
+      - name: Status
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          docker compose ps
+          {
+            echo "### Redeploy summary"
+            echo ""
+            echo "- **Branch:** \`$BRANCH\`"
+            echo "- **Commit:** \`$(git rev-parse --short HEAD)\`"
+            echo "- **Host:** \`$(hostname)\`"
+            echo ""
+            echo '```'
+            docker compose ps
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

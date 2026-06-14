@@ -1,4 +1,5 @@
 .PHONY: up down logs ingest skeptic consolidate-memory consolidate-beliefs discover smoke wiki api types \
+	pi-up pi-down pi-wiki pi-pipeline \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
@@ -69,6 +70,24 @@ smoke: up
 	uv run mesh.cli a2a-discover \
 		--agent-urls "http://localhost:8001,http://localhost:8002,http://localhost:8003,http://localhost:8004"
 	@echo "Smoke test complete."
+
+# ── Raspberry Pi (4 GB) helpers — assume COMPOSE_FILE includes the overlay ──
+pi-up:
+	docker compose up -d --build
+	@docker compose ps
+
+pi-down:
+	docker compose --profile ui --profile extra down --remove-orphans
+
+# Browse the wiki on demand, then `docker compose stop wiki` to free the RAM.
+pi-wiki:
+	docker compose up -d wiki
+	@echo "wiki → http://localhost:3000 (or the Pi's tailnet name)"
+
+# One bounded pipeline run via the scheduler image (PAPERS defaults to 5).
+pi-pipeline:
+	docker compose run --rm --no-deps \
+		--entrypoint "uv run mesh-ingest --a2a --max-papers $${PAPERS:-5}" scheduler
 
 # ── Wiki / API convenience ──────────────────────────────────────────────────
 

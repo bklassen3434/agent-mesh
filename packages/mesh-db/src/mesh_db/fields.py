@@ -87,6 +87,35 @@ def set_active(conn: MeshConnection, field_id: str, active: bool) -> Field:
     return field
 
 
+def update_field(
+    conn: MeshConnection,
+    field_id: str,
+    *,
+    name: str | None = None,
+    profile: FieldProfile | None = None,
+    is_active: bool | None = None,
+) -> Field | None:
+    """Patch a field's mutable columns (name / profile / is_active). ``slug`` and
+    ``id`` are immutable (they key all field-state). Returns the updated field,
+    or ``None`` if it doesn't exist. Writer-owned; caller commits."""
+    sets: list[str] = []
+    params: list[Any] = []
+    if name is not None:
+        sets.append("name = %s")
+        params.append(name)
+    if profile is not None:
+        sets.append("profile = %s")
+        params.append(Jsonb(profile.model_dump()))
+    if is_active is not None:
+        sets.append("is_active = %s")
+        params.append(is_active)
+    if not sets:
+        return get_field(conn, field_id)
+    params.append(field_id)
+    conn.execute(f"UPDATE fields SET {', '.join(sets)} WHERE id = %s", params)
+    return get_field(conn, field_id)
+
+
 def seed_default_field(conn: psycopg.Connection[Any]) -> None:
     """Upsert the canonical ``ai-robotics`` field profile. Idempotent.
 

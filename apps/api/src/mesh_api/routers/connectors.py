@@ -11,11 +11,10 @@ Python registry; this router only toggles + parameterizes it per field.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from mesh_db.connection import MeshConnection, get_connection
+from fastapi import APIRouter, HTTPException
+from mesh_db.connection import MeshConnection
 from mesh_db.connectors import (
     enable_connector,
     get_connector,
@@ -26,7 +25,7 @@ from mesh_db.fields import get_field_by_slug
 from mesh_models.connector import Connector, FieldConnector
 from pydantic import BaseModel
 
-from mesh_api.deps import ConnDep
+from mesh_api.deps import ConnDep, WriterConnDep
 
 router = APIRouter(prefix="/api/v1", tags=["connectors"])
 
@@ -36,21 +35,6 @@ class FieldConnectorUpdate(BaseModel):
 
     config: dict[str, Any] | None = None
     enabled: bool = True
-
-
-def get_writer_conn() -> Iterator[MeshConnection]:
-    """Per-request writer connection (mesh_writer role) for the one connector
-    write endpoint. Mirrors the schedules write surface: the API stays read-only
-    for knowledge content, but operational config (schedules, connector
-    enablement) is writable from the wiki."""
-    conn = get_connection(read_only=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-WriterConnDep = Annotated[MeshConnection, Depends(get_writer_conn)]
 
 
 def _resolve_field_id(conn: MeshConnection, slug: str) -> str:

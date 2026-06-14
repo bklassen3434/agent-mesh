@@ -16,6 +16,7 @@ from mesh_api.routers import (
     claims,
     connectors,
     entities,
+    fields,
     graph,
     health,
     pipeline_runs,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(ask.router)
     app.include_router(status_router.router)
     app.include_router(graph.router)
+    app.include_router(fields.router)
     app.include_router(connectors.router)
     app.include_router(schedules.router)
     app.include_router(pipelines.router)

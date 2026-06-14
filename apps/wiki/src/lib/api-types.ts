@@ -1280,7 +1280,7 @@ export interface components {
             finished_at?: string | null;
             /**
              * Run Type
-             * @default pipeline
+             * @default ingest
              */
             run_type: string;
             /**

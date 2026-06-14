@@ -14,6 +14,92 @@ The full system (Phases 1+) will consist of:
 - **A2A protocol layer** — agents communicate via a structured agent-to-agent protocol
 - **Wiki/API layer** — exposes the living knowledge base to external consumers
 
+## How the system works (current)
+
+At a glance: **sources flow in → become immutable Claims → Claims synthesize into mutable Beliefs → people read it through the wiki.** A set of background loops continuously challenge, de-duplicate, and extend that knowledge. Everything lives in one Postgres instance; the LangGraph **coordinator** is the only writer.
+
+### 1. The core knowledge loop (ingestion)
+
+The `mesh-pipeline` coordinator (a LangGraph state machine) drives one run from raw sources to beliefs. Scouts, the extractor, and the skeptic are pure A2A agents — they hold no database; the coordinator owns every read and write.
+
+```mermaid
+flowchart TD
+    subgraph sources["📡 External sources"]
+        S1[arxiv]
+        S2[Hacker News]
+        S3[GitHub]
+        S4[Bluesky / Reddit]
+        S5[Blogs / RSS]
+        S6[Leaderboards]
+        S7[Web search]
+    end
+
+    subgraph coord["🧠 Coordinator — LangGraph pipeline (the only DB writer)"]
+        direction TB
+        SCOUT["Scouts<br/>(fan-out, one per source)"]
+        EXTRACT["Claim Extractor (LLM)<br/>source text → structured Claims"]
+        RESOLVE["Entity Resolution<br/>semantic dedup → canonical Entities"]
+        SYNTH["Synthesis<br/>Claims → Beliefs + Relationships"]
+        SCOUT --> EXTRACT --> RESOLVE --> SYNTH
+    end
+
+    subgraph store["🗄️ Postgres (mesh-postgres, pgvector)"]
+        DB[("knowledge schema<br/>Entities · Sources · Claims<br/>Beliefs · Revisions · Relationships")]
+    end
+
+    subgraph read["👁️ Read path"]
+        API["apps/api — FastAPI<br/>read-only (mesh_reader) :8000"]
+        WIKI["apps/wiki — Next.js<br/>Daily Brief · Knowledge · Graph · Agents · Pipelines :3000"]
+    end
+
+    sources --> SCOUT
+    SYNTH -- "writes (mesh_writer)" --> DB
+    DB -- "reads" --> API --> WIKI
+
+    classDef src fill:#eef,stroke:#88a
+    classDef c fill:#efe,stroke:#8a8
+    class S1,S2,S3,S4,S5,S6,S7 src
+```
+
+**Key idea — Claims are immutable, Beliefs are mutable.** A Claim is a frozen fact extracted from one source ("Model X scores 92.1 on benchmark Y"). Beliefs are the synthesized, evolving view ("X is SOTA on Y, confidence 0.78"). Every change to a Belief appends a `BeliefRevision` row — the history is never overwritten. New evidence never edits a Claim; it inserts a new one and marks the old one `superseded`.
+
+### 2. The background loops (self-revision)
+
+Beyond ingestion, a `BackgroundScheduler` fires five recurring jobs (intervals configurable per field via the `/pipelines` page). Each is its own LangGraph job; together they keep the knowledge base honest, compact, and growing.
+
+```mermaid
+flowchart LR
+    SCHED["⏱️ Scheduler<br/>(BackgroundScheduler, :9100)<br/>config in Postgres"]
+
+    SCHED --> P["pipeline<br/>ingest new sources"]
+    SCHED --> SK["skeptic_sweep<br/>challenge weak beliefs →<br/>counter-claims, confidence ↓"]
+    SCHED --> DISC["discovery<br/>find knowledge gaps →<br/>open investigations"]
+    SCHED --> BC["belief_consolidation<br/>merge duplicate beliefs +<br/>decay/archive stale ones"]
+    SCHED --> CON["consolidation<br/>distill agent episodic<br/>memory → heuristics"]
+
+    P --> DB[("🗄️ Postgres knowledge store")]
+    SK --> DB
+    DISC --> DB
+    BC --> DB
+    CON --> DB
+```
+
+| Loop | What it does | Invariant it respects |
+|---|---|---|
+| **pipeline** | Pulls new sources, extracts claims, synthesizes beliefs | Coordinator-owned writes only |
+| **skeptic_sweep** | Picks shaky beliefs, attacks them with an LLM, files counter-claims + adjusts confidence | Adds *new* claims; never edits existing ones |
+| **discovery** | Analyzes the whole field for gaps/stale areas, opens `origin=discovery` investigations | Proposes evidence-gathering, never facts |
+| **belief_consolidation** | Semantic-merges duplicate beliefs, decays/archives stale ones | Append-only — a merged belief is absorbed, never deleted |
+| **consolidation** | Turns agents' episodic history into reusable heuristics (memory) | Never crosses fields |
+
+### 3. How it's deployed
+
+- **Long-running services** (`make up`): `mesh-postgres`, `apps/api` (:8000), `apps/wiki` (:3000), `apps/scheduler` (:9100), and the A2A agent servers (scouts/extractor/skeptic/curator on :8001–:8013).
+- **On-demand jobs**: the coordinator and the four other loops run when the scheduler fires them — or by hand via `make pipeline` / `mesh.cli`.
+- **Field-scoped**: every knowledge row carries a `field_id`. The seeded `ai-robotics` field is the default; the core never branches on field, so new fields drop in as config, not code.
+
+The sections below trace how the system reached this shape, phase by phase.
+
 ## Phase 0 — Foundation (complete)
 
 Phase 0 establishes the substrate. It includes:

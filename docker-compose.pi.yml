@@ -16,10 +16,23 @@
 #   * Relocates the Postgres data volume to an SSD bind mount (/mnt/ssd).
 #   * Trims the scheduler's advertised agent URLs to the scouts we run, so the
 #     coordinator doesn't waste time probing cards for scouts that are down.
+#   * Lengthens healthcheck start_periods. On the Pi's arm64 CPU an agent
+#     container runs `uv sync` and imports heavy ML deps (fastembed/onnxruntime)
+#     before binding its port — ~3 min cold. The base 15–30s start_period is
+#     fine on a laptop but trips on the Pi, so `docker compose up --build` aborts
+#     on a `depends_on: service_healthy` gate and reports failure even though the
+#     stack goes healthy a couple minutes later. 180s absorbs the slow first boot.
 #
 # Pair with these in the Pi's .env:
 #   COMPOSE_PROFILES=scheduler,skeptic   # bring up the scheduler + curator/skeptic
 #   MESH_PG_POOL_MAX=3                    # 3 conns/pool instead of 10
+
+# Anchor: every always-on agent service merges this (compose deep-merges the
+# healthcheck mapping, so only start_period is overridden — test/interval/
+# timeout/retries are inherited from docker-compose.yml).
+x-pi-slow-start: &pi-slow-start
+  healthcheck:
+    start_period: 180s
 
 services:
   # ── scouts we don't run on the Pi → park in the `extra` profile ────────────
@@ -30,6 +43,17 @@ services:
   web-search-scout:  { profiles: ["extra"] }
   rss-scout:         { profiles: ["extra"] }
   rest-json-scout:   { profiles: ["extra"] }
+
+  # ── always-on agents: tolerate the slow arm64 cold boot (see header) ───────
+  arxiv-scout:      *pi-slow-start
+  hn-scout:         *pi-slow-start
+  github-scout:     *pi-slow-start
+  claim-extractor:  *pi-slow-start
+  entity-tracker:   *pi-slow-start
+  sota-tracker:     *pi-slow-start
+  curator:          *pi-slow-start
+  skeptic:          *pi-slow-start
+  api:              *pi-slow-start
 
   # ── viewing/aux services → `ui` profile (start only when you need them) ─────
   # Browse the wiki on demand with:  docker compose up -d wiki   (naming a
@@ -56,6 +80,8 @@ services:
 
   # ── scheduler: only advertise the agents we actually run on the Pi ─────────
   scheduler:
+    healthcheck:
+      start_period: 180s
     environment:
       MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008"
       MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"

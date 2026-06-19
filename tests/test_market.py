@@ -119,6 +119,34 @@ def test_live_round_applies_effects_through_gateway(tmp_db: MeshConnection) -> N
     assert after > before
 
 
+def test_live_run_records_a_market_pipeline_run(tmp_db: MeshConnection) -> None:
+    from mesh_db.pipeline_runs import pipeline_run_exists
+
+    _register_belief_maker()
+    _unread_source(tmp_db, "ledger-src")
+    result = asyncio.run(
+        run_market(_FIELD, shadow=False, max_rounds=1, conn=tmp_db)
+    )
+    # The run is on the ledger (visible to /status + pipeline-stats), typed market.
+    assert pipeline_run_exists(tmp_db, result.run_id)
+    row = tmp_db.execute(
+        "SELECT run_type, beliefs_created FROM pipeline_runs WHERE id = %s",
+        [result.run_id],
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "market"
+    assert row[1] >= 1  # the fake skill's belief was created
+
+
+def test_shadow_run_records_no_pipeline_run(tmp_db: MeshConnection) -> None:
+    from mesh_db.pipeline_runs import pipeline_run_exists
+
+    _register_belief_maker()
+    _unread_source(tmp_db, "shadow-ledger")
+    result = asyncio.run(run_market(_FIELD, shadow=True, conn=tmp_db))
+    assert not pipeline_run_exists(tmp_db, result.run_id)
+
+
 def test_budget_caps_spend(tmp_db: MeshConnection) -> None:
     _register_belief_maker()
     for i in range(10):

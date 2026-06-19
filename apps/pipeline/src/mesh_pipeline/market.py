@@ -25,21 +25,40 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import click
 import structlog
 from mesh_agents.agenda import compute_agenda, investigation_tensions, scout_tensions
+from mesh_agents.confidence import BeliefSignals, ConfidenceWeights, compute_confidence
 from mesh_agents.skill import Bid, Skill, load_builtin_skills, skills_for
-from mesh_db.connection import get_connection
+from mesh_db.beliefs import get_belief_signals
+from mesh_db.connection import MeshConnection, get_connection
 from mesh_db.effects import ApplyReport, apply_effects
 from mesh_db.fields import get_field_by_slug
 from mesh_db.pg_migrations import init_pg
+from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run, pipeline_run_exists
 from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
 from mesh_models.tension import Tension
 from pydantic import BaseModel, Field
 
 log = structlog.get_logger()
+
+
+def _make_confidence_fn() -> Any:
+    """A confidence recompute the gateway applies after a belief's claim links are
+    written — the evidence-derived score the coordinator's synthesize node uses
+    (Phase 14d), so market-synthesized beliefs match coordinator quality instead of
+    keeping the skill's prior."""
+    weights = ConfidenceWeights.from_env()
+
+    def confidence_fn(conn: MeshConnection, belief_id: str) -> float:
+        return compute_confidence(
+            BeliefSignals.from_row(get_belief_signals(conn, belief_id)), weights
+        )
+
+    return confidence_fn
 
 
 def _get_concurrency() -> int:
@@ -137,6 +156,7 @@ async def run_market(
         budget_usd=budget_usd,
     )
     semaphore = asyncio.Semaphore(_get_concurrency())
+    confidence_fn = _make_confidence_fn()
     # Once-per-run oscillation guard (Phase-3-lite): a tension dispatched this run
     # is not re-funded in a later round, even if it still derives from the board.
     # Tension ids are stable ("<kind>:<target>"), so this stops scout-source from
@@ -179,7 +199,7 @@ async def run_market(
             # 5. apply (or, in shadow, only report)
             apply_report: ApplyReport | None = None
             if not shadow and effects:
-                apply_report = apply_effects(conn, effects)
+                apply_report = apply_effects(conn, effects, confidence_fn=confidence_fn)
 
             result.rounds.append(
                 RoundReport(
@@ -208,6 +228,12 @@ async def run_market(
                 if not funded:
                     result.quiescent = True
                 break
+
+        # Record the run so it's visible to /status, the Pipelines page, and
+        # pipeline-stats — same ledger the coordinator writes (live runs only;
+        # shadow writes nothing). Idempotent: a re-run with the same id no-ops.
+        if not shadow:
+            _record_run(conn, result, field_id)
     finally:
         if owns_conn:
             conn.close()
@@ -220,6 +246,38 @@ async def run_market(
         quiescent=result.quiescent,
     )
     return result
+
+
+def _record_run(conn: Any, result: MarketResult, field_id: str) -> None:
+    """Aggregate the run's applied effects into a ``pipeline_runs`` row (run_type
+    "market"). Idempotent (run-exists guard) and best-effort — a ledger write must
+    never abort the run, mirroring the coordinator's finalize."""
+    try:
+        if pipeline_run_exists(conn, result.run_id):
+            return
+        reports = [r.apply for r in result.rounds if r.apply is not None]
+
+        def total(attr: str) -> int:
+            return sum(getattr(rep, attr) for rep in reports)
+
+        create_pipeline_run(
+            conn,
+            PipelineRun(
+                id=result.run_id,
+                finished_at=datetime.now(UTC),
+                run_type="market",
+                triggered_by=os.environ.get("MESH_TRIGGERED_BY", "manual"),
+                papers_scouted=total("sources_created"),
+                sources_inserted=total("sources_created"),
+                claims_inserted=total("claims_created"),
+                entities_created=total("entities_created"),
+                beliefs_created=total("beliefs_created"),
+                beliefs_revised=total("beliefs_revised"),
+            ),
+            field_id=field_id,
+        )
+    except Exception as exc:  # never let the ledger abort the run
+        log.warning("market_run_record_failed", run_id=result.run_id, error=str(exc))
 
 
 async def _dispatch(

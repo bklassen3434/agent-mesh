@@ -20,7 +20,9 @@ from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus
 from mesh_models.effect import (
     AddRelationshipEvidenceEffect,
+    CreateBeliefEffect,
     CreateClaimEffect,
+    CreateEntityEffect,
     MergeEntitiesEffect,
     ReviseBeliefEffect,
     SupersedeClaimEffect,
@@ -203,3 +205,41 @@ def test_best_effort_records_errors_without_aborting(tmp_db: MeshConnection) -> 
     assert len(report.errors) == 1
     assert report.claims_created == 1
     assert get_claim_by_id(tmp_db, good.id) is not None
+
+
+def test_create_entity_effect_inserts_with_embedding(tmp_db: MeshConnection) -> None:
+    eid = "11111111-1111-1111-1111-111111111111"
+    report = apply_effects(
+        tmp_db,
+        [
+            CreateEntityEffect(
+                field_id="ai-robotics",
+                entity=Entity(id=eid, canonical_name="NewModel-9B", type=EntityType.model),
+                name_embedding=[0.0] * 383 + [1.0],
+            )
+        ],
+    )
+    assert report.entities_created == 1
+    assert get_entity_by_id(tmp_db, eid) is not None
+
+
+def test_confidence_fn_overrides_the_skill_prior_on_create(tmp_db: MeshConnection) -> None:
+    # The gateway recomputes a created belief's confidence from the injected fn,
+    # overriding the prior the effect carried (Phase 14d evidence-derived score).
+    bid = "22222222-2222-2222-2222-222222222222"
+    report = apply_effects(
+        tmp_db,
+        [
+            CreateBeliefEffect(
+                field_id="ai-robotics",
+                belief=Belief(
+                    id=bid, topic="sota:thing", statement="X is SOTA", confidence=0.5
+                ),
+            )
+        ],
+        confidence_fn=lambda _conn, _bid: 0.87,
+    )
+    assert report.beliefs_created == 1
+    stored = get_belief_by_id(tmp_db, bid)
+    assert stored is not None
+    assert abs(stored.confidence - 0.87) < 1e-9

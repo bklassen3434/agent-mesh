@@ -111,6 +111,10 @@ def load_builtin_skills() -> list[Skill]:
 
         from mesh_agents.skills import extract_source  # noqa: F401
     """
-    from mesh_agents.skills import challenge_belief, extract_source  # noqa: F401
+    from mesh_agents.skills import (  # noqa: F401
+        challenge_belief,
+        extract_source,
+        merge_candidate,
+    )
 
     return all_skills()

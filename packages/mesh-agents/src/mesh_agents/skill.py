@@ -116,6 +116,7 @@ def load_builtin_skills() -> list[Skill]:
         extract_source,
         investigate_gap,
         merge_candidate,
+        synthesize_belief,
     )
 
     return all_skills()

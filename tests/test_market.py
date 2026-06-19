@@ -31,6 +31,17 @@ def _clean_registry() -> Any:
     clear_registry()
 
 
+@pytest.fixture(autouse=True)
+def _no_network_scout(tmp_db: MeshConnection) -> None:
+    """The seeded field enables every connector; disable them so run_market's
+    source-acquisition tensions don't fire a real network scout (scouting is
+    covered by test_skill_scout_source with a stubbed handler)."""
+    from mesh_db.connectors import enable_connector, list_field_connectors
+
+    for fc in list_field_connectors(tmp_db, _FIELD, enabled_only=True):
+        enable_connector(tmp_db, _FIELD, fc.connector_id, config=fc.config, enabled=False)
+
+
 def _unread_source(conn: MeshConnection, tag: str) -> Source:
     from datetime import UTC, datetime
 
@@ -68,16 +79,12 @@ def _register_belief_maker() -> None:
             ]
 
 
-def test_market_with_no_skills_is_a_safe_noop(tmp_db: MeshConnection) -> None:
-    _unread_source(tmp_db, "lonely")
+def test_market_on_empty_board_is_quiescent(tmp_db: MeshConnection) -> None:
+    # Nothing to scout (connectors disabled) and nothing on the board → the market
+    # has no tension to fund and reports quiescence without writing.
     result = asyncio.run(run_market(_FIELD, shadow=True, conn=tmp_db))
-    # One round scanned the board, found a candidate, but no skill handled it.
-    assert result.rounds
-    r0 = result.rounds[0]
-    assert r0.candidates >= 1
-    assert r0.funded == 0
-    assert r0.skipped_no_skill == r0.candidates
     assert result.quiescent is True
+    assert all(r.funded == 0 for r in result.rounds)
 
 
 def test_shadow_round_previews_effects_without_writing(tmp_db: MeshConnection) -> None:

@@ -30,8 +30,9 @@ class TensionKind(StrEnum):
     """What kind of attention the board is asking for. Each kind maps 1:1 to the
     skill that would resolve it (``Tension.handler_skill``)."""
 
-    # Operational — cheap, foundational work (read what we haven't read).
-    unextracted_source = "unextracted_source"
+    # Operational — cheap, foundational work.
+    unscouted_connector = "unscouted_connector"  # an enabled connector to poll
+    unextracted_source = "unextracted_source"  # a source we have but haven't read
     # Knowledge gaps — the ``analyze_field`` (GapSignal) family, lifted in.
     under_evidenced_entity = "under_evidenced_entity"
     thin_belief = "thin_belief"

@@ -1,0 +1,11 @@
+-- Agentic market: source acquisition.
+--
+-- The market scouts and extracts in separate rounds (scout-source acquires a
+-- source; extract-source reads it later), but the claim extractor consumes the
+-- paper's in-memory title/abstract, which Source rows never persisted (the
+-- coordinator extracted in the same pass and discarded the text). Persist the
+-- scouted payload so extract-source can recover the content a round later.
+--
+-- Nullable + additive: coordinator-written sources leave it NULL and the default
+-- read path ignores it; only scout-source writes it and only the agenda reads it.
+ALTER TABLE knowledge.sources ADD COLUMN IF NOT EXISTS payload JSONB;

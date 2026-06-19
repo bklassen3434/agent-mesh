@@ -29,7 +29,7 @@ from typing import Any
 
 import click
 import structlog
-from mesh_agents.agenda import compute_agenda
+from mesh_agents.agenda import compute_agenda, scout_tensions
 from mesh_agents.skill import Bid, Skill, load_builtin_skills, skills_for
 from mesh_db.connection import get_connection
 from mesh_db.effects import ApplyReport, apply_effects
@@ -137,6 +137,12 @@ async def run_market(
         budget_usd=budget_usd,
     )
     semaphore = asyncio.Semaphore(_get_concurrency())
+    # Once-per-run oscillation guard (Phase-3-lite): a tension dispatched this run
+    # is not re-funded in a later round, even if it still derives from the board.
+    # Tension ids are stable ("<kind>:<target>"), so this stops scout-source from
+    # re-polling and investigate-gap from re-opening the same investigation every
+    # round — and lets a multi-round run actually reach quiescence.
+    dispatched: set[str] = set()
 
     try:
         for round_no in range(1, max_rounds + 1):
@@ -144,20 +150,26 @@ async def run_market(
             if remaining <= 0:
                 break
 
-            # 1. scan board → candidate tensions (big budget: we re-fund via bids)
+            # 1. scan board → candidate tensions (big budget: we re-fund via bids),
+            #    plus source-acquisition tensions (poll enabled connectors), minus
+            #    anything already handled this run.
             agenda = compute_agenda(
                 conn, field_id, field_slug=field, budget_usd=remaining * 1000
             )
-            if agenda.quiescent:
+            candidates = scout_tensions(conn, field_id) + agenda.tensions
+            fresh = [t for t in candidates if t.id not in dispatched]
+            if not fresh:
                 result.quiescent = True
                 break
 
             # 2-3. collect bids, clear under the remaining budget
-            offers, skipped = _collect_offers(conn, agenda.tensions)
+            offers, skipped = _collect_offers(conn, fresh)
             funded = _clear(offers, remaining)
 
             # 4. dispatch funded tensions to their skills (bounded concurrency)
             effects = await _dispatch(conn, funded, semaphore)
+            for offer in funded:
+                dispatched.add(offer.tension.id)
             round_spent = round(sum(o.bid.est_cost_usd for o in funded), 4)
 
             # 5. apply (or, in shadow, only report)
@@ -168,7 +180,7 @@ async def run_market(
             result.rounds.append(
                 RoundReport(
                     round=round_no,
-                    candidates=len(agenda.tensions),
+                    candidates=len(fresh),
                     funded=len(funded),
                     skipped_no_skill=skipped,
                     effects=len(effects),
@@ -180,7 +192,7 @@ async def run_market(
             log.info(
                 "market_round",
                 round=round_no,
-                candidates=len(agenda.tensions),
+                candidates=len(fresh),
                 funded=len(funded),
                 effects=len(effects),
                 skipped_no_skill=skipped,

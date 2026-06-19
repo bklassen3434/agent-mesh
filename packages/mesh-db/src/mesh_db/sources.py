@@ -5,6 +5,7 @@ from typing import Any
 
 from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.source import Source, SourceType
+from psycopg.types.json import Jsonb
 
 from mesh_db.connection import MeshConnection
 
@@ -38,8 +39,8 @@ def create_source(
         """
         INSERT INTO sources
             (id, field_id, type, url, author, published_at, fetched_at,
-             raw_content_hash, reliability_prior)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             raw_content_hash, reliability_prior, payload)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             model.id,
@@ -51,9 +52,25 @@ def create_source(
             model.fetched_at,
             model.raw_content_hash,
             model.reliability_prior,
+            None if model.payload is None else Jsonb(model.payload),
         ],
     )
     return model
+
+
+def get_source_payload(conn: MeshConnection, id: str) -> dict[str, Any] | None:
+    """The scouted payload (title/abstract/…) persisted for a source, or None.
+
+    Only the market's scout-source skill writes this; the agenda reads it to carry
+    paper content into the ``unextracted_source`` tension so extract-source can
+    recover it a round later (see migration 016)."""
+    row = conn.execute(
+        "SELECT payload FROM sources WHERE id = %s", [id]
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    payload = row[0]
+    return payload if isinstance(payload, dict) else None
 
 
 def get_source_by_id(conn: MeshConnection, id: str) -> Source | None:

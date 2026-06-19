@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -35,6 +36,10 @@ class Source(BaseModel):
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw_content_hash: str
     reliability_prior: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Scouted payload (title/abstract/…) the claim extractor needs. Persisted by
+    # the market's scout-source skill so extract-source can recover the content a
+    # round later; NULL for coordinator-written sources (extracted in one pass).
+    payload: dict[str, Any] | None = None
 
     @field_validator("reliability_prior")
     @classmethod

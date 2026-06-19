@@ -29,7 +29,7 @@ from typing import Any
 
 import click
 import structlog
-from mesh_agents.agenda import compute_agenda, scout_tensions
+from mesh_agents.agenda import compute_agenda, investigation_tensions, scout_tensions
 from mesh_agents.skill import Bid, Skill, load_builtin_skills, skills_for
 from mesh_db.connection import get_connection
 from mesh_db.effects import ApplyReport, apply_effects
@@ -156,7 +156,11 @@ async def run_market(
             agenda = compute_agenda(
                 conn, field_id, field_slug=field, budget_usd=remaining * 1000
             )
-            candidates = scout_tensions(conn, field_id) + agenda.tensions
+            candidates = (
+                scout_tensions(conn, field_id)
+                + investigation_tensions(conn, field_id)
+                + agenda.tensions
+            )
             fresh = [t for t in candidates if t.id not in dispatched]
             if not fresh:
                 result.quiescent = True

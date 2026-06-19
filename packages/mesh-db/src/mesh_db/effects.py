@@ -31,6 +31,7 @@ import structlog
 from mesh_models.claim import ClaimStatus
 from mesh_models.effect import (
     AddRelationshipEvidenceEffect,
+    AttachClaimToInvestigationEffect,
     CreateBeliefEffect,
     CreateClaimEffect,
     CreateEntityEffect,
@@ -39,7 +40,9 @@ from mesh_models.effect import (
     OpenInvestigationEffect,
     ReviseBeliefEffect,
     SupersedeClaimEffect,
+    UpdateInvestigationEffect,
 )
+from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from pydantic import BaseModel, Field
 
@@ -52,7 +55,12 @@ from mesh_db.beliefs import (
 from mesh_db.claims import create_claim, update_claim_status
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity, merge_entities, set_entity_embedding
-from mesh_db.investigations import create_investigation
+from mesh_db.investigations import (
+    attach_claim_to_investigation,
+    create_investigation,
+    get_investigation_by_id,
+    update_investigation,
+)
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source
@@ -79,6 +87,8 @@ class ApplyReport(BaseModel):
     entities_merged: int = 0
     relationship_edges: int = 0
     investigations_opened: int = 0
+    investigations_updated: int = 0
+    investigation_claims_attached: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -179,8 +189,37 @@ def _apply_one(
         create_investigation(conn, effect.investigation, field_id=effect.field_id)
         report.investigations_opened += 1
 
+    elif isinstance(effect, UpdateInvestigationEffect):
+        _apply_update_investigation(conn, effect)
+        report.investigations_updated += 1
+
+    elif isinstance(effect, AttachClaimToInvestigationEffect):
+        attach_claim_to_investigation(conn, effect.investigation_id, effect.claim_id)
+        report.investigation_claims_attached += 1
+
     else:  # pragma: no cover — guards against an unrouted Effect kind
         raise TypeError(f"No gateway branch for effect: {type(effect).__name__}")
+
+
+def _apply_update_investigation(
+    conn: MeshConnection, effect: UpdateInvestigationEffect
+) -> None:
+    """Advance an investigation's lifecycle. Increments attempts from the live row
+    (so concurrent dispatches don't clobber) and optionally sets status +
+    resolved_at. Raises if the investigation is gone (best-effort wrapper records
+    it)."""
+    updates: dict[str, Any] = {}
+    if effect.status is not None:
+        updates["status"] = InvestigationStatus(effect.status)
+    if effect.increment_attempts:
+        inv = get_investigation_by_id(conn, effect.investigation_id)
+        if inv is None:
+            raise ValueError(f"Investigation {effect.investigation_id} not found")
+        updates["pipeline_runs_attempted"] = inv.pipeline_runs_attempted + 1
+    if effect.set_resolved_at:
+        updates["resolved_at"] = datetime.now(UTC)
+    if updates:
+        update_investigation(conn, effect.investigation_id, **updates)
 
 
 def _apply_revise_belief(

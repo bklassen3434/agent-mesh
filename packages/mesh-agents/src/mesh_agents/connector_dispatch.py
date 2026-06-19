@@ -37,9 +37,54 @@ _HANDLERS: dict[str, tuple[str, str]] = {
 }
 
 
+# source-type name (``investigate_source_name(slug)``) → investigate handler. Only
+# the connectors that advertise a hypothesis-directed search appear here.
+_INVESTIGATE_HANDLERS: dict[str, tuple[str, str]] = {
+    "arxiv": ("mesh_agents.arxiv_scout", "_handle_investigate_arxiv"),
+    "github": ("mesh_agents.github_scout", "_handle_investigate_github"),
+    "leaderboard": ("mesh_agents.leaderboard_scout", "_handle_investigate_leaderboard"),
+    "web": ("mesh_agents.web_search_scout", "_handle_investigate_web"),
+}
+
+
 def has_connector(connector_id: str) -> bool:
     """Whether an in-process scout handler is available for this connector."""
     return connector_id in _HANDLERS
+
+
+def has_investigate(source_name: str) -> bool:
+    """Whether an in-process investigate handler is available for this source."""
+    return source_name in _INVESTIGATE_HANDLERS
+
+
+async def investigate_connector(
+    source_name: str,
+    *,
+    investigation_id: str,
+    hypothesis: str,
+    target_entity_id: str | None,
+    suggested_source_types: list[str],
+    max_results: int,
+) -> list[ScoutedPaper]:
+    """Run one connector's hypothesis-directed search in-process and return the
+    source records it gathered. Returns ``[]`` for a source with no handler."""
+    spec = _INVESTIGATE_HANDLERS.get(source_name)
+    if spec is None:
+        return []
+    module = importlib.import_module(spec[0])
+    handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] = getattr(
+        module, spec[1]
+    )
+    result = await handler(
+        {
+            "investigation_id": investigation_id,
+            "hypothesis": hypothesis,
+            "target_entity_id": target_entity_id,
+            "suggested_source_types": suggested_source_types,
+            "max_results": max_results,
+        }
+    )
+    return [ScoutedPaper.model_validate(p) for p in result.get("source_records", [])]
 
 
 def connector_ids() -> list[str]:

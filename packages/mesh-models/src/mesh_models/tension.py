@@ -43,6 +43,8 @@ class TensionKind(StrEnum):
     merge_candidate = "merge_candidate"  # two entities look like duplicates
     contested_claim = "contested_claim"  # a held belief is under challenge
     unsynthesized_claims = "unsynthesized_claims"  # claims no belief reflects yet
+    # An open investigation whose evidence still needs to be gathered.
+    open_investigation = "open_investigation"
 
 
 class Tension(BaseModel):

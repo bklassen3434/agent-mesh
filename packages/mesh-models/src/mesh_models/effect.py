@@ -126,6 +126,29 @@ class OpenInvestigationEffect(BaseModel):
     investigation: Investigation
 
 
+class UpdateInvestigationEffect(BaseModel):
+    """Advance an investigation's lifecycle (the only mutation it allows here):
+    move it to in_progress while a dispatch gathers evidence, or resolve/abandon
+    it. ``increment_attempts`` bumps ``pipeline_runs_attempted`` from the live
+    row; ``set_resolved_at`` stamps the resolution time."""
+
+    kind: Literal["update_investigation"] = "update_investigation"
+    investigation_id: str
+    status: str | None = None  # an InvestigationStatus value
+    increment_attempts: bool = False
+    set_resolved_at: bool = False
+
+
+class AttachClaimToInvestigationEffect(BaseModel):
+    """Link a claim gathered for an investigation to it (append-only on
+    ``collected_claim_ids``). Emitted by extract-source when the source it read was
+    acquired for an investigation (carried in the source payload's lineage)."""
+
+    kind: Literal["attach_claim_to_investigation"] = "attach_claim_to_investigation"
+    investigation_id: str
+    claim_id: str
+
+
 # Discriminated union — match on ``.kind`` in the gateway; JSON-safe for
 # checkpoint state. Extend here (and add a branch to apply_effects) when a new
 # kind of write is needed; that is the one coordination point across skill
@@ -139,6 +162,8 @@ Effect = Annotated[
     | ReviseBeliefEffect
     | MergeEntitiesEffect
     | AddRelationshipEvidenceEffect
-    | OpenInvestigationEffect,
+    | OpenInvestigationEffect
+    | UpdateInvestigationEffect
+    | AttachClaimToInvestigationEffect,
     Field(discriminator="kind"),
 ]

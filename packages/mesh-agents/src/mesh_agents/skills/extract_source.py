@@ -29,7 +29,12 @@ from typing import Any
 from mesh_llm import Embedder, LLMClient, make_embedder, make_llm_client
 from mesh_llm.embeddings import entity_embed_text
 from mesh_models.claim import Claim
-from mesh_models.effect import CreateClaimEffect, CreateEntityEffect, Effect
+from mesh_models.effect import (
+    AttachClaimToInvestigationEffect,
+    CreateClaimEffect,
+    CreateEntityEffect,
+    Effect,
+)
 from mesh_models.entity import Entity, EntityType
 from mesh_models.tension import Tension, TensionKind
 
@@ -172,7 +177,10 @@ class ExtractSourceSkill:
             )
 
         # 4. One CreateClaimEffect per claim with a (now) known subject. The gateway
-        #    is the only writer; this list is the skill's entire side effect.
+        #    is the only writer; this list is the skill's entire side effect. When
+        #    the source was gathered for an investigation (lineage on the tension),
+        #    attach each claim back so the investigation can resolve.
+        investigation_id = tension.signals.get("investigation_id")
         for ec in extracted.claims:
             entity_id = name_to_id.get(ec.subject_name)
             if entity_id is None:
@@ -187,6 +195,12 @@ class ExtractSourceSkill:
                 confidence=ec.confidence,
             )
             effects.append(CreateClaimEffect(field_id=tension.field_id, claim=claim))
+            if investigation_id:
+                effects.append(
+                    AttachClaimToInvestigationEffect(
+                        investigation_id=str(investigation_id), claim_id=claim.id
+                    )
+                )
         return effects
 
     @staticmethod

@@ -30,6 +30,7 @@ mesh-a2a = { workspace = true }
 "mesh-consolidate-memory" = "mesh_pipeline.consolidation:main"
 "mesh-consolidate-beliefs" = "mesh_pipeline.belief_consolidation:main"
 "mesh-discover" = "mesh_pipeline.discovery:main"
+"mesh-market" = "mesh_pipeline.market:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mesh_pipeline"]

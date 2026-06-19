@@ -51,8 +51,10 @@ agenda view   Effect+gateway,           N skills, 1 worktree     control      sh
 - **Phase 1 — contracts.**
   - 1a **Effect + write gateway** — `mesh_models.effect`, `mesh_db.effects`. DONE.
   - 1b **Skill + Bid + registry** — `mesh_agents.skill`. DONE.
-  - 1c **Market shell** — the round loop against the registry + gateway, in
-    *shadow mode* (effects → log, diff vs. coordinator). NOT STARTED.
+  - 1c **Market shell** — `apps/pipeline/market.py` (`mesh-market`). The round
+    loop: scan board → skills bid → clear under budget → dispatch → gateway.
+    Shadow by default (previews effects, writes nothing); `--apply` to act + loop
+    to quiescence. A safe no-op until skills register. DONE.
 - **Phase 2 — fan out (parallel).** One worktree per skill (table below).
 - **Phase 3 — oscillation control.** Tension identity/idempotency (generalize
   `processed_items`), cooldowns, salience decay, per-target write serialization.
@@ -109,5 +111,8 @@ claim a number *before* writing the file.
 - ✅ Phase 0 — agenda view (`mesh.cli agenda`).
 - ✅ Phase 1a — `Effect` + `apply_effects` write gateway.
 - ✅ Phase 1b — `Skill` / `Bid` / registry.
-- ⏭️ Phase 1c — market shell (shadow mode). **Next.**
-- ⏭️ Phase 2 — skill fan-out (spin up the worktrees above).
+- ✅ Phase 1c — market shell (`mesh-market`, shadow mode).
+- ⏭️ Phase 2 — skill fan-out (spin up the worktrees above). **Next — parallel.**
+
+The skeleton is complete and runnable end-to-end (`mesh-market` shadow → live).
+Everything below the contracts is now additive, low-conflict, parallel work.

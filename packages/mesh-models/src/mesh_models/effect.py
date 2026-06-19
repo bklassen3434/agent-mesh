@@ -1,0 +1,121 @@
+"""Phase 1 of the agentic migration: Effects — typed write intents.
+
+The headline invariant of the agentic redesign: **a skill decides, it never
+writes.** A skill returns a list of ``Effect``s — declarative descriptions of the
+mutations it wants — and a single deterministic write gateway
+(``mesh_db.effects.apply_effects``) applies them under the store's invariants
+(claims immutable, belief revisions append-only, coordinator-owned writes,
+attribution). The LLM reasoning that *chose* an effect lives above this boundary
+and cannot route around it.
+
+This module is the frozen contract: the shapes here, plus the gateway that
+consumes them, are what every Phase-2 skill worktree builds against. Effects are
+a discriminated union (on ``kind``) so they survive the JSON round-trip through
+LangGraph checkpoint state.
+
+Granularity mirrors the coordinator's existing write operations, so the gateway
+can eventually replace those call sites one-for-one (strangler-fig): the old
+coordinator keeps writing directly while skills accumulate behind the gateway.
+"""
+from __future__ import annotations
+
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+from mesh_models.belief import Belief
+from mesh_models.claim import Claim
+from mesh_models.investigation import Investigation
+from mesh_models.source import Source
+
+
+class CreateSourceEffect(BaseModel):
+    kind: Literal["create_source"] = "create_source"
+    field_id: str
+    source: Source
+
+
+class CreateClaimEffect(BaseModel):
+    """Insert a new immutable claim. Claims are never updated — new evidence is a
+    new claim (+ optional SupersedeClaimEffect on the old one)."""
+
+    kind: Literal["create_claim"] = "create_claim"
+    field_id: str
+    claim: Claim
+
+
+class SupersedeClaimEffect(BaseModel):
+    """Mark a claim superseded (the only mutation claims allow). Optionally point
+    at the claim that replaced it."""
+
+    kind: Literal["supersede_claim"] = "supersede_claim"
+    claim_id: str
+    superseded_by_claim_id: str | None = None
+
+
+class CreateBeliefEffect(BaseModel):
+    kind: Literal["create_belief"] = "create_belief"
+    field_id: str
+    belief: Belief
+
+
+class ReviseBeliefEffect(BaseModel):
+    """Append a revision to a held belief (never an in-place overwrite). The
+    gateway reads the current belief to fill ``previous_*``, writes a revision
+    row, then updates the head — so the append-only history is enforced in one
+    place, not in each skill. ``supporting/contradicting_claim_ids`` are optional
+    full-set replacements when the evidence set changed."""
+
+    kind: Literal["revise_belief"] = "revise_belief"
+    belief_id: str
+    new_statement: str
+    new_confidence: float = Field(ge=0.0, le=1.0)
+    revised_by_agent: str
+    rationale: str
+    trigger_claim_ids: list[str] = Field(default_factory=list)
+    supporting_claim_ids: list[str] | None = None
+    contradicting_claim_ids: list[str] | None = None
+
+
+class MergeEntitiesEffect(BaseModel):
+    """Merge a duplicate entity into a canonical one (transactional re-pointing in
+    ``mesh_db.entities.merge_entities``). Never touches claim content."""
+
+    kind: Literal["merge_entities"] = "merge_entities"
+    canonical_id: str
+    duplicate_id: str
+
+
+class AddRelationshipEvidenceEffect(BaseModel):
+    """Claim-grounded edge upsert (one edge per from/to/type, evidence aggregated)."""
+
+    kind: Literal["add_relationship_evidence"] = "add_relationship_evidence"
+    field_id: str
+    from_entity_id: str
+    to_entity_id: str
+    type: str
+    claim_id: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class OpenInvestigationEffect(BaseModel):
+    kind: Literal["open_investigation"] = "open_investigation"
+    field_id: str
+    investigation: Investigation
+
+
+# Discriminated union — match on ``.kind`` in the gateway; JSON-safe for
+# checkpoint state. Extend here (and add a branch to apply_effects) when a new
+# kind of write is needed; that is the one coordination point across skill
+# worktrees, so keep it small and append-only.
+Effect = Annotated[
+    CreateSourceEffect
+    | CreateClaimEffect
+    | SupersedeClaimEffect
+    | CreateBeliefEffect
+    | ReviseBeliefEffect
+    | MergeEntitiesEffect
+    | AddRelationshipEvidenceEffect
+    | OpenInvestigationEffect,
+    Field(discriminator="kind"),
+]

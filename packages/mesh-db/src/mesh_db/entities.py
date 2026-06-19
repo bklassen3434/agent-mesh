@@ -213,6 +213,40 @@ def count_entities(
     return int(row[0]) if row else 0
 
 
+def find_duplicate_candidate_pairs(
+    conn: MeshConnection,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+    min_similarity: float = 0.80,
+    limit: int = 50,
+) -> list[tuple[str, str, str, str, float]]:
+    """Pairs of same-type entities whose names embed close enough to be likely
+    duplicates (agentic-migration tension: ``merge_candidate``). One pgvector
+    self-join, field-scoped, each unordered pair once. Returns
+    ``(id_a, name_a, id_b, name_b, similarity)`` most-similar first. Entities with
+    no ``name_embedding`` are skipped."""
+    distance_max = 1.0 - float(min_similarity)
+    rows = conn.execute(
+        """
+        SELECT e1.id, e1.canonical_name, e2.id, e2.canonical_name,
+               1 - (e1.name_embedding <=> e2.name_embedding) AS similarity
+        FROM entities e1
+        JOIN entities e2
+          ON e2.field_id = e1.field_id
+         AND e2.type = e1.type
+         AND e2.id > e1.id
+        WHERE e1.field_id = %s
+          AND e1.name_embedding IS NOT NULL
+          AND e2.name_embedding IS NOT NULL
+          AND (e1.name_embedding <=> e2.name_embedding) <= %s
+        ORDER BY similarity DESC
+        LIMIT %s
+        """,
+        [field_id, distance_max, max(int(limit), 0)],
+    ).fetchall()
+    return [(str(r[0]), str(r[1]), str(r[2]), str(r[3]), float(r[4])) for r in rows]
+
+
 def get_entities_by_ids(
     conn: MeshConnection, ids: list[str]
 ) -> list[Entity]:

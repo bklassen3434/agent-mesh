@@ -119,6 +119,34 @@ def count_sources(
     return int(row[0]) if row else 0
 
 
+def unextracted_sources(
+    conn: MeshConnection,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+    limit: int = 50,
+) -> list[Source]:
+    """Sources in ``field_id`` that no claim references yet — the mesh has them
+    but hasn't read them (the ``unextracted_source`` tension; agentic-migration
+    Phase 0). Newest-first. ``agent_reasoning`` sources are skipped: they're
+    synthesized rationale, not inputs to extract. A single anti-join, read-only,
+    field-scoped."""
+    limit = min(max(limit, 0), MAX_LIMIT)
+    rows = conn.execute(
+        _SELECT
+        + """
+        WHERE field_id = %s
+          AND type <> 'agent_reasoning'
+          AND NOT EXISTS (
+              SELECT 1 FROM claims c WHERE c.source_id = sources.id
+          )
+        ORDER BY fetched_at DESC
+        LIMIT %s
+        """,
+        [field_id, limit],
+    ).fetchall()
+    return [_row_to_source(r) for r in rows]
+
+
 def get_sources_by_ids(
     conn: MeshConnection, ids: list[str]
 ) -> list[Source]:

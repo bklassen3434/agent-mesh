@@ -1640,3 +1640,86 @@ def beliefs_duplicates(field: str, k: int, limit: int) -> None:
             a_id[:8], a_topic, b_id[:8], b_topic, f"{sim:.3f}", dband
         )
     console.print(table)
+
+
+@cli.command("agenda")
+@click.option("--field", default="ai-robotics", show_default=True, help="Field slug")
+@click.option(
+    "--budget",
+    "budget_usd",
+    default=0.50,
+    type=float,
+    show_default=True,
+    help="Round budget in USD — what the market may spend this pass.",
+)
+@click.option(
+    "--limit", default=40, show_default=True, help="Max rows to display."
+)
+def agenda_cmd(field: str, budget_usd: float, limit: int) -> None:
+    """The self-writing to-do list: what an agentic mesh WOULD work on right now.
+
+    Read-only and LLM-free. Derives every 'tension' from the live board (unread
+    sources + knowledge gaps), ranks them by value-per-dollar, and shows which a
+    $budget would fund this round. This is Phase 0 of the agentic migration — a
+    look at the market's ranking before any of it is built."""
+    from mesh_agents.agenda import compute_agenda
+    from mesh_db.fields import get_field_by_slug
+    from mesh_models.field import DEFAULT_FIELD_ID
+    from rich.panel import Panel
+
+    conn = _get_conn()
+    try:
+        field_row = get_field_by_slug(conn, field)
+        field_id = field_row.id if field_row is not None else DEFAULT_FIELD_ID
+        agenda = compute_agenda(
+            conn, field_id, field_slug=field, budget_usd=budget_usd
+        )
+    finally:
+        conn.close()
+
+    if not agenda.tensions:
+        console.print(
+            f"[green]Quiescent[/green] — nothing needs attention in '{field}'. "
+            "(No unread sources, no knowledge gaps.) The system would sleep."
+        )
+        return
+
+    funded = set(agenda.funded_ids)
+    table = Table(title=f"Agenda — what '{field}' would work on now")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Fund", justify="center")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Subject", overflow="ellipsis", max_width=34)
+    table.add_column("Value", justify="right")
+    table.add_column("Cost$", justify="right")
+    table.add_column("Value/$", justify="right", style="bold")
+    table.add_column("Skill", style="magenta")
+    table.add_column("Why", overflow="fold", max_width=48)
+    for i, t in enumerate(agenda.tensions[:limit], start=1):
+        mark = "[green]✓[/green]" if t.id in funded else "[dim]—[/dim]"
+        table.add_row(
+            str(i),
+            mark,
+            t.kind.value,
+            t.subject,
+            f"{t.value:.2f}",
+            f"{t.est_cost_usd:.3f}",
+            f"{t.score:.0f}",
+            t.handler_skill,
+            t.rationale,
+        )
+    console.print(table)
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"[bold]Tensions on the board:[/bold] {agenda.total}",
+                    f"[bold]Funded this round:[/bold] {agenda.funded_count} "
+                    f"(${agenda.funded_cost_usd:.3f} of ${budget_usd:.2f} budget)",
+                    f"[bold]Deferred:[/bold] {agenda.total - agenda.funded_count} "
+                    "(below the cut line — wait for next round)",
+                ]
+            ),
+            title="Market clearing",
+        )
+    )

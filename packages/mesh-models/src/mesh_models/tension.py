@@ -38,6 +38,10 @@ class TensionKind(StrEnum):
     stale_belief = "stale_belief"
     rising_topic = "rising_topic"
     missing_reciprocal_edge = "missing_reciprocal_edge"
+    # Phase 2a — kinds the skill fan-out resolves.
+    merge_candidate = "merge_candidate"  # two entities look like duplicates
+    contested_claim = "contested_claim"  # a held belief is under challenge
+    unsynthesized_claims = "unsynthesized_claims"  # claims no belief reflects yet
 
 
 class Tension(BaseModel):

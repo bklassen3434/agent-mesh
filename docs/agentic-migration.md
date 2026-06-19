@@ -112,7 +112,10 @@ claim a number *before* writing the file.
 - ✅ Phase 1a — `Effect` + `apply_effects` write gateway.
 - ✅ Phase 1b — `Skill` / `Bid` / registry.
 - ✅ Phase 1c — market shell (`mesh-market`, shadow mode).
-- ⏭️ Phase 2 — skill fan-out (spin up the worktrees above). **Next — parallel.**
+- ✅ Phase 2a — tension catalog expanded: `merge_candidate`, `contested_claim`,
+  `unsynthesized_claims` now appear on the agenda with handler skills assigned.
+- ⏭️ Phase 2b — skill fan-out (spin up the worktrees above). **Next — parallel.**
 
 The skeleton is complete and runnable end-to-end (`mesh-market` shadow → live).
-Everything below the contracts is now additive, low-conflict, parallel work.
+Every tension kind the skills target now appears on the agenda; the fan-out is
+additive, low-conflict, parallel work.

@@ -183,6 +183,39 @@ def recent_claim_counts_by_entity(
     return [(str(r[0]), int(r[1])) for r in rows]
 
 
+def unsynthesized_claim_counts_by_entity(
+    conn: MeshConnection,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+    limit: int = 20,
+) -> list[tuple[str, int]]:
+    """Entities that have active claims no held belief reflects yet (agentic-
+    migration tension: ``unsynthesized_claims``). Returns ``(subject_entity_id,
+    count)`` for active claims whose id appears in no held belief's
+    supporting/contradicting arrays, busiest entity first. Field-scoped."""
+    rows = conn.execute(
+        """
+        WITH used AS (
+            SELECT unnest(supporting_claim_ids) AS claim_id
+            FROM beliefs WHERE is_currently_held = TRUE AND field_id = %s
+            UNION
+            SELECT unnest(contradicting_claim_ids) AS claim_id
+            FROM beliefs WHERE is_currently_held = TRUE AND field_id = %s
+        )
+        SELECT c.subject_entity_id, COUNT(*) AS cnt
+        FROM claims c
+        WHERE c.field_id = %s
+          AND c.status = 'active'
+          AND c.id NOT IN (SELECT claim_id FROM used)
+        GROUP BY c.subject_entity_id
+        ORDER BY cnt DESC
+        LIMIT %s
+        """,
+        [field_id, field_id, field_id, max(int(limit), 0)],
+    ).fetchall()
+    return [(str(r[0]), int(r[1])) for r in rows]
+
+
 def get_claims_by_ids(
     conn: MeshConnection, ids: list[str]
 ) -> list[Claim]:

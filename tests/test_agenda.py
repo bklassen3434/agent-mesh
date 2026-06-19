@@ -12,7 +12,7 @@ from mesh_agents.agenda import compute_agenda
 from mesh_db.beliefs import create_belief
 from mesh_db.claims import create_claim
 from mesh_db.connection import MeshConnection
-from mesh_db.entities import create_entity
+from mesh_db.entities import create_entity, set_entity_embedding
 from mesh_db.sources import create_source
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
@@ -121,3 +121,131 @@ def test_empty_field_is_quiescent(tmp_db: MeshConnection) -> None:
     agenda = compute_agenda(tmp_db, "does-not-exist", field_slug="does-not-exist")
     assert agenda.tensions == []
     assert agenda.quiescent is True
+
+
+# ── Phase 2a: the three new tension kinds ────────────────────────────────────
+
+
+def test_lookalike_entities_become_a_merge_candidate(tmp_db: MeshConnection) -> None:
+    a = create_entity(tmp_db, Entity(canonical_name="GPT-4", type=EntityType.model))
+    b = create_entity(tmp_db, Entity(canonical_name="GPT 4", type=EntityType.model))
+    # Identical embeddings → cosine similarity 1.0, well above the low band.
+    vec = [1.0] + [0.0] * 383
+    set_entity_embedding(tmp_db, a.id, vec)
+    set_entity_embedding(tmp_db, b.id, vec)
+
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    merges = [t for t in agenda.tensions if t.kind == TensionKind.merge_candidate]
+    assert len(merges) == 1
+    assert merges[0].handler_skill == "merge-candidate"
+    assert {merges[0].target_ref["entity_id"], merges[0].target_ref["candidate_id"]} == {a.id, b.id}
+
+
+def test_distinct_entities_are_not_merge_candidates(tmp_db: MeshConnection) -> None:
+    a = create_entity(tmp_db, Entity(canonical_name="Alpha", type=EntityType.model))
+    b = create_entity(tmp_db, Entity(canonical_name="Beta", type=EntityType.model))
+    set_entity_embedding(tmp_db, a.id, [1.0] + [0.0] * 383)
+    set_entity_embedding(tmp_db, b.id, [0.0, 1.0] + [0.0] * 382)  # orthogonal → sim 0
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    assert not any(t.kind == TensionKind.merge_candidate for t in agenda.tensions)
+
+
+def test_challenged_belief_becomes_a_contested_claim(tmp_db: MeshConnection) -> None:
+    ent = create_entity(tmp_db, Entity(canonical_name="ContestedNet", type=EntityType.model))
+    src = _source(tmp_db, "contested")
+    support = create_claim(
+        tmp_db,
+        Claim(
+            predicate="has_capability",
+            subject_entity_id=ent.id,
+            object={"capability": "x"},
+            source_id=src.id,
+            extracted_at=_NOW,
+            extracted_by_agent="claim_extractor",
+            raw_excerpt="…",
+        ),
+    )
+    against = create_claim(
+        tmp_db,
+        Claim(
+            predicate="critiques",
+            subject_entity_id=ent.id,
+            object={"note": "fails on edge cases"},
+            source_id=src.id,
+            extracted_at=_NOW,
+            extracted_by_agent="skeptic",
+            raw_excerpt="…",
+        ),
+    )
+    create_belief(
+        tmp_db,
+        Belief(
+            topic="contestednet-cap",
+            statement="ContestedNet is great",
+            supporting_claim_ids=[support.id],
+            contradicting_claim_ids=[against.id],
+            is_currently_held=True,
+        ),
+    )
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    contested = [t for t in agenda.tensions if t.kind == TensionKind.contested_claim]
+    assert len(contested) == 1
+    assert contested[0].handler_skill == "challenge-belief"
+
+
+def test_unreferenced_claim_becomes_unsynthesized(tmp_db: MeshConnection) -> None:
+    ent = create_entity(tmp_db, Entity(canonical_name="LonelyClaimNet", type=EntityType.model))
+    src = _source(tmp_db, "unsynth")
+    create_claim(
+        tmp_db,
+        Claim(
+            predicate="has_capability",
+            subject_entity_id=ent.id,
+            object={"capability": "y"},
+            source_id=src.id,
+            extracted_at=_NOW,
+            extracted_by_agent="claim_extractor",
+            raw_excerpt="…",
+        ),
+    )
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    unsynth = [
+        t
+        for t in agenda.tensions
+        if t.kind == TensionKind.unsynthesized_claims
+        and t.target_ref.get("entity_id") == ent.id
+    ]
+    assert len(unsynth) == 1
+    assert unsynth[0].handler_skill == "synthesize-belief"
+
+
+def test_claim_in_a_belief_is_not_unsynthesized(tmp_db: MeshConnection) -> None:
+    ent = create_entity(tmp_db, Entity(canonical_name="SynthedNet", type=EntityType.model))
+    src = _source(tmp_db, "synthed")
+    claim = create_claim(
+        tmp_db,
+        Claim(
+            predicate="has_capability",
+            subject_entity_id=ent.id,
+            object={"capability": "z"},
+            source_id=src.id,
+            extracted_at=_NOW,
+            extracted_by_agent="claim_extractor",
+            raw_excerpt="…",
+        ),
+    )
+    create_belief(
+        tmp_db,
+        Belief(
+            topic="synthednet-cap",
+            statement="SynthedNet does z",
+            supporting_claim_ids=[claim.id],
+            is_currently_held=True,
+        ),
+    )
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    assert not any(
+        t.kind == TensionKind.unsynthesized_claims
+        and t.target_ref.get("entity_id") == ent.id
+        for t in agenda.tensions
+    )

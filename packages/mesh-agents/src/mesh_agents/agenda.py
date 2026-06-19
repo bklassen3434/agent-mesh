@@ -18,8 +18,12 @@ agenda doubles as a board→skill map.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
+from mesh_db.beliefs import get_belief_signals, list_beliefs
+from mesh_db.claims import unsynthesized_claim_counts_by_entity
+from mesh_db.entities import find_duplicate_candidate_pairs, get_entities_by_ids
 from mesh_db.sources import unextracted_sources
 from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
 from mesh_models.source import Source
@@ -38,6 +42,9 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.stale_belief: 0.04,
     TensionKind.rising_topic: 0.05,
     TensionKind.missing_reciprocal_edge: 0.03,
+    TensionKind.merge_candidate: 0.02,
+    TensionKind.contested_claim: 0.04,
+    TensionKind.unsynthesized_claims: 0.05,
 }
 
 _KIND_SKILL: dict[TensionKind, str] = {
@@ -47,6 +54,9 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.stale_belief: "challenge-belief",
     TensionKind.rising_topic: "investigate-gap",
     TensionKind.missing_reciprocal_edge: "investigate-gap",
+    TensionKind.merge_candidate: "merge-candidate",
+    TensionKind.contested_claim: "challenge-belief",
+    TensionKind.unsynthesized_claims: "synthesize-belief",
 }
 
 # GapKind → TensionKind (the lift-in is 1:1; names already match).
@@ -100,6 +110,89 @@ def _tension_from_gap(gap: GapSignal, field_id: str) -> Tension:
     )
 
 
+def _merge_candidate_tensions(conn: Any, field_id: str, *, limit: int) -> list[Tension]:
+    """Entity pairs that look like duplicates (→ the merge-candidate skill)."""
+    kind = TensionKind.merge_candidate
+    min_sim = float(os.environ.get("MESH_ENTITY_MERGE_LOW", "0.80"))
+    out: list[Tension] = []
+    for id_a, name_a, id_b, name_b, sim in find_duplicate_candidate_pairs(
+        conn, field_id=field_id, min_similarity=min_sim, limit=limit
+    ):
+        out.append(
+            Tension(
+                id=f"{kind.value}:{id_a}:{id_b}",
+                field_id=field_id,
+                kind=kind,
+                subject=f"{name_a} ≈ {name_b}",
+                rationale=(
+                    f"'{name_a}' and '{name_b}' look like the same entity "
+                    f"(similarity {sim:.2f})."
+                ),
+                value=sim,  # more confident match → more valuable to resolve
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"entity_id": id_a, "candidate_id": id_b},
+                signals={"candidate_id": id_b, "similarity": sim},
+            )
+        )
+    return out
+
+
+def _contested_claim_tensions(conn: Any, field_id: str, *, limit: int) -> list[Tension]:
+    """Held beliefs under unresolved challenge (→ the challenge-belief skill)."""
+    kind = TensionKind.contested_claim
+    out: list[Tension] = []
+    for belief in list_beliefs(conn, currently_held=True, limit=limit, field_id=field_id):
+        sig = get_belief_signals(conn, belief.id)
+        skeptic = int(sig.get("skeptic_counter_claim_count", 0))
+        contradictions = len(belief.contradicting_claim_ids)
+        if skeptic == 0 and contradictions == 0:
+            continue
+        out.append(
+            Tension(
+                id=f"{kind.value}:{belief.id}",
+                field_id=field_id,
+                kind=kind,
+                subject=belief.topic,
+                rationale=(
+                    f"Belief '{belief.statement}' has {skeptic} skeptic counter-claim(s) "
+                    f"and {contradictions} contradiction(s) — re-examine it."
+                ),
+                value=0.75,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"belief_id": belief.id},
+                signals={"skeptic_counter_claims": skeptic, "contradictions": contradictions},
+            )
+        )
+    return out
+
+
+def _unsynthesized_tensions(conn: Any, field_id: str, *, limit: int) -> list[Tension]:
+    """Entities with claims no belief reflects yet (→ the synthesize-belief skill)."""
+    kind = TensionKind.unsynthesized_claims
+    counts = unsynthesized_claim_counts_by_entity(conn, field_id=field_id, limit=limit)
+    names = {e.id: e.canonical_name for e in get_entities_by_ids(conn, [eid for eid, _ in counts])}
+    out: list[Tension] = []
+    for entity_id, count in counts:
+        name = names.get(entity_id, entity_id)
+        out.append(
+            Tension(
+                id=f"{kind.value}:{entity_id}",
+                field_id=field_id,
+                kind=kind,
+                subject=name,
+                rationale=f"'{name}' has {count} claim(s) not yet reflected in any belief.",
+                value=0.65,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"entity_id": entity_id},
+                signals={"unsynthesized_claims": count},
+            )
+        )
+    return out
+
+
 def compute_agenda(
     conn: Any,
     field_id: str = DEFAULT_FIELD_ID,
@@ -126,6 +219,11 @@ def compute_agenda(
         if gap.kind not in _GAP_TO_TENSION:
             continue
         tensions.append(_tension_from_gap(gap, field_id))
+
+    # Phase 2a tensions the skill fan-out resolves.
+    tensions.extend(_merge_candidate_tensions(conn, field_id, limit=gap_limit))
+    tensions.extend(_contested_claim_tensions(conn, field_id, limit=gap_limit))
+    tensions.extend(_unsynthesized_tensions(conn, field_id, limit=gap_limit))
 
     # Rank by value-per-dollar (the market's knapsack density).
     tensions.sort(key=lambda t: t.score, reverse=True)

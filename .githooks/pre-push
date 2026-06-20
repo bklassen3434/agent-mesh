@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# Pre-push hook — catch API↔wiki drift before it reaches CI.
+#
+# Runs ONLY the check relevant to what's being pushed, so unrelated pushes stay
+# instant:
+#   - apps/api changed   -> `make types-check`  (regen api-types.ts, fail on drift)
+#   - apps/wiki changed  -> `make test-ui`       (Playwright E2E)
+# Pure Python / docs / infra pushes do nothing.
+#
+# Bypass with `git push --no-verify`, or SKIP_PREPUSH=1 git push.
+#
+# Activated via `make hooks` (sets core.hooksPath to .githooks).
+set -uo pipefail
+
+[ "${SKIP_PREPUSH:-0}" = "1" ] && exit 0
+
+cd "$(git rev-parse --show-toplevel)"
+
+zero="0000000000000000000000000000000000000000"
+changed=""
+
+# Pre-push feeds "<local ref> <local sha> <remote ref> <remote sha>" on stdin,
+# one line per ref being pushed. Collect the files changed across each range.
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue                       # deleting a ref
+  if [ "$remote_sha" = "$zero" ]; then                         # new branch
+    base="$(git merge-base origin/main "$local_sha" 2>/dev/null || true)"
+    range="${base:+$base }$local_sha"
+  else
+    range="$remote_sha $local_sha"
+  fi
+  changed+=$'\n'"$(git diff --name-only $range 2>/dev/null || true)"
+done
+
+# Fallback when stdin was empty (some GUI clients): diff against origin/main.
+if [ -z "${changed//[$'\n\t ']/}" ]; then
+  changed="$(git diff --name-only origin/main...HEAD 2>/dev/null || true)"
+fi
+
+rc=0
+
+if printf '%s\n' "$changed" | grep -q '^apps/api/'; then
+  echo "[pre-push] apps/api changed -> verifying the wiki type contract (make types-check)"
+  make types-check || rc=1
+fi
+
+if [ "$rc" -eq 0 ] && printf '%s\n' "$changed" | grep -q '^apps/wiki/'; then
+  if [ -d apps/wiki/node_modules ]; then
+    echo "[pre-push] apps/wiki changed -> running wiki E2E (make test-ui)"
+    make test-ui || rc=1
+  else
+    echo "[pre-push] apps/wiki changed, but apps/wiki/node_modules is missing — skipping E2E."
+    echo "           Run 'make wiki-install' then 'make check' before pushing wiki changes."
+  fi
+fi
+
+if [ "$rc" -ne 0 ]; then
+  echo
+  echo "[pre-push] checks failed — fix the above, or bypass with: git push --no-verify"
+fi
+exit "$rc"

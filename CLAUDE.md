@@ -65,8 +65,14 @@ cd apps/wiki && npm run build              # production build (used by Dockerfil
 
 # Full local CI mirror — run before pushing, ESPECIALLY for API or wiki changes.
 make wiki-install                          # one-time: install the wiki's npm deps
+make hooks                                 # one-time: activate the pre-push hook (core.hooksPath=.githooks)
 make check                                 # ruff + mypy + pytest + types-check + wiki lint/typecheck/build + E2E
 ```
+
+After `make hooks`, a **pre-push hook** (`.githooks/pre-push`) automatically runs
+the relevant guard for what's being pushed — `make types-check` when `apps/api`
+changed, `make test-ui` when `apps/wiki` changed — so API↔wiki drift can't reach
+CI. Pure Python/docs pushes are untouched. Bypass a push with `git push --no-verify`.
 
 CI runs three jobs: **python** (`ruff check`, `mypy`, `pytest -v`), **wiki**
 (lint, typecheck, build, + the api-types drift guard), and **playwright** (wiki

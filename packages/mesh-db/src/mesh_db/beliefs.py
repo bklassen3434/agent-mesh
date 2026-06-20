@@ -301,6 +301,56 @@ def _family_condition(family: str | None) -> str:
     return ""
 
 
+def find_duplicate_belief_pairs(
+    conn: MeshConnection,
+    *,
+    field_id: str = DEFAULT_FIELD_ID,
+    min_similarity: float = 0.85,
+    limit: int = 50,
+) -> list[tuple[str, str, str, str, float]]:
+    """Pairs of currently-held, same-field, **same-family** beliefs whose
+    statements embed close enough to be likely duplicates (controller tension:
+    ``redundant_beliefs``). The belief analog of
+    ``entities.find_duplicate_candidate_pairs`` — one pgvector self-join, each
+    unordered pair once, most-similar first. Returns
+    ``(id_a, topic_a, id_b, topic_b, similarity)``.
+
+    Family is enforced in Python (``belief_family``) rather than SQL so the single
+    source of truth for the score/capability split stays the helper above: a score
+    belief and a capability belief never pair even if their embeddings drift close.
+    Beliefs with no ``statement_embedding`` are skipped (the consolidation backfill
+    populates them)."""
+    distance_max = 1.0 - float(min_similarity)
+    rows = conn.execute(
+        """
+        SELECT b1.id, b1.topic, b2.id, b2.topic,
+               1 - (b1.statement_embedding <=> b2.statement_embedding) AS similarity
+        FROM beliefs b1
+        JOIN beliefs b2
+          ON b2.field_id = b1.field_id
+         AND b2.id > b1.id
+         AND b2.is_currently_held = TRUE
+        WHERE b1.field_id = %s
+          AND b1.is_currently_held = TRUE
+          AND b1.statement_embedding IS NOT NULL
+          AND b2.statement_embedding IS NOT NULL
+          AND (b1.statement_embedding <=> b2.statement_embedding) <= %s
+        ORDER BY similarity DESC
+        LIMIT %s
+        """,
+        [field_id, distance_max, max(int(limit), 0) * 4],
+    ).fetchall()
+    pairs: list[tuple[str, str, str, str, float]] = []
+    for r in rows:
+        topic_a, topic_b = str(r[1]), str(r[3])
+        if belief_family(topic_a) != belief_family(topic_b):
+            continue  # cross-family near-neighbours are not duplicates
+        pairs.append((str(r[0]), topic_a, str(r[2]), topic_b, float(r[4])))
+        if len(pairs) >= limit:
+            break
+    return pairs
+
+
 def find_candidate_duplicate_beliefs(
     conn: MeshConnection,
     embedding: list[float],

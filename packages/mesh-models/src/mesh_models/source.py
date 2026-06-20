@@ -37,7 +37,7 @@ class Source(BaseModel):
     raw_content_hash: str
     reliability_prior: float = Field(default=0.5, ge=0.0, le=1.0)
     # Scouted payload (title/abstract/…) the claim extractor needs. Persisted by
-    # the market's scout-source skill so extract-source can recover the content a
+    # the controller's scout-source skill so extract-source can recover the content a
     # round later; NULL for coordinator-written sources (extracted in one pass).
     payload: dict[str, Any] | None = None
 

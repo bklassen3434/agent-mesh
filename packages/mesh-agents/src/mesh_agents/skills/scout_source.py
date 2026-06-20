@@ -1,8 +1,8 @@
-"""Market skill: ``scout-source`` — acquire new sources from a connector.
+"""Controller skill: ``scout-source`` — acquire new sources from a connector.
 
 Resolves an ``unscouted_connector`` tension by polling one enabled connector
 in-process (``mesh_agents.connector_dispatch``) and emitting a
-``CreateSourceEffect`` for each *new* source — the market's source-acquisition
+``CreateSourceEffect`` for each *new* source — the controller's source-acquisition
 path, the analog of the coordinator's scout node. It is the only skill that adds
 raw material to the board; everything else (extract → resolve → synthesize) works
 what is already there.
@@ -25,9 +25,9 @@ from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.connector_dispatch import scout_connector
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 
-# Per-connector fetch cap for one market scout (mirrors MESH_PIPELINE_MAX_PAPERS).
+# Per-connector fetch cap for one controller scout (mirrors MESH_PIPELINE_MAX_PAPERS).
 _DEFAULT_MAX = 20
 
 
@@ -43,18 +43,11 @@ def _existing_hashes(conn: Any, field_id: str) -> set[str]:
 
 @register_skill
 class ScoutSourceSkill:
-    """Bid on ``unscouted_connector`` tensions; poll the connector and return one
+    """Handle ``unscouted_connector`` tensions; poll the connector and return one
     ``CreateSourceEffect`` per new source."""
 
     skill_id = "scout-source"
     handles = (TensionKind.unscouted_connector,)
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        if not tension.target_ref.get("connector_id"):
-            return None
-        # Cheap (API calls, no LLM) and high-leverage — fresh material feeds the
-        # whole downstream agenda.
-        return Bid(value=tension.value, est_cost_usd=0.001)
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

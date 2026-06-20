@@ -10,7 +10,6 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-import pytest
 from mesh_agents.entity_resolution import EntityMatchDecision
 from mesh_agents.skill import clear_registry, get_skill, load_builtin_skills
 from mesh_agents.skills.merge_candidate import MergeCandidateSkill
@@ -104,14 +103,6 @@ def test_registered_via_load_builtin_skills() -> None:
     finally:
         clear_registry()
         importlib.reload(mod)
-
-
-def test_bid_uses_tension_value_and_flat_cost() -> None:
-    skill = MergeCandidateSkill()
-    bid = skill.bid(None, _tension("a", "b", 0.91))
-    assert bid is not None
-    assert bid.value == pytest.approx(0.91)
-    assert bid.est_cost_usd == pytest.approx(0.02)
 
 
 def test_high_band_auto_merges_without_llm(tmp_db: MeshConnection) -> None:

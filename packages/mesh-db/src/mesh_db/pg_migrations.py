@@ -123,6 +123,8 @@ def remap_schedule_job_ids(conn: psycopg.Connection) -> None:
         ("pipeline", "ingest"),
         ("skeptic_sweep", "skeptic"),
         ("consolidation", "memory_consolidation"),
+        # The agentic market became the deterministic controller (auction → rules).
+        ("market", "controller"),
     )
     with conn.transaction():
         for old, new in remaps:

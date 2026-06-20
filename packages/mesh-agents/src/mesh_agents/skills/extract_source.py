@@ -1,6 +1,6 @@
 """Phase 2b skill: ``extract-source`` — read an unread source, emit claim effects.
 
-This is the operational, foundational skill of the agentic market: it resolves an
+This is the operational, foundational skill of the agentic controller: it resolves an
 ``unextracted_source`` tension (a source the mesh has but no claim references yet)
 by reading it and pulling structured facts out. It is a thin *wrapper* — the
 extraction itself is the existing ``ClaimExtractorAgent`` and the name→id
@@ -46,7 +46,7 @@ from mesh_agents.entity_tracker import (
     EntityTrackerAgent,
     ResolvedEntityInfo,
 )
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 
 
 def _load_existing_entities(
@@ -99,7 +99,7 @@ def _paper_from_source(source: Any, tension: Tension) -> ScoutedPaper:
 
 @register_skill
 class ExtractSourceSkill:
-    """Bid on ``unextracted_source`` tensions; run the extractor and return one
+    """Handle ``unextracted_source`` tensions; run the extractor and return one
     ``CreateClaimEffect`` per claim whose subject is a known entity."""
 
     skill_id = "extract-source"
@@ -118,10 +118,6 @@ class ExtractSourceSkill:
         self._llm = llm
         self._embedder = embedder
         self._mint_entities = mint_entities
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        # Cheap, foundational work — value comes from the tension's own estimate.
-        return Bid(value=tension.value, est_cost_usd=0.008)
 
     def _embedder_for_run(self) -> Embedder | None:
         if self._embedder is not None:

@@ -61,7 +61,7 @@ def create_source(
 def get_source_payload(conn: MeshConnection, id: str) -> dict[str, Any] | None:
     """The scouted payload (title/abstract/…) persisted for a source, or None.
 
-    Only the market's scout-source skill writes this; the agenda reads it to carry
+    Only the controller's scout-source skill writes this; the agenda reads it to carry
     paper content into the ``unextracted_source`` tension so extract-source can
     recover it a round later (see migration 016)."""
     row = conn.execute(

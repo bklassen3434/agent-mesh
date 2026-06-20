@@ -1,6 +1,6 @@
-"""Market skill: ``dispatch-investigation`` — work an open investigation.
+"""Controller skill: ``dispatch-investigation`` — work an open investigation.
 
-investigate-gap *opens* investigations; this skill *works* them — the market
+investigate-gap *opens* investigations; this skill *works* them — the controller
 analog of the coordinator's ``dispatch_open_investigations``. For an open (or
 in-progress) investigation it runs hypothesis-directed search across the field's
 enabled connectors (in-process, no A2A), acquires the gathered sources tagged with
@@ -34,7 +34,7 @@ from mesh_models.tension import Tension, TensionKind
 from mesh_agents.arxiv_scout import ScoutedPaper
 from mesh_agents.connector import investigate_source_name
 from mesh_agents.connector_dispatch import has_investigate, investigate_connector
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 
 _EST_COST_USD = 0.05
 
@@ -53,16 +53,11 @@ def _max_fetch() -> int:
 
 @register_skill
 class DispatchInvestigationSkill:
-    """Bid on ``open_investigation`` tensions; gather evidence and advance the
+    """Handle ``open_investigation`` tensions; gather evidence and advance the
     investigation's lifecycle (resolve / abandon / keep gathering)."""
 
     skill_id = "dispatch-investigation"
     handles = (TensionKind.open_investigation,)
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        if not tension.target_ref.get("investigation_id"):
-            return None
-        return Bid(value=tension.value, est_cost_usd=_EST_COST_USD)
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

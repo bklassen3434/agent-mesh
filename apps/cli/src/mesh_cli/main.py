@@ -1650,7 +1650,7 @@ def beliefs_duplicates(field: str, k: int, limit: int) -> None:
     default=0.50,
     type=float,
     show_default=True,
-    help="Round budget in USD — what the market may spend this pass.",
+    help="Round budget in USD for the read-only ranking view.",
 )
 @click.option(
     "--limit", default=40, show_default=True, help="Max rows to display."
@@ -1661,7 +1661,9 @@ def agenda_cmd(field: str, budget_usd: float, limit: int) -> None:
     Read-only and LLM-free. Derives every 'tension' from the live board (unread
     sources + knowledge gaps), ranks them by value-per-dollar, and shows which a
     $budget would fund this round. This is Phase 0 of the agentic migration — a
-    look at the market's ranking before any of it is built."""
+    look at how the board ranks tensions. The live controller selects via
+    deterministic rules (mesh_agents.rules), not this budget — see
+    docs/deterministic-controller.md."""
     from mesh_agents.agenda import compute_agenda
     from mesh_db.fields import get_field_by_slug
     from mesh_models.field import DEFAULT_FIELD_ID

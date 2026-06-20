@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from mesh_agents.agenda import scout_tensions
 from mesh_agents.arxiv_scout import ScoutedPaper
-from mesh_agents.skill import get_skill, load_builtin_skills
+from mesh_agents.skills.scout_source import ScoutSourceSkill
 from mesh_db.connection import MeshConnection
 from mesh_db.connectors import enable_connector
 from mesh_db.effects import apply_effects
@@ -82,11 +82,7 @@ def test_emits_create_source_effects_and_dedups(
     monkeypatch.setattr(
         "mesh_agents.skills.scout_source.scout_connector", fake_scout
     )
-    load_builtin_skills()
-    skill = get_skill("scout-source")
-    assert skill is not None
-
-    effects = _run(skill, tmp_db, _tension())
+    effects = _run(ScoutSourceSkill(), tmp_db, _tension())
     # Only the unseen source becomes an effect (the existing hash is dropped).
     assert len(effects) == 1
     assert isinstance(effects[0], CreateSourceEffect)

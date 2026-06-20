@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from mesh_agents.agenda import investigation_tensions
 from mesh_agents.arxiv_scout import ScoutedPaper
-from mesh_agents.skill import get_skill, load_builtin_skills
+from mesh_agents.skills.dispatch_investigation import DispatchInvestigationSkill
 from mesh_db.connection import MeshConnection
 from mesh_db.connectors import enable_connector
 from mesh_db.effects import apply_effects
@@ -59,10 +59,7 @@ def _tension(inv_id: str) -> Tension:
 
 
 def _skill() -> Any:
-    load_builtin_skills()
-    skill = get_skill("dispatch-investigation")
-    assert skill is not None
-    return skill
+    return DispatchInvestigationSkill()
 
 
 def _run(skill: Any, conn: Any, inv_id: str) -> list[Any]:

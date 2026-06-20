@@ -9,12 +9,16 @@ ledger: which `TensionKind` maps to which skill, and what (if anything) is left.
 
 ## Tension kind → skill
 
-The board derives nine `TensionKind`s (`mesh_models.tension`). All nine are
-claimed by one of the five registered built-in skills (`load_builtin_skills()`):
+There are eleven `TensionKind`s (`mesh_models.tension`). Nine are *board-derived*
+(`compute_agenda`); two are *operational* (connector/investigation-config-driven)
+and injected by the market loop alongside the agenda (`scout_tensions`,
+`investigation_tensions`). All eleven are claimed by one of the seven registered
+built-in skills (`load_builtin_skills()`):
 
 | Tension kind | Skill (`skill_id`) | Wraps | Effects it emits | Status |
 |---|---|---|---|---|
-| `unextracted_source` | `extract-source` | `ClaimExtractorAgent` + `EntityTrackerAgent` | `CreateClaimEffect` | ✅ handled |
+| `unscouted_connector` | `scout-source` | in-process connector dispatch (scout handlers) | `CreateSourceEffect` | ✅ handled |
+| `unextracted_source` | `extract-source` | `ClaimExtractorAgent` + `EntityTrackerAgent` | `CreateEntityEffect` + `CreateClaimEffect` (+ `AttachClaimToInvestigationEffect`) | ✅ handled |
 | `merge_candidate` | `merge-candidate` | `entity_resolution` adjudicator | `MergeEntitiesEffect` | ✅ handled |
 | `unsynthesized_claims` | `synthesize-belief` | `sota_tracker` + `synthesis` | `CreateBeliefEffect` / `ReviseBeliefEffect` / `AddRelationshipEvidenceEffect` | ✅ handled |
 | `contested_claim` | `challenge-belief` | `SkepticAgent` | `CreateSourceEffect` + `CreateClaimEffect` + `ReviseBeliefEffect` | ✅ handled |
@@ -23,22 +27,27 @@ claimed by one of the five registered built-in skills (`load_builtin_skills()`):
 | `thin_belief` | `investigate-gap` | `discovery` | `OpenInvestigationEffect` | ✅ handled |
 | `rising_topic` | `investigate-gap` | `discovery` | `OpenInvestigationEffect` | ✅ handled |
 | `missing_reciprocal_edge` | `investigate-gap` | `discovery` | `OpenInvestigationEffect` | ✅ handled |
+| `open_investigation` | `dispatch-investigation` | in-process investigate dispatch | `CreateSourceEffect` + `UpdateInvestigationEffect` | ✅ handled |
 
-Five skills, nine kinds, full coverage. The skill→kind mapping is enforced by
+Seven skills, eleven kinds, full coverage. The skill→kind mapping is enforced by
 `@register_skill` + each skill's `handles` tuple; the agenda's `_KIND_SKILL`
 (`mesh_agents.agenda`) names the same handler for every kind, so the
 board→skill map and the registry agree.
 
-Every effect kind in the frozen `Effect` union (`mesh_models.effect`) is produced
-by some skill and applied by the write gateway (`mesh_db.effects.apply_effects`).
-The only union member no skill emits today is `SupersedeClaimEffect` — claim
-supersession is still the coordinator's job and has no tension that triggers it
-(see below); the gateway branch exists and is exercised by gateway unit tests.
+With these the market now runs the coordinator's whole ingest loop end-to-end
+under one budget — **scout → extract → resolve/merge → synthesize → challenge →
+investigate (open + dispatch)** — acquiring its own sources, minting entities so a
+fresh field bootstraps, recomputing evidence-derived belief confidence in the
+gateway, and recording a `pipeline_runs` row (run_type `market`) per live run.
+Every effect kind in the `Effect` union is produced by some skill and applied by
+the write gateway (`mesh_db.effects.apply_effects`); the only member no skill
+emits is `SupersedeClaimEffect` (no tension derives "this claim is superseded"
+yet — the gateway branch exists and is exercised by unit tests).
 
 ## Nothing is "unhandled"
 
 A tension is *unhandled* only if no registered skill's `handles` contains its
-kind — the market counts those as `skipped_no_skill`. With all five skills
+kind — the market counts those as `skipped_no_skill`. With all seven skills
 registered, that count is **0** for every kind the board can produce.
 `tests/test_market_integration.py` asserts this directly: it seeds a small board
 (an unread source, a thin belief, a duplicate-looking entity pair), registers the
@@ -64,25 +73,52 @@ market skill for them is by design, not a gap:
   superseded," so `SupersedeClaimEffect` has a gateway branch but no skill emitter
   yet. A future tension kind would wire it up.
 
-## Known limitations (pre-Phase-3)
+## Source acquisition + investigation dispatch (market source-of-truth)
 
-- **No oscillation control / idempotency.** Tension identity and cooldowns are
-  Phase 3. In a live multi-round run a skill can re-open the same investigation
-  each round until the budget clears it — the integration test pins one live round
-  (`max_rounds=1`) to stay deterministic.
-- **`extract-source` can't mint entities.** The `Effect` contract has no
-  entity-creation effect, so on a fresh field the extractor only emits claims for
-  subjects that already resolve to an existing entity; unseen subjects are skipped
-  (conservative by design — a new entity is a coordinated effect-kind addition).
+The market now acquires its own material rather than assuming sources arrive:
+
+- **`scout-source`** polls each enabled connector **in-process**
+  (`mesh_agents.connector_dispatch` calls the same `_handle_scout_<slug>` handlers
+  the A2A scout servers wrap — no fleet to run) and emits `CreateSourceEffect`s,
+  deduped by content hash. The scouted title/abstract is persisted on the source
+  (`sources.payload`, migration 016) so `extract-source` can read the paper text a
+  round later.
+- **`dispatch-investigation`** works the investigations `investigate-gap` opens:
+  it runs the in-process investigate handlers, acquires evidence sources tagged
+  with the investigation lineage, and advances the lifecycle (in-progress →
+  resolved/abandoned on the same `MESH_INVESTIGATION_*` thresholds the coordinator
+  uses). `extract-source` attaches the resulting claims back via
+  `AttachClaimToInvestigationEffect`, so investigations actually resolve.
+
+## Go-live (scheduler)
+
+`market` is a scheduler job (`mesh-market --apply`) seeded **disabled** — flip it on
+per field from the Pipelines page once shadow output looks right, so it never
+double-writes alongside the coordinator (the strangler-fig go-live).
+
+## Known limitations
+
+- **Oscillation control is in-run only.** The market loop keeps a per-run
+  `dispatched` set so scouting / investigation tensions don't re-fire each round
+  and a run still reaches quiescence; cross-run cooldowns / salience decay remain
+  Phase 3.
+- **`llm_usage` / `agent_invocations` per skill** aren't captured yet — a market
+  run records the `pipeline_runs` ledger row and (when Langfuse is configured) the
+  skills' own traces, but per-skill token/cost rows and the Agents-page invocation
+  capture still need the `Skill.run` contract to surface usage. Run-level
+  observability (`/status`, Pipelines, `pipeline-stats`) works today.
+- **Belief `statement_embedding` on market synthesis** is left to the
+  consolidation sweep's backfill rather than computed inline by `synthesize-belief`.
 - **LLM-bound skills degrade, they don't fail the round.** With no provider
-  reachable, `extract-source` and `challenge-belief` return no effects (caught by
-  the market's per-skill guard) and `investigate-gap` falls back to a
-  deterministic, LLM-free proposal. The market stays a safe no-op rather than
-  aborting — the coordinator's "one bad item never fails the run" philosophy.
+  reachable, the LLM-bound skills return no effects (caught by the market's
+  per-skill guard) and the discovery-backed ones fall back to deterministic,
+  LLM-free proposals — the coordinator's "one bad item never fails the run"
+  philosophy.
 
 ## Verification
 
-- `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest -q` → **752 passed**
-  (includes `tests/test_market_integration.py`, the end-to-end market check).
+- `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest -q` → all pass (includes
+  `tests/test_market_integration.py` end-to-end, plus `test_skill_scout_source`
+  and `test_skill_dispatch_investigation` for the new acquisition paths).
 - `uv run ruff check .` → clean.
-- `uv run mypy .` → clean (266 source files).
+- `uv run mypy .` → clean.

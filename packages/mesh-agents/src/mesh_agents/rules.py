@@ -74,6 +74,14 @@ def scout_cooldown_seconds() -> float:
     return _float_env("MESH_CONTROLLER_SCOUT_COOLDOWN_SEC", 600.0)
 
 
+def maintenance_cooldown_seconds() -> float:
+    """Minimum seconds between periodic, LLM-free maintenance passes (belief
+    aging, memory consolidation) — the deterministic form of "run this daily".
+    Like the scout cooldown, it is pure arithmetic over a stored last-attempt
+    timestamp, so the controller stays daemon-free."""
+    return _float_env("MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC", 86_400.0)
+
+
 # Priority tiers (lower = more urgent). Explicit and total — the whole ordering
 # of the system lives here, not in an emergent price.
 P_ESCALATE = 0  # a stalled tension pre-empts its own normal handler
@@ -84,6 +92,7 @@ P_SYNTHESIZE = 30  # turn claims into beliefs
 P_DISPATCH_INV = 35  # gather evidence for open investigations
 P_CHALLENGE = 40  # re-examine contested / stale beliefs
 P_INVESTIGATE = 50  # open investigations for knowledge gaps
+P_MAINTAIN = 80  # periodic LLM-free housekeeping (belief aging, memory) when due
 P_SCOUT = 90  # acquire new material only when otherwise idle
 
 
@@ -173,8 +182,8 @@ def _escalate_stalled(state: ControllerState) -> list[Activation]:
     k = swarm_size()
     out: list[Activation] = []
     for t in state.tensions:
-        if t.kind is TensionKind.unscouted_connector:
-            continue  # scouting is cheap + idempotent; never worth a swarm
+        if t.kind is TensionKind.unscouted_connector or t.kind in _MAINTENANCE_KINDS:
+            continue  # cheap + idempotent housekeeping; never worth a swarm
         st = state.state_for(t.id)
         if st is None or st.attempts < threshold or not st.stalled:
             continue
@@ -219,6 +228,45 @@ def _scout_when_idle(state: ControllerState) -> list[Activation]:
                         f", {int(elapsed)}s since last scout"
                         if elapsed is not None
                         else ", never scouted"
+                    )
+                ),
+            )
+        )
+    return out
+
+
+# The periodic maintenance kinds: cooldown-gated, LLM-free housekeeping that the
+# controller runs on a timer rather than in response to board state.
+_MAINTENANCE_KINDS: tuple[TensionKind, ...] = (
+    TensionKind.aging_belief,
+    TensionKind.consolidatable_memory,
+)
+
+
+def _maintain_when_due(state: ControllerState) -> list[Activation]:
+    """Fire a periodic maintenance tension only once its cooldown has elapsed —
+    the deterministic form of "run this daily". Same trick as ``_scout_when_idle``
+    (temporal condition = ``now - last_attempt_at >= cooldown`` over a stored
+    timestamp), but maintenance does not wait for the board to be idle: aging and
+    memory upkeep are cheap and independent of the knowledge backlog."""
+    cooldown = maintenance_cooldown_seconds()
+    out: list[Activation] = []
+    for t in state.tensions_of(*_MAINTENANCE_KINDS):
+        st = state.state_for(t.id)
+        elapsed = st.seconds_since_attempt(state.now) if st else None
+        if elapsed is not None and elapsed < cooldown:
+            continue  # handled this maintenance kind too recently
+        out.append(
+            Activation(
+                tension=t,
+                skill_id=t.handler_skill,
+                priority=P_MAINTAIN,
+                reason=(
+                    "maintenance due"
+                    + (
+                        f", {int(elapsed)}s since last pass"
+                        if elapsed is not None
+                        else ", never run"
                     )
                 ),
             )
@@ -278,6 +326,7 @@ RULES: tuple[Rule, ...] = (
         P_INVESTIGATE,
         "knowledge gap — open an investigation",
     ),
+    Rule(name="maintain-when-due", evaluate=_maintain_when_due),
     Rule(name="scout-when-idle", evaluate=_scout_when_idle),
 )
 

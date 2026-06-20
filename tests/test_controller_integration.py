@@ -47,6 +47,7 @@ _SKILL_MODULES = (
     "mesh_agents.skills.synthesize_belief",
     "mesh_agents.skills.challenge_belief",
     "mesh_agents.skills.investigate_gap",
+    "mesh_agents.skills.maintain_belief",
     "mesh_agents.skills.scout_source",
 )
 

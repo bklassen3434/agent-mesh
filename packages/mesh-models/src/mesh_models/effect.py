@@ -97,6 +97,14 @@ class ReviseBeliefEffect(BaseModel):
     contradicting_claim_ids: list[str] | None = None
     # Re-embed the head when the statement changed (gateway persists it; no LLM).
     new_statement_embedding: list[float] | None = None
+    # Drop the belief out of the held set (staleness archival). Append-only — the
+    # row and its revisions stay; only ``is_currently_held`` flips false.
+    set_not_held: bool = False
+    # When False, the gateway uses ``new_confidence`` verbatim instead of the
+    # injected evidence-derived ``confidence_fn``. Maintenance revisions (decay /
+    # archival) set their own confidence by design and must not be re-derived from
+    # evidence signals; synthesis revisions keep the default (recompute).
+    recompute_confidence: bool = True
 
 
 class MergeEntitiesEffect(BaseModel):

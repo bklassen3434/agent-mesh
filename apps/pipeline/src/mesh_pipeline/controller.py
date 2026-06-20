@@ -36,7 +36,12 @@ from typing import Any
 
 import click
 import structlog
-from mesh_agents.agenda import compute_agenda, investigation_tensions, scout_tensions
+from mesh_agents.agenda import (
+    compute_agenda,
+    investigation_tensions,
+    maintenance_tensions,
+    scout_tensions,
+)
 from mesh_agents.confidence import BeliefSignals, ConfidenceWeights, compute_confidence
 from mesh_agents.rules import Activation, ControllerState, plan
 from mesh_agents.skill import all_skills, get_skill, load_builtin_skills
@@ -109,6 +114,7 @@ def _sense(conn: Any, field_id: str, field_slug: str) -> list[Tension]:
     return (
         scout_tensions(conn, field_id)
         + investigation_tensions(conn, field_id)
+        + maintenance_tensions(conn, field_id)
         + agenda.tensions
     )
 

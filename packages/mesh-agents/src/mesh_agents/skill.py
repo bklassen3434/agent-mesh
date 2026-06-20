@@ -97,6 +97,7 @@ def load_builtin_skills() -> list[Skill]:
         dispatch_investigation,
         extract_source,
         investigate_gap,
+        maintain_belief,
         merge_candidate,
         scout_source,
         synthesize_belief,

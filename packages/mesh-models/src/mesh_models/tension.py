@@ -46,6 +46,10 @@ class TensionKind(StrEnum):
     unsynthesized_claims = "unsynthesized_claims"  # claims no belief reflects yet
     # An open investigation whose evidence still needs to be gathered.
     open_investigation = "open_investigation"
+    # Periodic, LLM-free maintenance — cooldown-gated like scouting (the temporal
+    # condition is a stored-timestamp state condition), not board-state driven.
+    aging_belief = "aging_belief"  # the held corpus is due for decay + archival
+    consolidatable_memory = "consolidatable_memory"  # episodic history due to distil
 
 
 class Tension(BaseModel):

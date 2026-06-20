@@ -261,12 +261,14 @@ def _apply_revise_belief(
         link_updates["contradicting_claim_ids"] = effect.contradicting_claim_ids
 
     # Apply claim-link changes before deriving confidence (the view reads them).
-    if confidence_fn is not None and link_updates:
+    if confidence_fn is not None and effect.recompute_confidence and link_updates:
         update_belief(conn, effect.belief_id, **link_updates)
 
+    # Maintenance revisions (decay/archival) opt out of evidence re-derivation so
+    # their deliberately-set confidence survives; everything else recomputes.
     new_confidence = (
         confidence_fn(conn, effect.belief_id)
-        if confidence_fn is not None
+        if confidence_fn is not None and effect.recompute_confidence
         else effect.new_confidence
     )
 
@@ -290,6 +292,8 @@ def _apply_revise_belief(
         "revision_count": existing.revision_count + 1,
         **link_updates,
     }
+    if effect.set_not_held:
+        head_updates["is_currently_held"] = False
     update_belief(conn, effect.belief_id, **head_updates)
 
     if effect.new_statement_embedding is not None:

@@ -12,34 +12,29 @@ test.beforeEach(async ({ request }) => {
 });
 
 test.describe('pipelines page', () => {
-  test('both schedule cards render with correct intervals and enabled state', async ({
+  test('the controller schedule card renders with correct interval and enabled state', async ({
     page,
   }) => {
     const pipelines = new PipelinesPage(page);
     await pipelines.goto();
 
-    await expect(pipelines.card('Ingest')).toBeVisible();
-    await expect(pipelines.card('Skeptic sweep')).toBeVisible();
-
-    await expect(pipelines.toggle('Ingest')).toBeChecked();
-    await expect(pipelines.toggle('Skeptic sweep')).toBeChecked();
-
-    await expect(pipelines.intervalSelect('Ingest')).toContainText('Every 6 hours');
-    await expect(pipelines.intervalSelect('Skeptic sweep')).toContainText('Every day');
+    await expect(pipelines.card('Controller')).toBeVisible();
+    await expect(pipelines.toggle('Controller')).toBeChecked();
+    await expect(pipelines.intervalSelect('Controller')).toContainText('Every 6 hours');
   });
 
   test('toggling a schedule PATCHes the job and reflects the new state', async ({ page }) => {
     const pipelines = new PipelinesPage(page);
     await pipelines.goto();
-    await expect(pipelines.toggle('Ingest')).toBeChecked();
+    await expect(pipelines.toggle('Controller')).toBeChecked();
 
     const patch = page.waitForRequest(
-      (r) => r.method() === 'PATCH' && r.url().endsWith('/api/v1/schedules/ingest'),
+      (r) => r.method() === 'PATCH' && r.url().endsWith('/api/v1/schedules/controller'),
     );
-    await pipelines.toggle('Ingest').click();
+    await pipelines.toggle('Controller').click();
 
     expect((await patch).postDataJSON()).toEqual({ enabled: false });
-    await expect(pipelines.toggle('Ingest')).not.toBeChecked();
+    await expect(pipelines.toggle('Controller')).not.toBeChecked();
   });
 
   test('changing the interval PATCHes the new interval', async ({ page }) => {
@@ -47,41 +42,43 @@ test.describe('pipelines page', () => {
     await pipelines.goto();
 
     const patch = page.waitForRequest(
-      (r) => r.method() === 'PATCH' && r.url().endsWith('/api/v1/schedules/ingest'),
+      (r) => r.method() === 'PATCH' && r.url().endsWith('/api/v1/schedules/controller'),
     );
-    await pipelines.setInterval('Ingest', 'Every 12 hours');
+    await pipelines.setInterval('Controller', 'Every 12 hours');
 
     expect((await patch).postDataJSON()).toEqual({ interval_hours: 12 });
-    await expect(pipelines.intervalSelect('Ingest')).toContainText('Every 12 hours');
+    await expect(pipelines.intervalSelect('Controller')).toContainText('Every 12 hours');
   });
 
-  test('Run now on the coordinator triggers a run and shows no error', async ({ page }) => {
+  test('Run now on the controller triggers a run and shows no error', async ({ page }) => {
     const pipelines = new PipelinesPage(page);
     await pipelines.goto();
 
     const trigger = page.waitForRequest(
       (r) =>
         r.method() === 'POST' &&
-        r.url().endsWith('/api/v1/pipelines/ingest/trigger'),
+        r.url().endsWith('/api/v1/pipelines/controller/trigger'),
     );
-    await pipelines.runNow('Ingest').click();
+    await pipelines.runNow('Controller').click();
     await trigger;
 
     await expect(pipelines.errorBanner).toBeHidden();
-    await expect(pipelines.runNow('Ingest')).toBeEnabled();
+    await expect(pipelines.runNow('Controller')).toBeEnabled();
   });
 
-  test('Run now on the 409 job surfaces the "already in progress" error', async ({ page }) => {
+  test('Run now surfaces the "already in progress" error on a 409', async ({ page }) => {
     const pipelines = new PipelinesPage(page);
     await pipelines.goto();
 
-    const trigger = page.waitForRequest(
-      (r) =>
-        r.method() === 'POST' &&
-        r.url().endsWith('/api/v1/pipelines/skeptic/trigger'),
+    // Force the controller trigger to 409 for this test only.
+    await page.route('**/api/v1/pipelines/controller/trigger', (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'A run is already in progress' }),
+      }),
     );
-    await pipelines.runNow('Skeptic sweep').click();
-    await trigger;
+    await pipelines.runNow('Controller').click();
 
     await expect(pipelines.errorBanner).toBeVisible();
   });

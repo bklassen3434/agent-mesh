@@ -385,7 +385,7 @@ function RunRow({
   onToggle: () => void;
   langfuseUrl: string | null;
 }) {
-  const isCoordinator = run.run_type === 'ingest';
+  const isController = run.run_type === 'controller';
   return (
     <>
       <TableRow className="cursor-pointer" onClick={onToggle}>
@@ -400,7 +400,7 @@ function RunRow({
         <TableCell className="tabular-nums">{duration(run)}</TableCell>
         <TableCell className={statusTone}>{statusLabel}</TableCell>
         <TableCell className="text-right tabular-nums">
-          {isCoordinator ? run.claims_inserted : '—'}
+          {isController ? run.claims_inserted : '—'}
         </TableCell>
       </TableRow>
       {open && (

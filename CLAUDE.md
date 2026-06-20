@@ -58,12 +58,22 @@ uv run mypy .
 uv run mesh-api                            # FastAPI on :8000; /docs for Swagger
 make wiki                                  # opens http://localhost:3000
 make api                                   # opens http://localhost:8000/docs
-make types                                 # regenerate apps/wiki/src/lib/api-types.ts
+make types                                 # regenerate apps/wiki/src/lib/api-types.ts (self-contained: boots a temp API)
+make types-check                           # regenerate + fail if api-types.ts drifted (the CI drift guard)
 cd apps/wiki && npm run dev                # wiki dev mode against a running API
 cd apps/wiki && npm run build              # production build (used by Dockerfile.wiki)
+
+# Full local CI mirror — run before pushing, ESPECIALLY for API or wiki changes.
+make wiki-install                          # one-time: install the wiki's npm deps
+make check                                 # ruff + mypy + pytest + types-check + wiki lint/typecheck/build + E2E
 ```
 
-CI runs `ruff check`, `mypy`, and `pytest -v` on every push.
+CI runs three jobs: **python** (`ruff check`, `mypy`, `pytest -v`), **wiki**
+(lint, typecheck, build, + the api-types drift guard), and **playwright** (wiki
+E2E). The Python gate alone does NOT catch API↔wiki contract drift or stale wiki
+tests — when you touch `apps/api` handlers/models or a wiki page, run
+`make types-check` (for the type contract) and `make test-ui` (for the E2E), or
+just `make check` to mirror all of CI locally.
 
 ## Architecture
 

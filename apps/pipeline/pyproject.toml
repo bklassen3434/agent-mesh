@@ -25,8 +25,6 @@ mesh-agents = { workspace = true }
 mesh-a2a = { workspace = true }
 
 [project.scripts]
-"mesh-consolidate-memory" = "mesh_pipeline.consolidation:main"
-"mesh-consolidate-beliefs" = "mesh_pipeline.belief_consolidation:main"
 "mesh-controller" = "mesh_pipeline.controller:main"
 
 [tool.hatch.build.targets.wheel]

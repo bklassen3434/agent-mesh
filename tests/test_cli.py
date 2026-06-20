@@ -205,13 +205,12 @@ def test_heuristics_list_after_persist(
     runner_with_db: tuple[CliRunner, dict[str, str]],
 ) -> None:
     runner, env = runner_with_db
-    from mesh_agents.consolidator import HeuristicProposal
-    from mesh_pipeline._heuristics import persist_heuristic
+    from mesh_agents.consolidator import HeuristicProposal, proposal_to_heuristic
+    from mesh_db.heuristics import create_heuristic, create_heuristic_revision
 
     conn = get_connection()
     try:
-        persist_heuristic(
-            conn,
+        heuristic, genesis = proposal_to_heuristic(
             HeuristicProposal(
                 agent="claim_extractor",
                 skill="extract_claims",
@@ -219,8 +218,10 @@ def test_heuristics_list_after_persist(
                 heuristic="Forum scores are self-reported; lower confidence.",
                 provenance_run_ids=["run-1"],
                 rationale="seen repeatedly",
-            ),
+            )
         )
+        create_heuristic(conn, heuristic)
+        create_heuristic_revision(conn, genesis)
     finally:
         conn.close()
 

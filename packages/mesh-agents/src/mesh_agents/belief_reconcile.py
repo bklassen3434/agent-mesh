@@ -12,10 +12,11 @@ deletes), decay only lowers confidence, archival only flips ``is_currently_held`
 Field-scoped throughout; never compares or merges across fields.
 
 The pure pieces here (candidate loading, blocking+banding, cluster+merge, decay,
-archival) are shared with the scheduled LangGraph job
-(``mesh_pipeline.belief_consolidation``); this module also exposes the synchronous
-``reconcile_beliefs`` entry the one-time CLI backfill uses (mirroring how
-``reconcile_entities`` backs ``mesh.cli reconcile-entities``).
+archival) back the controller's consolidation: ``plan_decay_and_archive`` feeds
+the ``maintain-belief`` skill, and merge banding feeds ``consolidate-beliefs``.
+This module also exposes the synchronous ``reconcile_beliefs`` entry the one-time
+CLI backfill uses (mirroring how ``reconcile_entities`` backs
+``mesh.cli reconcile-entities``).
 """
 from __future__ import annotations
 

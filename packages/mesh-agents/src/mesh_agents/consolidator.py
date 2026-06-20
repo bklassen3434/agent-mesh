@@ -3,12 +3,11 @@
 The data contract lives here (Phase 16b); the offline LangGraph job that calls
 the LLM to produce these proposals lives in ``apps/pipeline`` (Phase 16c).
 
-Write split (coordinator-owned writes): an agent *proposes* a heuristic via the
-``propose_heuristic`` skill; only the coordinator persists it (mesh_writer
-role). The consolidation job is itself coordinator-side, so it persists its
-proposals directly via ``mesh_pipeline._heuristics.persist_heuristic`` — the
-skill types here are the same wire contract a future agent-hosted proposer
-would use.
+Write split (coordinator-owned writes): an agent *proposes* a heuristic; only the
+write gateway persists it (mesh_writer role). The controller's
+``consolidate-memory`` skill builds the rows here (``proposal_to_heuristic``) and
+emits a ``WriteHeuristicEffect``; the gateway inserts them. The proposal types are
+also the wire contract a future agent-hosted proposer would use.
 """
 from __future__ import annotations
 

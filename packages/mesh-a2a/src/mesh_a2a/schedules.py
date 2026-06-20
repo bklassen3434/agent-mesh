@@ -27,20 +27,15 @@ from mesh_a2a.checkpoint import postgres_url
 # job_id → default interval (hours). Seeded into the table on first ensure;
 # also the fallback the scheduler uses if the table is somehow empty.
 #
-# The deterministic controller is now the orchestrator: it runs the whole
-# reactive loop (scout → extract → resolve → consolidate → synthesize →
-# challenge → investigate) that the old fixed ingest/skeptic/discovery jobs used
-# to cover, so those are no longer scheduled. The two periodic consolidation
-# jobs are kept for now and fold into the controller's rule set next.
+# The deterministic controller is the only scheduled job: it runs the whole
+# reactive loop (scout → extract → resolve → synthesize → challenge → investigate)
+# plus belief and memory consolidation, all as blackboard rules. The old fixed
+# ingest/skeptic/discovery jobs and the standalone consolidation sweeps are gone.
 DEFAULT_INTERVALS: dict[str, int] = {
-    # Phase 16c: offline memory consolidation (episodic → procedural heuristics).
-    "memory_consolidation": 24,
-    # Phase 19: belief consolidation (semantic dedup/merge + staleness decay).
-    "belief_consolidation": 24,
     "controller": 6,
 }
 
-# job_ids seeded with enabled=false (opt-in go-live). The controller is now the
+# job_ids seeded with enabled=false (opt-in go-live). The controller is the
 # default orchestrator, so it ships enabled.
 DEFAULT_DISABLED: frozenset[str] = frozenset()
 

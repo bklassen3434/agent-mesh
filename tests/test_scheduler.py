@@ -21,17 +21,19 @@ from mesh_scheduler import SchedulerManager, configured_cron_triggers
 
 def _schedules(
     *,
-    controller_hours: int = 6,
-    consol_hours: int = 24,
-    controller_enabled: bool = True,
-    consol_enabled: bool = True,
+    primary_hours: int = 6,
+    beta_hours: int = 24,
+    primary_enabled: bool = True,
+    beta_enabled: bool = True,
 ) -> list[Schedule]:
+    # The controller is the only job, so multi-job scheduling is now multi-*field*
+    # scheduling of the same job (one controller run per field).
     now = datetime.now(UTC)
     return [
-        Schedule(job_id="controller", interval_hours=controller_hours,
-                 enabled=controller_enabled, updated_at=now),
-        Schedule(job_id="belief_consolidation", interval_hours=consol_hours,
-                 enabled=consol_enabled, updated_at=now),
+        Schedule(job_id="controller", field_id="ai-robotics", interval_hours=primary_hours,
+                 enabled=primary_enabled, updated_at=now),
+        Schedule(job_id="controller", field_id="beta", interval_hours=beta_hours,
+                 enabled=beta_enabled, updated_at=now),
     ]
 
 
@@ -68,10 +70,12 @@ def test_begin_is_single_flight() -> None:
 def test_status_maps_states() -> None:
     m = SchedulerManager()
     m._state["controller"] = sched_mod._JobState(interval_hours=6, enabled=True, running=True)
-    m._state["belief_consolidation"] = sched_mod._JobState(interval_hours=24, enabled=False)
-    by_id = {s.job_id: s for s in m.status()}
-    assert by_id["controller"].state == "running"
-    assert by_id["belief_consolidation"].state == "disabled"
+    m._state["controller:beta"] = sched_mod._JobState(
+        interval_hours=24, enabled=False, field_id="beta"
+    )
+    by = {(s.job_id, s.field_id): s for s in m.status()}
+    assert by[("controller", "ai-robotics")].state == "running"
+    assert by[("controller", "beta")].state == "disabled"
 
 
 def test_trigger_unknown_job_raises() -> None:
@@ -92,20 +96,20 @@ def test_reconcile_applies_interval_and_enabled(monkeypatch: pytest.MonkeyPatch)
     m.start()
     try:
         assert m._state["controller"].interval_hours == 6
-        # Change the controller interval, disable consolidation.
-        schedules[:] = _schedules(controller_hours=12, consol_enabled=False)
+        # Change the primary field's interval, disable the beta field.
+        schedules[:] = _schedules(primary_hours=12, beta_enabled=False)
         m.reconcile()
 
-        by_id = {s.job_id: s for s in m.status()}
+        by = {(s.job_id, s.field_id): s for s in m.status()}
         assert m._state["controller"].interval_hours == 12
-        assert by_id["belief_consolidation"].state == "disabled"
+        assert by[("controller", "beta")].state == "disabled"
         # A paused (disabled) job has no scheduled next fire.
-        assert by_id["belief_consolidation"].next_run_at is None
+        assert by[("controller", "beta")].next_run_at is None
         # Re-enable and confirm it resumes.
-        schedules[:] = _schedules(controller_hours=12, consol_enabled=True)
+        schedules[:] = _schedules(primary_hours=12, beta_enabled=True)
         m.reconcile()
-        by_id = {s.job_id: s for s in m.status()}
-        assert by_id["belief_consolidation"].state == "idle"
-        assert by_id["belief_consolidation"].next_run_at is not None
+        by = {(s.job_id, s.field_id): s for s in m.status()}
+        assert by[("controller", "beta")].state == "idle"
+        assert by[("controller", "beta")].next_run_at is not None
     finally:
         m.shutdown()

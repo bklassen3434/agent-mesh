@@ -58,19 +58,12 @@ def _aps_id(job_id: str, field_id: str) -> str:
         return job_id
     return f"{job_id}:{field_id}"
 
-# job_id → CLI command. The set of job_ids the scheduler will run.
+# job_id → CLI command. The deterministic controller is the only scheduled job:
+# it runs the whole reactive loop (scout → extract → resolve → synthesize →
+# challenge → investigate) plus the formerly-standalone belief and memory
+# consolidation, all as blackboard rules. ``--apply`` writes through the gateway
+# and loops to quiescence; ``--field`` scopes it to the per-field scheduled job.
 JOB_COMMANDS: dict[str, list[str]] = {
-    # Phase 16c: offline memory consolidation (distills episodic history into
-    # procedural heuristics). Iterates active fields internally — no --field flag.
-    "memory_consolidation": ["uv", "run", "mesh-consolidate-memory"],
-    # Phase 19: offline belief consolidation (semantic dedup/merge + staleness
-    # decay/archival). Iterates active fields internally — no --field flag.
-    "belief_consolidation": ["uv", "run", "mesh-consolidate-beliefs"],
-    # Deterministic controller: the rule-based orchestrator that replaced the
-    # fixed ingest/skeptic/discovery jobs (scout → extract → resolve →
-    # consolidate → synthesize → challenge → investigate, under explicit rules +
-    # a per-round step cap). ``--apply`` writes through the gateway and loops to
-    # quiescence; ``--field`` scopes it to the per-field scheduled job.
     "controller": ["uv", "run", "mesh-controller", "--apply"],
 }
 

@@ -21,17 +21,17 @@ from mesh_scheduler import SchedulerManager, configured_cron_triggers
 
 def _schedules(
     *,
-    pipeline_hours: int = 6,
-    sweep_hours: int = 24,
-    pipeline_enabled: bool = True,
-    sweep_enabled: bool = True,
+    controller_hours: int = 6,
+    consol_hours: int = 24,
+    controller_enabled: bool = True,
+    consol_enabled: bool = True,
 ) -> list[Schedule]:
     now = datetime.now(UTC)
     return [
-        Schedule(job_id="ingest", interval_hours=pipeline_hours,
-                 enabled=pipeline_enabled, updated_at=now),
-        Schedule(job_id="skeptic", interval_hours=sweep_hours,
-                 enabled=sweep_enabled, updated_at=now),
+        Schedule(job_id="controller", interval_hours=controller_hours,
+                 enabled=controller_enabled, updated_at=now),
+        Schedule(job_id="belief_consolidation", interval_hours=consol_hours,
+                 enabled=consol_enabled, updated_at=now),
     ]
 
 
@@ -58,20 +58,20 @@ def test_cron_env_overrides_picked_up(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_begin_is_single_flight() -> None:
     m = SchedulerManager()
-    m._state["ingest"] = sched_mod._JobState(interval_hours=6, enabled=True)
-    first = m._begin("ingest", "manual")
+    m._state["controller"] = sched_mod._JobState(interval_hours=6, enabled=True)
+    first = m._begin("controller", "manual")
     assert first is not None
     # A second claim while the first run is in flight is refused.
-    assert m._begin("ingest", "manual") is None
+    assert m._begin("controller", "manual") is None
 
 
 def test_status_maps_states() -> None:
     m = SchedulerManager()
-    m._state["ingest"] = sched_mod._JobState(interval_hours=6, enabled=True, running=True)
-    m._state["skeptic"] = sched_mod._JobState(interval_hours=24, enabled=False)
+    m._state["controller"] = sched_mod._JobState(interval_hours=6, enabled=True, running=True)
+    m._state["belief_consolidation"] = sched_mod._JobState(interval_hours=24, enabled=False)
     by_id = {s.job_id: s for s in m.status()}
-    assert by_id["ingest"].state == "running"
-    assert by_id["skeptic"].state == "disabled"
+    assert by_id["controller"].state == "running"
+    assert by_id["belief_consolidation"].state == "disabled"
 
 
 def test_trigger_unknown_job_raises() -> None:
@@ -91,21 +91,21 @@ def test_reconcile_applies_interval_and_enabled(monkeypatch: pytest.MonkeyPatch)
     m = SchedulerManager()
     m.start()
     try:
-        assert m._state["ingest"].interval_hours == 6
-        # Change pipeline interval, disable the sweep.
-        schedules[:] = _schedules(pipeline_hours=12, sweep_enabled=False)
+        assert m._state["controller"].interval_hours == 6
+        # Change the controller interval, disable consolidation.
+        schedules[:] = _schedules(controller_hours=12, consol_enabled=False)
         m.reconcile()
 
         by_id = {s.job_id: s for s in m.status()}
-        assert m._state["ingest"].interval_hours == 12
-        assert by_id["skeptic"].state == "disabled"
+        assert m._state["controller"].interval_hours == 12
+        assert by_id["belief_consolidation"].state == "disabled"
         # A paused (disabled) job has no scheduled next fire.
-        assert by_id["skeptic"].next_run_at is None
+        assert by_id["belief_consolidation"].next_run_at is None
         # Re-enable and confirm it resumes.
-        schedules[:] = _schedules(pipeline_hours=12, sweep_enabled=True)
+        schedules[:] = _schedules(controller_hours=12, consol_enabled=True)
         m.reconcile()
         by_id = {s.job_id: s for s in m.status()}
-        assert by_id["skeptic"].state == "idle"
-        assert by_id["skeptic"].next_run_at is not None
+        assert by_id["belief_consolidation"].state == "idle"
+        assert by_id["belief_consolidation"].next_run_at is not None
     finally:
         m.shutdown()

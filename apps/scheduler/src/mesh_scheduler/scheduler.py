@@ -60,22 +60,17 @@ def _aps_id(job_id: str, field_id: str) -> str:
 
 # job_id → CLI command. The set of job_ids the scheduler will run.
 JOB_COMMANDS: dict[str, list[str]] = {
-    "ingest": ["uv", "run", "mesh-ingest", "--a2a"],
-    "skeptic": ["uv", "run", "mesh-skeptic"],
     # Phase 16c: offline memory consolidation (distills episodic history into
-    # procedural heuristics). Fired by the existing scheduler — no new container.
+    # procedural heuristics). Iterates active fields internally — no --field flag.
     "memory_consolidation": ["uv", "run", "mesh-consolidate-memory"],
     # Phase 19: offline belief consolidation (semantic dedup/merge + staleness
     # decay/archival). Iterates active fields internally — no --field flag.
     "belief_consolidation": ["uv", "run", "mesh-consolidate-beliefs"],
-    # Phase 22d: proactive autonomous discovery (gap/trend analysis → opens
-    # discovery investigations → dispatches real search). No new container.
-    "discovery": ["uv", "run", "mesh-discover"],
-    # Deterministic controller: the rule-based, auction-free replacement for
-    # ingest/skeptic/discovery (scout → extract → resolve → synthesize →
-    # challenge → investigate, under explicit rules + a per-round step cap).
-    # Seeded disabled; enable per field from the Pipelines page to flip the
-    # go-live. ``--apply`` lets it write through the gateway and loop to quiescence.
+    # Deterministic controller: the rule-based orchestrator that replaced the
+    # fixed ingest/skeptic/discovery jobs (scout → extract → resolve →
+    # consolidate → synthesize → challenge → investigate, under explicit rules +
+    # a per-round step cap). ``--apply`` writes through the gateway and loops to
+    # quiescence; ``--field`` scopes it to the per-field scheduled job.
     "controller": ["uv", "run", "mesh-controller", "--apply"],
 }
 
@@ -207,9 +202,9 @@ class SchedulerManager:
     ) -> None:
         aps_id = _aps_id(job_id, field_id)
         cmd = list(JOB_COMMANDS[job_id])
-        # Only the ingest command accepts --field; sweep/consolidation
-        # process all fields / their own scope.
-        if job_id == "ingest":
+        # Only the controller accepts --field (it runs one field per scheduled
+        # job); the consolidation jobs process all fields in their own scope.
+        if job_id == "controller":
             cmd += ["--field", field_id]
         env = dict(os.environ)
         env["MESH_TRIGGERED_BY"] = triggered_by

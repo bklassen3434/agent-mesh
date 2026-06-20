@@ -71,20 +71,23 @@ uv run mesh.cli add-revision \
 uv run mesh.cli show-revisions --belief <belief-id>
 ```
 
-## Running the pipeline
+## Running the pipeline (the controller)
 
-The pipeline needs an LLM provider — by default Anthropic (`ANTHROPIC_API_KEY` in `.env`); set
-`MESH_LLM_PROVIDER=ollama` to run against a local Ollama instead. See [llm-setup.md](llm-setup.md).
+The deterministic controller (`mesh-controller`) is the only orchestration job — it
+runs the whole reactive loop (scout → extract → resolve → consolidate → synthesize →
+challenge → investigate). It needs an LLM provider — by default Anthropic
+(`ANTHROPIC_API_KEY` in `.env`); set `MESH_LLM_PROVIDER=ollama` to run against a
+local Ollama instead. See [llm-setup.md](llm-setup.md).
 
 ```bash
-# Run with defaults (cs.AI, cs.RO, cs.LG; last 24h; max 20 papers)
-uv run mesh-ingest
+# Shadow: preview one round's plan + effects, write nothing
+uv run mesh-controller
 
-# Fetch up to 50 papers from cs.LG in the last 7 days
-uv run mesh-ingest --categories cs.LG --max-papers 50 --since 7d
+# Act + loop to quiescence
+uv run mesh-controller --apply
 
 # Scope a run to a specific field
-uv run mesh-ingest --field ai-robotics
+uv run mesh-controller --apply --field ai-robotics
 
 # Check results
 uv run mesh.cli pipeline-stats
@@ -138,8 +141,8 @@ uv run mypy .
 agent-mesh/
 ├── apps/
 │   ├── cli/               — mesh.cli entry point
-│   ├── pipeline/          — LangGraph coordinator + skeptic/discovery/consolidation graphs
-│   ├── agents/            — A2A agent HTTP servers (scouts + workers)
+│   ├── pipeline/          — deterministic controller (mesh-controller)
+│   ├── agents/            — A2A agent HTTP servers (orphaned; skills call core fns in-process)
 │   ├── api/               — read-only FastAPI service (:8000)
 │   ├── wiki/              — Next.js wiki (:3000)
 │   └── scheduler/         — BackgroundScheduler control surface (:9100)
@@ -175,9 +178,11 @@ etc.) lives in the repo root `CLAUDE.md`.
 
 Tracing is a no-op if the Langfuse keys are absent — you do not need a Langfuse instance to develop.
 
-## Running the distributed stack (Phase 2)
+## Running the distributed stack (Phase 2, legacy)
 
-Phase 2 runs each agent as a separate HTTP server coordinated by the coordinator.
+> Historical: the A2A agent servers still exist but are orphaned — the controller's
+> skills call the shared core functions in-process. The compose services below boot
+> the servers, but the production path no longer dispatches through them.
 
 ### Prerequisites (additional)
 
@@ -218,11 +223,11 @@ cp .env.example .env
 # Linux only: point containers at the Docker bridge gateway
 # echo 'OLLAMA_HOST=http://172.17.0.1:11434' >> .env
 
-# Build and start agent services
+# Build and start services
 make up
 
-# Run one full pipeline cycle
-make ingest
+# Run one full controller cycle
+make controller-apply
 
 # Show pipeline stats
 uv run mesh.cli pipeline-stats --last 1
@@ -265,24 +270,23 @@ The agent HTTP servers live in `apps/agents/src/mesh_agent_servers/`.
 The fleet has grown well beyond the original four agents: ~10 scouts (arxiv, hn, github,
 bluesky, reddit, blog, leaderboard, web-search, rss, rest-json) plus worker agents
 (claim-extractor, entity-tracker, sota-tracker, curator, skeptic, personalizer,
-research-qa) — coordinated by the LangGraph coordinator alongside the skeptic / discovery /
-consolidation sweeps and the scheduler. See [agents.md](agents.md) for the current roster,
-ports, and skills, and the `docker-compose.yml` services list for what `make up` boots.
+research-qa). These A2A servers are now orphaned — the deterministic controller's skills
+call the same core functions in-process, so no fleet needs to run. See [agents.md](agents.md)
+for the roster, ports, and skills, and the `docker-compose.yml` services list for what
+`make up` boots.
 
-### Orchestration: A2A coordinator vs. legacy orchestrator
+### Orchestration: the deterministic controller
 
-By default `mesh-ingest` runs the in-process legacy orchestrator. Pass `--a2a` (or set
-`MESH_USE_A2A=true`) to run the LangGraph **A2A coordinator** instead — the current,
-production orchestration path (stateful LangGraph graphs checkpointed to Postgres, per-field
-connector dispatch). The docker `coordinator` service sets `MESH_USE_A2A=true`, so `make
-pipeline` always uses the coordinator. The legacy in-process orchestrator predates per-field
-connectors and is retained only for simple local single-field runs.
+The deterministic controller (`mesh-controller`) is the only orchestrator — there is no
+coordinator/ingest graph or legacy in-process orchestrator anymore (both deleted, along with
+the `--a2a` flag). The controller senses the store into tensions, plans the round via the rule
+table, and dispatches skills that emit effects through the write gateway. See
+[deterministic-controller.md](deterministic-controller.md).
 
 ### Agent-server environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MESH_USE_A2A` | `false` | Use the LangGraph A2A coordinator instead of the legacy in-process orchestrator |
 | `MESH_AGENT_URLS` | localhost agent ports | Comma-separated agent base URLs for discovery |
 | `AGENT_HOST` | `0.0.0.0` | Bind address for agent servers |
 | `AGENT_PORT` | varies | Port for agent server |
@@ -326,46 +330,34 @@ full architectural rationale.
 ### Running the full stack in docker
 
 ```bash
-make up                # the agent fleet + api + wiki + mesh-postgres
-make ingest            # one-shot coordinator run; populates the DB
-make skeptic           # one falsification sweep (skeptic profile)
-make consolidate-memory  # one memory-consolidation cycle
-make consolidate-beliefs # one belief-consolidation cycle
-make discover          # one autonomous-discovery cycle
-make smoke             # up + one pipeline + row-count + A2A discovery check
+make up                # api + wiki + scheduler + mesh-postgres
+make controller        # one shadow controller round (previews the plan, writes nothing)
+make controller-apply  # one controller run; acts + loops to quiescence; populates the DB
 make wiki              # opens the wiki dashboard
 make api               # opens the Swagger UI
 make types             # regenerate apps/wiki/src/lib/api-types.ts (needs API up)
 make test              # uv run pytest + wiki Playwright E2E (make test-ui)
-make down              # tear down (incl. skeptic + scheduler profiles)
+make down              # tear down
 ```
 
 `make test-ui-headed` / `test-ui-debug` / `test-ui-report` drive the wiki Playwright E2E
 in headed / debug / report modes.
 
-## Falsification sweep (Phase 4)
+## Falsification (the challenge-belief rule)
 
-`make skeptic` runs the out-of-band falsification job. Curator picks beliefs
-worth challenging, Skeptic assesses each, and applicable assessments land as
-counter-claims plus BeliefRevisions in the existing DB.
+Belief challenge is now a controller rule, not a separate sweep job: the
+`challenge-contested-beliefs` rule routes `contested_claim` / `stale_belief`
+tensions to the `challenge-belief` skill. Curator picks beliefs worth challenging,
+the skeptic assesses each, and applicable assessments land as counter-claims plus
+BeliefRevisions in the DB — all in a normal controller run (`mesh-controller
+--apply`).
 
-```bash
-make ingest        # populate beliefs
-make skeptic       # one-shot falsification sweep
-```
-
-`make skeptic` builds + boots the `curator` and `skeptic` services under the
-`skeptic` profile, then runs the `skeptic-sweep` one-shot job to completion.
-The services stay running afterwards so subsequent sweeps reuse them; tear
-them down with `docker compose --profile skeptic down`.
-
-### Phase 4 environment variables
+### Falsification environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `MESH_SKEPTIC_APPLY_THRESHOLD` | `0.7` | Apply an assessment only if the Skeptic's self-reported confidence clears this. |
-| `MESH_CURATOR_PICK_COUNT` | `5` | How many beliefs Curator returns per sweep. |
+| `MESH_CURATOR_PICK_COUNT` | `5` | How many beliefs Curator returns per challenge pass. |
 | `MESH_CURATOR_COOLDOWN_DAYS` | `7` | Beliefs the skeptic looked at within this window get a Curator score penalty so they don't dominate back-to-back runs. |
 | `MESH_SKEPTIC_SOURCE_RELIABILITY` | `0.4` | `reliability_prior` on the synthetic `agent_reasoning` source rows the skeptic emits. |
 | `MESH_LLM_MODEL_SKEPTIC` | (unset) | Per-agent model override for the skeptic (see [llm-setup.md](llm-setup.md) for the routing precedence). |
-| `MESH_SKEPTIC_AGENT_URLS` | `http://curator:8007,http://skeptic:8006` | Comma-separated A2A base URLs the `skeptic_sweep` orchestrator discovers. |

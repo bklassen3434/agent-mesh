@@ -828,7 +828,9 @@ def show_sota_beliefs() -> None:
     conn.close()
 
     if not beliefs:
-        console.print("[dim]No SOTA beliefs recorded yet. Run mesh-ingest first.[/dim]")
+        console.print(
+            "[dim]No SOTA beliefs recorded yet. Run `mesh-controller --apply` first.[/dim]"
+        )
         return
 
     table = Table(title="SOTA Beliefs")
@@ -852,7 +854,6 @@ def ask(question: str, field: str) -> None:
     a cited answer using only that evidence. Runs the ResearchQA agent in-process
     against a read-only connection; nothing is written.
     """
-    import asyncio
 
     from mesh_agents.research_qa import ResearchQAAgent, ResearchQAInput
     from mesh_llm import LLMProviderNotReadyError, make_routed_llm_client
@@ -933,7 +934,6 @@ def ollama_check() -> None:
 )
 def a2a_discover(agent_urls: str | None) -> None:
     """Fetch A2A agent cards and print a discovery table."""
-    import asyncio
 
     import httpx
     from a2a.client.card_resolver import A2ACardResolver
@@ -989,7 +989,6 @@ def a2a_call(skill_id: str, json_payload: str, agent_urls: str | None) -> None:
     SKILL_ID is the skill to invoke (e.g. 'resolve_entities').
     JSON_PAYLOAD is the JSON input for that skill.
     """
-    import asyncio
     import json as _json
 
     from mesh_a2a.client import MeshA2AClient
@@ -1048,15 +1047,11 @@ def schedule_status() -> None:
 
     conn = _get_conn()
     try:
-        recent_pipeline = list_pipeline_runs(conn, limit=1, run_type="ingest")
-        recent_sweep = list_pipeline_runs(conn, limit=1, run_type="skeptic")
+        recent = list_pipeline_runs(conn, limit=1, run_type="controller")
     finally:
         conn.close()
 
-    last_by_job = {
-        "ingest": recent_pipeline[0] if recent_pipeline else None,
-        "skeptic": recent_sweep[0] if recent_sweep else None,
-    }
+    last_by_job = {"controller": recent[0] if recent else None}
 
     # Latest checkpoint state per run_type (read_run_states is newest-first;
     # empty when no Postgres checkpoint store is configured).
@@ -1073,7 +1068,7 @@ def schedule_status() -> None:
     table.add_column("Triggered by")
     table.add_column("Counts")
     table.add_column("Checkpoint")
-    for job_id in ("ingest", "skeptic"):
+    for job_id in ("controller",):
         next_run = next_runs.get(job_id)
         last = last_by_job.get(job_id)
         if last is None:
@@ -1089,13 +1084,10 @@ def schedule_status() -> None:
             else:
                 duration = "running"
             trig = last.triggered_by
-            if job_id == "ingest":
-                counts = (
-                    f"claims +{last.claims_inserted} / "
-                    f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"
-                )
-            else:
-                counts = f"beliefs ~{last.beliefs_revised}"
+            counts = (
+                f"claims +{last.claims_inserted} / "
+                f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"
+            )
         cp = latest_checkpoint.get(job_id)
         if cp is None:
             checkpoint = "—"
@@ -1206,48 +1198,23 @@ def investigations_list(
 @cli.command("discover")
 @click.option("--field", default="ai-robotics", show_default=True, help="Field slug.")
 @click.option(
-    "--apply",
-    "apply_",
-    is_flag=True,
-    default=False,
-    help="Open discovery investigations + dispatch real search (default: dry-run).",
-)
-@click.option(
     "--report-path",
     default=None,
     help="Write the dry-run report to this file (text).",
 )
-def discover(field: str, apply_: bool, report_path: str | None) -> None:
-    """Phase 22: autonomous discovery — analyze a field for gaps/trends and draft
-    investigation hypotheses. Dry-run by default (lists what it WOULD open);
-    --apply opens the investigations and dispatches real hypothesis-directed
-    search through the running scout stack."""
+def discover(field: str, report_path: str | None) -> None:
+    """Autonomous discovery (read-only preview) — analyze a field for gaps/trends
+    and draft investigation hypotheses, listing what discovery WOULD open. Acting
+    on them is the controller's job: run ``mesh-controller --apply`` (its
+    ``investigate-gap`` rule opens these and dispatches the search)."""
+    from mesh_agents.discovery import (
+        discover_gap_limit,
+        discover_max_new,
+        plan_field_discovery,
+    )
     from mesh_db.fields import get_field_by_slug
     from mesh_llm import LLMProviderNotReadyError, make_routed_llm_client
     from mesh_models.field import DEFAULT_FIELD_ID
-    from mesh_pipeline.discovery import _gap_limit, _max_new, plan_field_discovery
-    from rich.panel import Panel
-
-    if apply_:
-        from mesh_pipeline.discovery import run_discovery
-
-        result = asyncio.run(run_discovery(field))
-        console.print(
-            Panel(
-                "\n".join(
-                    [
-                        f"[bold]Run:[/bold] {result.run_id}",
-                        f"[bold]Gaps found:[/bold] {result.gaps_found}",
-                        f"[bold]Hypotheses drafted:[/bold] {result.hypotheses_drafted}",
-                        f"[bold]Investigations opened:[/bold] {result.investigations_opened}",
-                        f"[bold]Fetches dispatched:[/bold] {result.fetches_dispatched}",
-                        f"[bold]Claims inserted:[/bold] {result.claims_inserted}",
-                    ]
-                ),
-                title=f"Discovery applied [{result.field_slug}]",
-            )
-        )
-        return
 
     conn = _get_conn()
     try:
@@ -1258,7 +1225,7 @@ def discover(field: str, apply_: bool, report_path: str | None) -> None:
         except LLMProviderNotReadyError:
             llm = None
         gaps, proposals, built, _usage, _model = plan_field_discovery(
-            conn, llm, field_id, gap_limit=_gap_limit(), max_new=_max_new()
+            conn, llm, field_id, gap_limit=discover_gap_limit(), max_new=discover_max_new()
         )
     finally:
         conn.close()
@@ -1271,7 +1238,7 @@ def discover(field: str, apply_: bool, report_path: str | None) -> None:
     for g in gaps:
         gap_table.add_row(g.kind.value, g.subject, f"{g.priority:.2f}", g.rationale)
 
-    open_table = Table(title=f"Would open ({len(built)}, cap {_max_new()})")
+    open_table = Table(title=f"Would open ({len(built)}, cap {discover_max_new()})")
     open_table.add_column("Origin", style="magenta")
     open_table.add_column("Sources")
     open_table.add_column("Hypothesis", overflow="fold")
@@ -1295,7 +1262,8 @@ def discover(field: str, apply_: bool, report_path: str | None) -> None:
         )
     console.print(
         f"[dim]{len(gaps)} gaps, {len(proposals)} hypotheses, "
-        f"{len(built)} investigations would open. Re-run with --apply to act.[/dim]"
+        f"{len(built)} investigations would open. Run `mesh-controller --apply` "
+        f"to act on them.[/dim]"
     )
 
     if report_path:

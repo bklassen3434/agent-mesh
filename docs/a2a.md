@@ -1,5 +1,13 @@
 # A2A Protocol Layer
 
+> **Status: historical / orphaned.** The A2A agent servers and the LangGraph
+> coordinator/skeptic-sweep graphs described here still exist in the tree but are
+> **no longer the orchestration path**. The deterministic controller
+> (`mesh-controller`) is now the only orchestrator; its skills call the shared core
+> functions in-process rather than dispatching over A2A. References below to "the
+> coordinator", `coordinator.py`, `skeptic_sweep.py`, and A2A dispatch describe the
+> superseded mechanism. See `docs/deterministic-controller.md`.
+
 This document explains how Agent Mesh uses the [Agent2Agent (A2A) protocol](https://a2aproject.github.io/A2A/) to turn local Python classes into distributed HTTP agents, and how Phase 5a moves invocation from sync request/response to task-based submit-then-poll.
 
 ---

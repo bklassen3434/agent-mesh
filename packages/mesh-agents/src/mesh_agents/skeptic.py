@@ -242,19 +242,23 @@ def challenge_belief_pure(
         return _INCONCLUSIVE.model_copy(), LLMUsage(), getattr(llm, "model", "")
 
 
-def _challenge_with_memory(
+def challenge_belief_with_memory(
     llm: LLMClient,
     agent_input: SkepticInput,
-    agent_name: str,
+    agent_name: str = "skeptic",
     field_id: str = DEFAULT_FIELD_ID,
+    conn: Any | None = None,
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
-    """Gather the skeptic's applicable heuristics + challenge history on this
-    belief's topic (off the event loop), then assess with that memory folded
-    into the prompt. Scoped to ``field_id``; the system prompt is built from that
-    field's profile."""
+    """The full agentic challenge: gather the skeptic's applicable heuristics +
+    challenge history on this belief's topic, then assess with that memory folded
+    into the prompt. The unit both the controller's ``challenge-belief`` skill and
+    the (orphaned) A2A handler call. Scoped to ``field_id``; the system prompt is
+    built from that field's profile. ``conn`` (optional) is the connection memory
+    reads run on — the skill passes its own; the A2A handler lets it open one."""
     profile = load_profile(field_id)
     memory_block = build_memory_block(
-        agent_name, "challenge_belief", topic=agent_input.belief.topic, field_id=field_id
+        agent_name, "challenge_belief", conn=conn,
+        topic=agent_input.belief.topic, field_id=field_id,
     )
     return challenge_belief_pure(llm, agent_input, memory_block, profile)
 
@@ -275,7 +279,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
             ],
         )
         assessment, usage, model = await asyncio.to_thread(
-            _challenge_with_memory, llm, agent_input, agent_name, skill_input.field_id
+            challenge_belief_with_memory, llm, agent_input, agent_name, skill_input.field_id
         )
         return ChallengeBeliefSkillOutput(
             verdict=assessment.verdict,
@@ -291,6 +295,11 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
 
 
 class SkepticAgent(BaseAgent):
+    """A2A adapter over the shared challenge core (``challenge_belief_pure`` /
+    ``challenge_belief_with_memory``). The controller path no longer uses this
+    class — the ``challenge-belief`` skill calls the core directly; this remains
+    the network entry point for the (orphaned) A2A server in ``apps/agents``."""
+
     name = "skeptic"
 
     def __init__(self, llm: LLMClient | None = None, db_conn: Any | None = None) -> None:

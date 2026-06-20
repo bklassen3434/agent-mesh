@@ -16,11 +16,11 @@ The full system (Phases 1+) will consist of:
 
 ## How the system works (current)
 
-At a glance: **sources flow in → become immutable Claims → Claims synthesize into mutable Beliefs → people read it through the wiki.** A set of background loops continuously challenge, de-duplicate, and extend that knowledge. Everything lives in one Postgres instance; the LangGraph **coordinator** is the only writer.
+At a glance: **sources flow in → become immutable Claims → Claims synthesize into mutable Beliefs → people read it through the wiki.** The same loop continuously challenges, de-duplicates, and extends that knowledge. Everything lives in one Postgres instance; the deterministic **controller** is the only writer.
 
-### 1. The core knowledge loop (ingestion)
+### 1. The core knowledge loop (the controller)
 
-The `mesh-ingest` coordinator (a LangGraph state machine) drives one run from raw sources to beliefs. Scouts, the extractor, and the skeptic are pure A2A agents — they hold no database; the coordinator owns every read and write.
+The deterministic controller (`mesh-controller`) is the single orchestrator. It senses the knowledge store into a self-writing checklist of **tensions**, plans the round via an ordered **rule table**, and dispatches **skills** that emit **effects** a write gateway applies — running the whole reactive loop (scout → extract → resolve → consolidate → synthesize → challenge → investigate) to quiescence. Skills call shared core functions directly and own every write through the gateway; the A2A agent servers still exist but are orphaned. See [deterministic-controller.md](deterministic-controller.md).
 
 ```mermaid
 flowchart TD
@@ -34,7 +34,7 @@ flowchart TD
         S7[Web search]
     end
 
-    subgraph coord["🧠 Coordinator — LangGraph pipeline (the only DB writer)"]
+    subgraph coord["🧠 Controller — deterministic rule engine (the only DB writer)"]
         direction TB
         SCOUT["Scouts<br/>(fan-out, one per source)"]
         EXTRACT["Claim Extractor (LLM)<br/>source text → structured Claims"]
@@ -63,39 +63,39 @@ flowchart TD
 
 **Key idea — Claims are immutable, Beliefs are mutable.** A Claim is a frozen fact extracted from one source ("Model X scores 92.1 on benchmark Y"). Beliefs are the synthesized, evolving view ("X is SOTA on Y, confidence 0.78"). Every change to a Belief appends a `BeliefRevision` row — the history is never overwritten. New evidence never edits a Claim; it inserts a new one and marks the old one `superseded`.
 
-### 2. The background loops (self-revision)
+### 2. Self-revision (the same loop)
 
-Beyond ingestion, a `BackgroundScheduler` fires five recurring jobs (intervals configurable per field via the `/pipelines` page). Each is its own LangGraph job; together they keep the knowledge base honest, compact, and growing.
+Challenge, de-duplication, decay/archival, and memory consolidation are not separate jobs — they are **rules in the same controller**, fired as their tensions appear. The challenge and discovery rules fire reactively off board state; the maintenance rules (belief decay/archival, memory consolidation) are **cooldown-gated**, firing one tension per field on a timer.
 
 ```mermaid
 flowchart LR
     SCHED["⏱️ Scheduler<br/>(BackgroundScheduler, :9100)<br/>config in Postgres"]
 
-    SCHED --> P["ingest<br/>ingest new sources"]
-    SCHED --> SK["skeptic<br/>challenge weak beliefs →<br/>counter-claims, confidence ↓"]
-    SCHED --> DISC["discovery<br/>find knowledge gaps →<br/>open investigations"]
-    SCHED --> BC["belief_consolidation<br/>merge duplicate beliefs +<br/>decay/archive stale ones"]
-    SCHED --> CON["memory_consolidation<br/>distill agent episodic<br/>memory → heuristics"]
+    SCHED --> CTRL["controller<br/>(mesh-controller --apply, per field)"]
 
-    P --> DB[("🗄️ Postgres knowledge store")]
-    SK --> DB
-    DISC --> DB
-    BC --> DB
-    CON --> DB
+    CTRL --> R1["challenge-belief<br/>counter-claims, confidence ↓"]
+    CTRL --> R2["investigate-gap<br/>find gaps → open investigations"]
+    CTRL --> R3["consolidate-beliefs / maintain-belief<br/>merge duplicates + decay/archive"]
+    CTRL --> R4["consolidate-memory<br/>episodic memory → heuristics"]
+
+    R1 --> DB[("🗄️ Postgres knowledge store")]
+    R2 --> DB
+    R3 --> DB
+    R4 --> DB
 ```
 
-| Loop | What it does | Invariant it respects |
+| Rule / skill | What it does | Invariant it respects |
 |---|---|---|
-| **ingest** | Pulls new sources, extracts claims, synthesizes beliefs | Coordinator-owned writes only |
-| **skeptic** | Picks shaky beliefs, attacks them with an LLM, files counter-claims + adjusts confidence | Adds *new* claims; never edits existing ones |
-| **discovery** | Analyzes the whole field for gaps/stale areas, opens `origin=discovery` investigations | Proposes evidence-gathering, never facts |
-| **belief_consolidation** | Semantic-merges duplicate beliefs, decays/archives stale ones | Append-only — a merged belief is absorbed, never deleted |
-| **memory_consolidation** | Turns agents' episodic history into reusable heuristics (memory) | Never crosses fields |
+| **challenge-belief** | Picks shaky beliefs, attacks them with an LLM, files counter-claims + adjusts confidence | Adds *new* claims; never edits existing ones |
+| **investigate-gap** | Analyzes the whole field for gaps/stale areas, opens `origin=discovery` investigations | Proposes evidence-gathering, never facts |
+| **consolidate-beliefs** | Semantic-merges duplicate beliefs | Append-only — a merged belief is absorbed, never deleted |
+| **maintain-belief** | Decays/archives stale beliefs (LLM-free, cooldown-gated) | Append-only revisions; never deletes |
+| **consolidate-memory** | Turns agents' episodic history into reusable heuristics (cooldown-gated) | Never crosses fields |
 
 ### 3. How it's deployed
 
-- **Long-running services** (`make up`): `mesh-postgres`, `apps/api` (:8000), `apps/wiki` (:3000), `apps/scheduler` (:9100), and the A2A agent servers (scouts/extractor/skeptic/curator on :8001–:8013).
-- **On-demand jobs**: the coordinator and the four other loops run when the scheduler fires them — or by hand via `make ingest` / `mesh.cli`.
+- **Long-running services** (`make up`): `mesh-postgres`, `apps/api` (:8000), `apps/wiki` (:3000), `apps/scheduler` (:9100). The A2A agent servers still exist but are orphaned (skills call shared core functions in-process).
+- **On-demand**: the controller runs per field when the scheduler fires it — or by hand via `make controller` / `make controller-apply` / `mesh.cli`.
 - **Field-scoped**: every knowledge row carries a `field_id`. The seeded `ai-robotics` field is the default; the core never branches on field, so new fields drop in as config, not code.
 
 The sections below trace how the system reached this shape, phase by phase.
@@ -396,9 +396,9 @@ its own doc):
   questions with cited, store-grounded answers and a coverage badge
   (`docs/knowledge-chatbot.md`).
 - **22 Autonomous discovery.** A rule-based field analyzer mines gaps into
-  ranked signals; one LLM pass drafts testable hypotheses; a `mesh-discover`
-  sweep opens capped `origin="discovery"` investigations and dispatches real
-  search. Discovery proposes evidence-gathering, never facts
+  ranked signals; one LLM pass drafts testable hypotheses; the controller's
+  `investigate-gap` rule opens capped `origin="discovery"` investigations and
+  dispatches real search. Discovery proposes evidence-gathering, never facts
   (`docs/autonomous-discovery.md`).
 - **23 Agent observability.** A field-scoped, append-only
   `agents.agent_invocations` table records one row per coordinator skill
@@ -417,8 +417,8 @@ packages/mesh-llm      — LLM clients (Anthropic + Ollama), embedder, routing; 
 packages/mesh-agents   — Agent classes; depends on mesh-llm, mesh-db, mesh-models
 packages/mesh-a2a      — A2A client + card builder; depends on mesh-tracing
 apps/cli               — Click CLI; depends on mesh-db, mesh-models, mesh-llm
-apps/pipeline          — Async orchestrator + coordinator; depends on mesh-agents, mesh-a2a
-apps/agents            — A2A agent server entry points
+apps/pipeline          — Deterministic controller (mesh-controller); depends on mesh-agents, mesh-a2a
+apps/agents            — A2A agent server entry points (orphaned; skills call core fns in-process)
 apps/api               — FastAPI read service; depends on mesh-db, mesh-models   (Phase 3)
 apps/wiki              — Next.js 15 wiki; consumes apps/api via OpenAPI         (Phase 3)
 ```

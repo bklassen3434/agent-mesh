@@ -11,7 +11,7 @@ same `Investigation` table, same dispatch plumbing, a different trigger.
 |---|---|---|
 | Scope | one held belief at a time | the whole field's knowledge state |
 | Trigger | this belief looks thin/stale/contested | a field-level gap or rising trend |
-| Cadence | every pipeline run + skeptic sweep | a dedicated daily sweep (`mesh-discover`) |
+| Cadence | every controller round | the controller's `investigate-gap` rule |
 | Origin stamp | `origin = "curator"` | `origin = "discovery"` |
 
 Both paths emit `Investigation` rows and feed the **same** dispatch node. Neither
@@ -19,30 +19,26 @@ writes claims or beliefs directly — they only open investigations and gather
 sources. New knowledge always flows through the normal extract → resolve →
 synthesize path. **Discovery proposes evidence-gathering, never facts.**
 
-## The sweep
+## The mechanism
 
-`mesh-discover` (a LangGraph job cloned from the skeptic sweep) runs, per active
-field:
-
-```
-START → plan ─[opened?]→ dispatch | finalize
-  dispatch → finalize → END
-```
+Discovery is the controller's `investigate-gap` rule (the gap tensions →
+`investigate-gap` skill). Per field, in a controller round:
 
 1. **plan** — `mesh_agents.discovery.analyze_field` (rule-based, no LLM) mines
    the field's state into ranked `GapSignal`s, then `draft_hypotheses` (one LLM
    pass) turns the top gaps into testable hypotheses, and
    `build_discovery_investigations` maps those to `Investigation` models —
    deduped against open ones and capped by `MESH_DISCOVER_MAX_NEW`. The capped
-   set is written (`create_investigation`, `origin="discovery"`).
-2. **dispatch** — reuses the coordinator's `dispatch_open_investigations`
-   (investigate → extract → resolve → insert-claims), capped by
-   `MESH_DISCOVER_MAX_FETCH`. Only sources backed by a connector **enabled for
-   the field** are dispatched; fetch failures record into `state["errors"]` and
-   never abort the sweep.
-3. **finalize** — idempotent (`pipeline_run_exists` guard), ledgers the drafting
-   LLM call to `llm_usage`, and records a `discovery` pipeline run. Cost is
-   attributed in Langfuse (the LLM client traces the generation).
+   set is opened as `origin="discovery"` investigations via the
+   `OpenInvestigationEffect`.
+2. **dispatch** — the `dispatch-investigation` skill works the open investigations
+   via the shared `dispatch_open_investigations` (investigate → extract → resolve
+   → insert-claims), capped by `MESH_DISCOVER_MAX_FETCH`. Only sources backed by a
+   connector **enabled for the field** are dispatched; fetch failures are recorded
+   per-skill and never abort the round.
+
+The drafting LLM call is ledgered to `llm_usage` and traced in Langfuse like any
+other controller skill.
 
 ## Gap / trend signal taxonomy
 
@@ -91,28 +87,25 @@ empty; config-driven `rss`/`rest_json` have no investigate (a single fixed
 feed/endpoint has no hypothesis-search semantics). The dispatch is tolerant of a
 connector that advertises no investigate skill — it just skips it.
 
-## Dry-run / apply from the CLI
+## Dry-run preview from the CLI
+
+`mesh.cli discover` is a read-only preview: it prints the gaps + the hypotheses
+discovery *would* open, without writing. Acting on discovery is the controller's
+job (`mesh-controller --apply`).
 
 ```bash
-# Dry-run: print the gaps + the hypotheses it WOULD open (no writes).
+# Print the gaps + the hypotheses it WOULD open (no writes).
 uv run mesh.cli discover --field ai-robotics
 uv run mesh.cli discover --report-path /tmp/discovery.txt
-
-# Apply: open investigations + dispatch real search (needs the scout stack up).
-uv run mesh.cli discover --apply
-
-# As a one-shot container cycle (mirrors `make consolidate-memory`):
-make discover
 ```
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MESH_DISCOVER_MAX_NEW` | `5` | Max investigations a sweep opens per field. |
-| `MESH_DISCOVER_MAX_FETCH` | `10` | Max source records a sweep gathers per field. |
+| `MESH_DISCOVER_MAX_NEW` | `5` | Max `discovery`-origin investigations opened per field per round. |
+| `MESH_DISCOVER_MAX_FETCH` | `10` | Max source records discovery dispatch gathers per field. |
 | `MESH_DISCOVER_GAP_LIMIT` | `20` | Max gap signals `analyze_field` returns. |
-| `MESH_DISCOVER_FIELD` | (unset → all active fields) | `--field` default for `mesh-discover`. |
 | `MESH_LLM_MODEL_DISCOVERY` | (routing/provider default) | Per-agent model pin for the drafting LLM. |
 
 The drafting call uses `make_routed_llm_client(agent_name="discovery")`, so a
@@ -122,8 +115,8 @@ static `MESH_LLM_MODEL_DISCOVERY` pin always wins; otherwise tiered routing
 ## Field isolation
 
 Gap/trend analysis, hypothesis drafting, and dispatch all scope to one
-`field_id`. A field's discovery never reads or seeds another. The scheduled job
-loops every active field, one sweep (and one checkpoint thread) each.
+`field_id`. A field's discovery never reads or seeds another. The controller runs
+per field, so each field's gaps are analysed and dispatched independently.
 
 ## Out of scope
 

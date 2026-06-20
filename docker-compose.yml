@@ -497,15 +497,17 @@ services:
       - skeptic
     restart: unless-stopped
 
-  coordinator:
+  controller:
     build:
       context: .
       dockerfile: Dockerfile.coordinator
+    # The deterministic controller is the sole orchestrator. It dispatches skills
+    # in-process (no A2A), so it needs only Postgres + an LLM key — not the agent
+    # stack. One-shot: runs one field to quiescence and exits.
+    entrypoint: ["uv", "run", "mesh-controller", "--apply"]
     environment:
-      MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
       # Phase 12: owner DSN applies the schema + roles on startup; the
-      # coordinator's knowledge writes go through the writer role.
+      # controller's knowledge writes go through the writer role.
       MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
       MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
       MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
@@ -516,80 +518,19 @@ services:
     depends_on:
       mesh-postgres:
         condition: service_healthy
-      arxiv-scout:
-        condition: service_healthy
-      claim-extractor:
-        condition: service_healthy
-      entity-tracker:
-        condition: service_healthy
-      sota-tracker:
-        condition: service_healthy
-      hn-scout:
-        condition: service_healthy
-      github-scout:
-        condition: service_healthy
-      bluesky-scout:
-        condition: service_healthy
-      reddit-scout:
-        condition: service_healthy
-      blog-scout:
-        condition: service_healthy
-      leaderboard-scout:
-        condition: service_healthy
-      web-search-scout:
-        condition: service_healthy
-      rss-scout:
-        condition: service_healthy
-      rest-json-scout:
-        condition: service_healthy
     profiles:
-      - pipeline
-
-  skeptic-sweep:
-    build:
-      context: .
-      dockerfile: Dockerfile.coordinator
-    # Reuse the coordinator image (same workspace install) but swap the
-    # entry point. One-shot job that exits when the sweep completes.
-    entrypoint: ["uv", "run", "mesh-skeptic"]
-    environment:
-      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
-      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
-      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
-      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      MESH_SKEPTIC_APPLY_THRESHOLD: ${MESH_SKEPTIC_APPLY_THRESHOLD:-0.7}
-      MESH_CURATOR_PICK_COUNT: ${MESH_CURATOR_PICK_COUNT:-5}
-      MESH_CURATOR_COOLDOWN_DAYS: ${MESH_CURATOR_COOLDOWN_DAYS:-7}
-      MESH_SKEPTIC_SOURCE_RELIABILITY: ${MESH_SKEPTIC_SOURCE_RELIABILITY:-0.4}
-    env_file:
-      - .env
-    depends_on:
-      mesh-postgres:
-        condition: service_healthy
-      curator:
-        condition: service_healthy
-      skeptic:
-        condition: service_healthy
-    profiles:
-      - skeptic
+      - controller
 
   scheduler:
     build:
       context: .
       dockerfile: Dockerfile.coordinator
-    # Reuse the coordinator image — the scheduler shells out to the same CLI
-    # entry points (mesh-ingest, mesh-skeptic) so it needs the same
-    # workspace install and DB volume.
+    # Reuse the coordinator image — the scheduler shells out to `mesh-controller`
+    # (in-process; no agent stack) so it needs the same workspace install + DB env.
     entrypoint: ["uv", "run", "mesh-scheduler"]
     environment:
-      MESH_USE_A2A: "true"
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008,http://bluesky-scout:8009,http://reddit-scout:8010,http://blog-scout:8011,http://leaderboard-scout:8012,http://web-search-scout:8017,http://rss-scout:8014,http://rest-json-scout:8015"
-      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
-      # Phase 12: the scheduler shells out to mesh-ingest / mesh-skeptic,
-      # which inherit this env — owner DSN to apply schema, writer role for the
-      # knowledge writes.
+      # The scheduler shells out to mesh-controller, which inherits this env —
+      # owner DSN to apply schema, writer role for the knowledge writes.
       MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
       MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
       MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
@@ -600,10 +541,9 @@ services:
       # HTTP control surface the API proxies to (status / reload / run).
       SCHEDULER_HOST: "0.0.0.0"
       SCHEDULER_PORT: "9100"
-      # Legacy crons still consumed by the /status page via the API; the
-      # live schedule is now interval-based and stored in Postgres.
-      MESH_SCHEDULE_PIPELINE_CRON: ${MESH_SCHEDULE_PIPELINE_CRON:-0 */6 * * *}
-      MESH_SCHEDULE_SWEEP_CRON: ${MESH_SCHEDULE_SWEEP_CRON:-0 3 * * *}
+      # Legacy cron consumed by the /status page's next-run estimate; the live
+      # schedule is interval-based and stored in Postgres.
+      MESH_SCHEDULE_CONTROLLER_CRON: ${MESH_SCHEDULE_CONTROLLER_CRON:-0 */6 * * *}
     env_file:
       - .env
     ports:

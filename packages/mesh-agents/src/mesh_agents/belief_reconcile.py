@@ -12,10 +12,11 @@ deletes), decay only lowers confidence, archival only flips ``is_currently_held`
 Field-scoped throughout; never compares or merges across fields.
 
 The pure pieces here (candidate loading, blocking+banding, cluster+merge, decay,
-archival) are shared with the scheduled LangGraph job
-(``mesh_pipeline.belief_consolidation``); this module also exposes the synchronous
-``reconcile_beliefs`` entry the one-time CLI backfill uses (mirroring how
-``reconcile_entities`` backs ``mesh.cli reconcile-entities``).
+archival) back the controller's consolidation: ``plan_decay_and_archive`` feeds
+the ``maintain-belief`` skill, and merge banding feeds ``consolidate-beliefs``.
+This module also exposes the synchronous ``reconcile_beliefs`` entry the one-time
+CLI backfill uses (mirroring how ``reconcile_entities`` backs
+``mesh.cli reconcile-entities``).
 """
 from __future__ import annotations
 
@@ -331,6 +332,75 @@ def _has_live_supporting_claim(conn: MeshConnection, belief: Belief) -> bool:
     return any(c.status == ClaimStatus.active for c in claims)
 
 
+@dataclass(frozen=True)
+class DecayDecision:
+    """One LLM-free aging action on a held belief: decay its confidence or archive
+    it. ``archive=True`` flips it out of the held set; otherwise it is a decay
+    (confidence lowered, statement unchanged). Pure data — the applier (or the
+    controller's ``maintain-belief`` skill, via a ``ReviseBeliefEffect``) performs
+    the append-only write."""
+
+    belief_id: str
+    statement: str  # unchanged — decay/archival never rewrite the statement
+    previous_confidence: float
+    new_confidence: float
+    archive: bool
+    rationale: str
+
+
+def plan_decay_and_archive(
+    conn: MeshConnection,
+    *,
+    now: datetime | None = None,
+    field_id: str = DEFAULT_FIELD_ID,
+) -> list[DecayDecision]:
+    """Decide the held corpus's aging actions WITHOUT writing (LLM-free).
+
+    Archive: a held belief not revised for longer than ``archive_after_days`` AND
+    unsupported by any live claim drops out of the held set. Decay: a held belief
+    older than the half-life has its confidence multiplied by
+    ``0.5 ** (age / halflife)``, floored at ``decay_floor()`` — emitted only when
+    that actually lowers it (so floor-pinned beliefs produce no action). Archival
+    takes precedence over decay for the same belief. Field-scoped."""
+    now = now or datetime.now(UTC)
+    halflife = decay_halflife_days()
+    floor = decay_floor()
+    archive_cutoff = now - timedelta(days=archive_after_days())
+    decay_cutoff = now - timedelta(days=halflife)
+
+    held = list_beliefs(conn, currently_held=True, limit=100000, field_id=field_id)
+    out: list[DecayDecision] = []
+    for b in held:
+        age_days = (now - b.last_revised_at).total_seconds() / 86400.0
+        if b.last_revised_at < archive_cutoff and not _has_live_supporting_claim(conn, b):
+            out.append(
+                DecayDecision(
+                    belief_id=b.id,
+                    statement=b.statement,
+                    previous_confidence=b.confidence,
+                    new_confidence=b.confidence,
+                    archive=True,
+                    rationale="archived: stale, no live evidence",
+                )
+            )
+            continue
+        if b.last_revised_at < decay_cutoff:
+            factor = 0.5 ** (age_days / halflife) if halflife > 0 else 1.0
+            new_conf = max(floor, b.confidence * factor)
+            if not math.isclose(new_conf, b.confidence, abs_tol=1e-6) and new_conf < b.confidence:
+                out.append(
+                    DecayDecision(
+                        belief_id=b.id,
+                        statement=b.statement,
+                        previous_confidence=b.confidence,
+                        new_confidence=new_conf,
+                        archive=False,
+                        rationale="staleness decay",
+                    )
+                )
+    return out
+
+
 def decay_and_archive(
     conn: MeshConnection,
     *,
@@ -340,77 +410,46 @@ def decay_and_archive(
 ) -> tuple[int, int]:
     """Age the held corpus (LLM-free). Returns ``(decayed, archived)``.
 
-    Decay: a held belief not revised for longer than the half-life has its
-    confidence multiplied by ``0.5 ** (age / halflife)``, floored at
-    ``decay_floor()``; records a "staleness decay" revision (statement unchanged).
-    Archive: a held belief not revised for longer than ``archive_after_days`` AND
-    unsupported by any live claim is flipped ``is_currently_held = false`` with an
-    "archived" revision. Archival takes precedence over decay for the same belief.
-    Append-only — no row is deleted. Field-scoped."""
+    The standalone-sweep applier: plan the actions then write each as an
+    append-only revision (no row deleted). The controller's ``maintain-belief``
+    skill reuses ``plan_decay_and_archive`` but routes the same decisions through
+    the write gateway as ``ReviseBeliefEffect``s instead."""
     now = now or datetime.now(UTC)
-    halflife = decay_halflife_days()
-    floor = decay_floor()
-    archive_cutoff = now - timedelta(days=archive_after_days())
-    decay_cutoff = now - timedelta(days=halflife)
-
-    held = list_beliefs(conn, currently_held=True, limit=100000, field_id=field_id)
-    decayed = archived = 0
-    for b in held:
-        age_days = (now - b.last_revised_at).total_seconds() / 86400.0
-        # Archive first: long-dead + no live evidence drops out of the held set.
-        if b.last_revised_at < archive_cutoff and not _has_live_supporting_claim(conn, b):
-            if not dry_run:
-                _record_decay(
-                    conn, b, b.confidence, now,
-                    rationale="archived: stale, no live evidence", archive=True,
-                )
-            archived += 1
-            continue
-        # Decay: older than the half-life and not already at the floor.
-        if b.last_revised_at < decay_cutoff:
-            factor = 0.5 ** (age_days / halflife) if halflife > 0 else 1.0
-            new_conf = max(floor, b.confidence * factor)
-            if not math.isclose(new_conf, b.confidence, abs_tol=1e-6) and new_conf < b.confidence:
-                if not dry_run:
-                    _record_decay(
-                        conn, b, new_conf, now, rationale="staleness decay",
-                        archive=False,
-                    )
-                decayed += 1
+    decisions = plan_decay_and_archive(conn, now=now, field_id=field_id)
+    decayed = sum(1 for d in decisions if not d.archive)
+    archived = sum(1 for d in decisions if d.archive)
+    if not dry_run:
+        for d in decisions:
+            _record_decay(conn, d, now)
     return decayed, archived
 
 
-def _record_decay(
-    conn: MeshConnection,
-    belief: Belief,
-    new_confidence: float,
-    now: datetime,
-    *,
-    rationale: str,
-    archive: bool,
-) -> None:
+def _record_decay(conn: MeshConnection, decision: DecayDecision, now: datetime) -> None:
     """Append a decay/archive revision (statement unchanged) and update the
     belief. Update-before-revision (FK ordering, like merge_beliefs)."""
+    existing = get_belief_by_id(conn, decision.belief_id)
+    if existing is None:
+        return
     update_fields: dict[str, Any] = {
-        "confidence": new_confidence,
+        "confidence": decision.new_confidence,
         "last_revised_at": now,
-        "revision_count": belief.revision_count + 1,
+        "revision_count": existing.revision_count + 1,
     }
-    if archive:
+    if decision.archive:
         update_fields["is_currently_held"] = False
-    update_belief(conn, belief.id, **update_fields)
+    update_belief(conn, decision.belief_id, **update_fields)
     create_revision(
         conn,
         BeliefRevision(
-            belief_id=belief.id,
-            previous_statement=belief.statement,
-            new_statement=belief.statement,
-            previous_confidence=belief.confidence,
-            new_confidence=new_confidence,
+            belief_id=decision.belief_id,
+            previous_statement=existing.statement,
+            new_statement=existing.statement,
+            previous_confidence=existing.confidence,
+            new_confidence=decision.new_confidence,
             trigger_claim_ids=[],
             revised_at=now,
             revised_by_agent=_AGENT,
-            rationale=rationale,
+            rationale=decision.rationale,
         ),
     )
 

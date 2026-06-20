@@ -32,19 +32,19 @@ only ever carried the four legacy predicates, which map cleanly to a type.
 
 ## 14b — Type-routed synthesis
 
-`apps/pipeline/coordinator.py` `synthesize` node dispatches on `claim_type`:
+The `synthesize-belief` skill dispatches on `claim_type`:
 
 - **`score`** → the unchanged SOTA handler (`sota_tracker.update_sota_pure`);
   leaderboard output is byte-for-byte identical.
 - **`capability`** → an **entity-anchored belief** keyed `capability:<entity_id>`
-  (`mesh_agents.synthesis`). The coordinator rebuilds it from the entity's
+  (`mesh_agents.synthesis`). The skill rebuilds it from the entity's
   *full* active capability claim set each run, so all capability claims about
   one Phase-13 canonical entity converge on a single belief with complete
   provenance. Idempotent: no new evidence → no revision.
 - **`reproduction` / `critique`** are not standalone beliefs (they are evidence
   signals — see 14d). **`speculative`** is stored but not synthesized.
 
-Belief writes stay coordinator-owned (single-writer discipline).
+Belief writes stay single-writer (the controller's write gateway).
 
 ## 14c — Relational claims become edges
 
@@ -58,7 +58,7 @@ Relational claim types route to a small fixed edge vocabulary, written to the
 | lineage      | `based_on`    | `parent`                     |
 | evaluation   | `evaluated_on`| `benchmark`                  |
 
-The coordinator resolves the *target* entity named in the claim object so both
+The synthesis skill resolves the *target* entity named in the claim object so both
 endpoints are real canonical nodes, then synthesizes edges on the main path.
 Edges are claim-grounded; repeat assertions of the same `(from, to, type)`
 aggregate onto one edge (`relationships.add_relationship_evidence` dedups

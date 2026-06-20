@@ -22,7 +22,7 @@ import os
 from typing import Any
 
 from mesh_db.beliefs import get_belief_signals, list_beliefs
-from mesh_db.claims import unsynthesized_claim_counts_by_entity
+from mesh_db.claims import list_claims, unsynthesized_claim_counts_by_entity
 from mesh_db.connectors import list_field_connectors
 from mesh_db.entities import find_duplicate_candidate_pairs, get_entities_by_ids
 from mesh_db.investigations import list_investigations
@@ -53,6 +53,8 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.contested_claim: 0.04,
     TensionKind.unsynthesized_claims: 0.05,
     TensionKind.open_investigation: 0.05,
+    TensionKind.aging_belief: 0.001,  # LLM-free corpus scan
+    TensionKind.consolidatable_memory: 0.04,  # one sync distil call per target
 }
 
 _KIND_SKILL: dict[TensionKind, str] = {
@@ -68,6 +70,8 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.contested_claim: "challenge-belief",
     TensionKind.unsynthesized_claims: "synthesize-belief",
     TensionKind.open_investigation: "dispatch-investigation",
+    TensionKind.aging_belief: "maintain-belief",
+    TensionKind.consolidatable_memory: "consolidate-memory",
 }
 
 # GapKind → TensionKind (the lift-in is 1:1; names already match).
@@ -149,6 +153,58 @@ def investigation_tensions(conn: Any, field_id: str, *, limit: int = 50) -> list
                     signals={"origin": inv.origin.value, "attempts": inv.pipeline_runs_attempted},
                 )
             )
+    return out
+
+
+def maintenance_tensions(conn: Any, field_id: str) -> list[Tension]:
+    """The field's periodic, LLM-free housekeeping tensions (→ maintenance skills).
+
+    Like ``scout_tensions``, these are *operational* and cooldown-gated, not
+    board-state derived: a rule fires each one only once its stored last-attempt
+    timestamp has aged past the cooldown (the deterministic form of "run this
+    daily"). They are emitted unconditionally and cheaply here — one per field —
+    and the skill itself does the actual scan when dispatched, so a quiet field
+    costs nothing until the timer is due.
+
+    ``aging_belief`` ages the held belief corpus (decay + archival); emitted only
+    when the field has held beliefs. ``consolidatable_memory`` distils episodic
+    history into heuristics; emitted only when the field has any claims (the
+    primary episodic source). Both gates keep an empty field quiescent."""
+    out: list[Tension] = []
+
+    if list_beliefs(conn, currently_held=True, limit=1, field_id=field_id):
+        kind = TensionKind.aging_belief
+        out.append(
+            Tension(
+                id=f"{kind.value}:{field_id}",
+                field_id=field_id,
+                kind=kind,
+                subject="belief maintenance",
+                rationale="Periodic LLM-free aging of the held corpus: decay stale, archive dead.",
+                value=0.2,  # low — housekeeping yields to real knowledge work
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"field_id": field_id},
+                signals={},
+            )
+        )
+
+    if list_claims(conn, field_id=field_id, limit=1):
+        kind = TensionKind.consolidatable_memory
+        out.append(
+            Tension(
+                id=f"{kind.value}:{field_id}",
+                field_id=field_id,
+                kind=kind,
+                subject="memory consolidation",
+                rationale="Periodic distillation of recent episodic history into heuristics.",
+                value=0.2,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"field_id": field_id},
+                signals={},
+            )
+        )
     return out
 
 

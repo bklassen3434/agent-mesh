@@ -4,9 +4,10 @@ Phase 6a first wired the mesh up to run on its own cadence via APScheduler.
 Phase 9 substantially reworked the control model — from a `BlockingScheduler`
 driven by env-var crons into a non-blocking `BackgroundScheduler` driven by a
 Postgres `schedules` table, fronted by an HTTP control surface and editable
-live from the wiki. Later phases added more scheduled jobs. Manual triggers
-(`make ingest`, `make skeptic`, `make discover`, …) keep working unchanged —
-the scheduler is purely additive.
+live from the wiki. The scheduler now runs a single orchestration job per field:
+the deterministic **controller** (`mesh-controller --apply`), which runs the whole
+reactive loop. Manual triggers (`make controller` / `make controller-apply`) keep
+working unchanged — the scheduler is purely additive.
 
 ## Current scheduler (Phase 9+)
 
@@ -27,10 +28,10 @@ the scheduler is purely additive.
   APScheduler id; other fields get a `job_id:field_id` suffix.
 - **Job bodies subprocess to the existing CLI entry points.** No new dispatch
   logic, no in-process orchestration inside the scheduler. The scheduler is a
-  trigger, not an orchestrator. Each job shells out to the same command a human
-  would run (`uv run mesh-ingest --a2a`, `uv run mesh-skeptic`, etc.),
-  with `MESH_TRIGGERED_BY`, `MESH_RUN_ID`, and `MESH_PIPELINE_FIELD` injected.
-  All DB writes happen on the coordinator/sweep side.
+  trigger, not an orchestrator. The job shells out to the same command a human
+  would run (`uv run mesh-controller --apply`), with `MESH_TRIGGERED_BY`,
+  `MESH_RUN_ID`, and `MESH_PIPELINE_FIELD` injected. All DB writes happen on the
+  controller side.
 - **Live reconcile, no restart.** `SchedulerManager.reconcile()` re-reads the
   Postgres config and applies interval/enabled changes to the live jobs without
   a restart. It runs both on a **30s poll** (the safety net) and on an explicit
@@ -49,17 +50,14 @@ the scheduler is purely additive.
 
 | Job id | Command | Default interval |
 |---|---|---|
-| `ingest` | `mesh-ingest --a2a --field <field>` | every 6h |
-| `skeptic` | `mesh-skeptic` | every 24h |
-| `memory_consolidation` | `mesh-consolidate-memory` (Phase 16c memory consolidation) | every 24h |
-| `belief_consolidation` | `mesh-consolidate-beliefs` (Phase 19) | every 24h |
-| `discovery` | `mesh-discover` (Phase 22d autonomous discovery) | every 24h |
+| `controller` | `mesh-controller --apply --field <field>` | every 6h |
 
-Defaults live in `DEFAULT_INTERVALS` (`mesh_a2a.schedules`) and are seeded into
-the `schedules` table on first ensure (`ON CONFLICT DO NOTHING`, so a populated
-table is left untouched). Only `ingest` is passed `--field`; the sweep and
-the consolidation/discovery jobs handle their own field scope (iterating active
-fields internally).
+The controller is the sole scheduled orchestration job; challenge, discovery,
+belief consolidation, decay/archival, and memory consolidation are all controller
+rules within it, not separate jobs. Defaults live in `DEFAULT_INTERVALS`
+(`mesh_a2a.schedules`) and are seeded into the `schedules` table on first ensure
+(`ON CONFLICT DO NOTHING`, so a populated table is left untouched). The job is
+passed `--field`, run once per active field.
 
 ### HTTP control surface (:9100)
 
@@ -93,12 +91,12 @@ docker compose --profile scheduler up scheduler -d
 docker compose logs -f scheduler
 ```
 
-The container starts the `BackgroundScheduler` (registering jobs from the
-Postgres `schedules` table, falling back to `DEFAULT_INTERVALS` if the table is
-empty/unavailable) and serves the HTTP control surface on :9100. Jobs fire on
-their interval and shell out to `uv run mesh-ingest --a2a` (or
-`mesh-skeptic`, etc.). Those runs hit the same DB as your manual runs and
-tag their `pipeline_runs` row with `triggered_by='scheduled'`.
+The container starts the `BackgroundScheduler` (registering the `controller` job
+per field from the Postgres `schedules` table, falling back to `DEFAULT_INTERVALS`
+if the table is empty/unavailable) and serves the HTTP control surface on :9100.
+The job fires on its interval and shells out to `uv run mesh-controller --apply`.
+Those runs hit the same DB as your manual runs and tag their `pipeline_runs` row
+with `triggered_by='scheduled'`.
 
 To change cadence or enable/disable a job, edit it on the wiki **Pipelines**
 page (or `PATCH /api/v1/schedules`) — no restart needed, the change reconciles
@@ -111,7 +109,7 @@ to the live job within 30s (or instantly via the reload signal).
 | `SCHEDULER_URL` | `http://scheduler:9100` | API → scheduler control endpoint (status / trigger / reload). |
 | `SCHEDULER_HOST` / `SCHEDULER_PORT` | `0.0.0.0` / `9100` | Scheduler HTTP control bind host/port (`MESH_BIND_INTERFACE` wins if set). |
 | `LANGGRAPH_POSTGRES_URL` | (unset) | DSN for `mesh-postgres`, which holds the `schedules` table. Unset → schedule endpoints 503 and the scheduler falls back to `DEFAULT_INTERVALS`. |
-| `MESH_TRIGGERED_BY` | (unset → `manual`) | Set by the scheduler to `scheduled` per run. Manual `make ingest` runs leave it unset. |
+| `MESH_TRIGGERED_BY` | (unset → `manual`) | Set by the scheduler to `scheduled` per run. Manual `make controller-apply` runs leave it unset. |
 | `MESH_CURATOR_STALENESS_WEIGHT` | `0.3` | How heavily the Curator weights "no fresh supporting/contradicting claim in a while" when picking beliefs for the Skeptic. |
 
 > The legacy env-var crons (`MESH_SCHEDULE_PIPELINE_CRON`,
@@ -149,8 +147,8 @@ stale, and the new signal surfaces those.
   `max_instances=1`) mean a downtime gap yields at most one catch-up run, not a
   backlog. A scheduled fire that overlaps a running job is skipped, not queued.
 - Distributed / multi-process scheduling.
-- Per-agent or per-source schedules — only the top-level orchestrators
-  (pipeline, skeptic sweep, memory/belief consolidation, discovery) run on a
-  timer.
+- Per-agent or per-source schedules — only the top-level controller runs on a
+  timer (per field); its rules (challenge, discovery, consolidation,
+  decay/archival, memory) fire from within a run.
 - Persistent job store — runtime state is in-memory; `pipeline_runs` is the
   durable audit log.

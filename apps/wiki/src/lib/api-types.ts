@@ -537,7 +537,7 @@ export interface paths {
         put?: never;
         /**
          * Trigger an immediate pipeline run
-         * @description Starts an out-of-band run of the coordinator or skeptic sweep. Returns 409 if a run for that job is already in progress.
+         * @description Starts an out-of-band controller run. Returns 409 if a run for that job is already in progress.
          */
         post: operations["trigger_pipeline_api_v1_pipelines__job_id__trigger_post"];
         delete?: never;
@@ -1532,7 +1532,7 @@ export interface components {
             finished_at?: string | null;
             /**
              * Run Type
-             * @default ingest
+             * @default controller
              */
             run_type: string;
             /**
@@ -1711,6 +1711,10 @@ export interface components {
              * @default 0.5
              */
             reliability_prior: number;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** SourceDetail */
         SourceDetail: {

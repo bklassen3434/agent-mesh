@@ -73,11 +73,12 @@ configured.
 - **Append-only.** The writer has `SELECT, INSERT` and **no `DELETE`** — an audit
   log, matching `claims` / `belief_revisions` / `llm_usage`. There is no
   `update_agent_invocation`.
-- **Capture, don't re-architect.** `_dispatch` (in `apps/pipeline/coordinator.py`)
-  wraps `call_skill_node`, times it, and builds one `AgentInvocation` from the
-  result — it never alters the dispatch's own success/failure. Every coordinator
-  dispatch site routes through it (`scout_one`, `extract_one`, entity resolution,
-  `update_sota`, the `investigate_*` calls, and investigation re-extraction).
+- **Capture, don't re-architect.** A dispatch wrapper times each skill dispatch and
+  builds one `AgentInvocation` from the result — it never alters the dispatch's own
+  success/failure. The controller's skill dispatch and the shared
+  `dispatch_open_investigations` route through it (scout, extract, entity
+  resolution, synthesis, the `investigate_*` calls, and investigation
+  re-extraction).
 - **Degrade, never block.** Invocations accumulate in graph state (an
   `operator.add` reducer, like `extractions`/`errors`) and are written at
   `finalize` behind the same run-exists guard as the `llm_usage` ledger —
@@ -88,11 +89,11 @@ configured.
 ### Memory capture via an additive debug envelope
 
 The memory block an agent injects (`mesh_agents.memory.build_memory_block`) is
-built *inside the agent*, not the coordinator. So memory-using agents attach an
+built *inside the agent*, not the controller. So memory-using agents attach an
 optional, additive **debug envelope** to their skill output under the reserved
 `debug` key (`mesh_agents.memory.debug_envelope`): the rendered memory block, the
 ids of the heuristics it applied (`build_memory_capture`), the system-prefix hash
-it ran under, and the agent's self-reported name. The coordinator folds it into
+it ran under, and the agent's self-reported name. The controller folds it into
 the row when present; absent, those fields are null and nothing blocks. The
 claim-extractor (`extract_claims`) ships the envelope; any agent that adds it
 later is captured for free.
@@ -100,16 +101,15 @@ later is captured for free.
 ## Extensible by construction
 
 Any agent dispatched through the standard skill path is captured with no
-per-agent code. The coordinator derives the agent name from a small skill→agent
+per-agent code. The controller derives the agent name from a small skill→agent
 map (with `scout_*` / `investigate_*` derived by convention), and the debug
 envelope's self-reported name overrides it — so future agents
 (belief-consolidator, discovery) appear in the view automatically.
 
-> **Scope note.** Phase 23a captures the **coordinator** graph. The skeptic
-> sweep (`skeptic_sweep.py`) is a separate orchestrator; its batch path calls the
-> LLM directly (no skill dispatch to wrap), so capturing it is a follow-up rather
-> than part of this phase. The skeptic/curator agents still appear in the view
-> once a sweep is captured through the same record.
+> **Scope note.** Capture wraps the controller's skill dispatch. Since challenge,
+> discovery, and consolidation are now controller skills dispatched through the
+> same path, they are captured the same way — there is no longer a separate
+> sweep orchestrator to special-case.
 
 ## The read API
 

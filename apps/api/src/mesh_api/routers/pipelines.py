@@ -23,7 +23,7 @@ _KNOWN_JOBS = set(DEFAULT_INTERVALS)
     response_model=TriggerResult,
     summary="Trigger an immediate pipeline run",
     description=(
-        "Starts an out-of-band run of the coordinator or skeptic sweep. "
+        "Starts an out-of-band controller run. "
         "Returns 409 if a run for that job is already in progress."
     ),
 )

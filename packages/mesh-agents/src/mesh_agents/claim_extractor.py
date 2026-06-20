@@ -112,24 +112,32 @@ def _extract_sync(
     return result.claims, latency_ms, usage, usage.model or getattr(llm, "model", "")
 
 
-def _extract_with_memory(
-    llm: Any, paper: ScoutedPaper, agent_name: str, field_id: str = DEFAULT_FIELD_ID
+def extract_claims_with_memory(
+    llm: Any,
+    paper: ScoutedPaper,
+    agent_name: str = "claim_extractor",
+    field_id: str = DEFAULT_FIELD_ID,
+    conn: Any | None = None,
 ) -> tuple[list[ExtractedClaim], int, LLMUsage, str, dict[str, Any]]:
-    """Gather the extractor's applicable heuristics + recent history (off the
-    event loop), then extract with that memory folded into the prompt.
+    """The full agentic extraction: gather the extractor's applicable heuristics +
+    recent history, then extract with that memory folded into the prompt. This is
+    the unit both the controller's ``extract-source`` skill and the (orphaned) A2A
+    handler call — there is one extraction implementation.
 
     Heuristics are scoped to this paper's source TYPE (so source-specific how-to
     like "forum scores are self-reported" applies); episodic recall is the
     extractor's broad recent track record (a freshly-scouted source has no prior
     extraction to key on). All scoped to ``field_id``; the system prompt is built
-    from that field's profile.
+    from that field's profile. ``conn`` (optional) is the connection memory reads
+    run on — the skill passes its own; the A2A handler lets it open one.
 
     Returns the usual ``(claims, latency_ms, usage, model)`` plus the additive
     observability ``debug`` envelope (the memory it injected) for the coordinator
     to record (Phase 23a)."""
     profile = load_profile(field_id)
     memory_block, heuristic_ids = build_memory_capture(
-        agent_name, "extract_claims", source=paper.source.type.value, field_id=field_id
+        agent_name, "extract_claims", conn=conn,
+        source=paper.source.type.value, field_id=field_id,
     )
     claims, latency_ms, usage, model = _extract_sync(llm, paper, memory_block, profile)
     debug = debug_envelope(
@@ -148,7 +156,7 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
         debug: dict[str, Any] | None
         try:
             claims, latency_ms, usage, model, debug = await asyncio.to_thread(
-                _extract_with_memory, llm, paper, agent_name, skill_input.field_id
+                extract_claims_with_memory, llm, paper, agent_name, skill_input.field_id
             )
         except LLMProviderNotReadyError:
             raise
@@ -178,6 +186,11 @@ def _build_handler(llm: LLMClient, agent_name: str) -> Any:
 
 
 class ClaimExtractorAgent(BaseAgent):
+    """A2A adapter over the shared extraction core (``extract_claims_with_memory``
+    / ``_extract_sync``). The controller path no longer uses this class — the
+    ``extract-source`` skill calls the core function directly; this remains the
+    network entry point for the (orphaned) A2A server in ``apps/agents``."""
+
     name = "claim_extractor"
 
     def __init__(self, llm: LLMClient | None = None, db_conn: Any | None = None) -> None:

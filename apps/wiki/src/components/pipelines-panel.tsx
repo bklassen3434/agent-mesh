@@ -35,26 +35,12 @@ const INTERVAL_OPTIONS = [1, 2, 4, 6, 12, 24, 48];
 
 const PIPELINES: { jobId: string; name: string; description: string }[] = [
   {
-    jobId: 'ingest',
-    name: 'Ingest',
-    description: 'Scouts sources, extracts claims, resolves entities, updates beliefs.',
-  },
-  {
-    jobId: 'skeptic',
-    name: 'Skeptic sweep',
-    description: 'Challenges held beliefs and records counter-claims.',
-  },
-  {
-    jobId: 'belief_consolidation',
-    name: 'Belief consolidation',
+    jobId: 'controller',
+    name: 'Controller',
     description:
-      'De-duplicates held beliefs, decays stale ones, and archives long-dead beliefs (append-only).',
-  },
-  {
-    jobId: 'discovery',
-    name: 'Discovery',
-    description:
-      'Analyzes the field for evidence gaps and opens investigations to fill them.',
+      'The deterministic orchestrator: senses the field into tensions and runs the whole loop ' +
+      '— scout, extract, resolve, synthesize, challenge, investigate, and periodic belief/memory ' +
+      'consolidation — under an explicit rule table, per round to quiescence.',
   },
 ];
 
@@ -399,7 +385,7 @@ function RunRow({
   onToggle: () => void;
   langfuseUrl: string | null;
 }) {
-  const isCoordinator = run.run_type === 'ingest';
+  const isController = run.run_type === 'controller';
   return (
     <>
       <TableRow className="cursor-pointer" onClick={onToggle}>
@@ -414,7 +400,7 @@ function RunRow({
         <TableCell className="tabular-nums">{duration(run)}</TableCell>
         <TableCell className={statusTone}>{statusLabel}</TableCell>
         <TableCell className="text-right tabular-nums">
-          {isCoordinator ? run.claims_inserted : '—'}
+          {isController ? run.claims_inserted : '—'}
         </TableCell>
       </TableRow>
       {open && (

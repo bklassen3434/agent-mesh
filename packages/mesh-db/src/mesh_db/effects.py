@@ -42,6 +42,7 @@ from mesh_models.effect import (
     ReviseBeliefEffect,
     SupersedeClaimEffect,
     UpdateInvestigationEffect,
+    WriteHeuristicEffect,
 )
 from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
@@ -57,6 +58,7 @@ from mesh_db.beliefs import (
 from mesh_db.claims import create_claim, update_claim_status
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity, merge_entities, set_entity_embedding
+from mesh_db.heuristics import create_heuristic, create_heuristic_revision
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     create_investigation,
@@ -92,6 +94,7 @@ class ApplyReport(BaseModel):
     investigations_opened: int = 0
     investigations_updated: int = 0
     investigation_claims_attached: int = 0
+    heuristics_written: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -212,6 +215,13 @@ def _apply_one(
         attach_claim_to_investigation(conn, effect.investigation_id, effect.claim_id)
         report.investigation_claims_attached += 1
 
+    elif isinstance(effect, WriteHeuristicEffect):
+        # Append-only procedural memory: head row + genesis revision (the skill
+        # built both and bound provenance; the gateway only inserts).
+        create_heuristic(conn, effect.heuristic, field_id=effect.field_id)
+        create_heuristic_revision(conn, effect.genesis_revision)
+        report.heuristics_written += 1
+
     else:  # pragma: no cover — guards against an unrouted Effect kind
         raise TypeError(f"No gateway branch for effect: {type(effect).__name__}")
 
@@ -261,12 +271,14 @@ def _apply_revise_belief(
         link_updates["contradicting_claim_ids"] = effect.contradicting_claim_ids
 
     # Apply claim-link changes before deriving confidence (the view reads them).
-    if confidence_fn is not None and link_updates:
+    if confidence_fn is not None and effect.recompute_confidence and link_updates:
         update_belief(conn, effect.belief_id, **link_updates)
 
+    # Maintenance revisions (decay/archival) opt out of evidence re-derivation so
+    # their deliberately-set confidence survives; everything else recomputes.
     new_confidence = (
         confidence_fn(conn, effect.belief_id)
-        if confidence_fn is not None
+        if confidence_fn is not None and effect.recompute_confidence
         else effect.new_confidence
     )
 
@@ -290,6 +302,8 @@ def _apply_revise_belief(
         "revision_count": existing.revision_count + 1,
         **link_updates,
     }
+    if effect.set_not_held:
+        head_updates["is_currently_held"] = False
     update_belief(conn, effect.belief_id, **head_updates)
 
     if effect.new_statement_embedding is not None:

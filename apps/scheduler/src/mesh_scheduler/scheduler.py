@@ -1,9 +1,9 @@
 """APScheduler wiring for the mesh (Phase 9).
 
-The scheduler is a *trigger*, not an orchestrator: each job shells out to
-the same CLI entry point a human would run (``mesh-ingest``,
-``mesh-skeptic``). All DB writes happen on the coordinator/sweep
-side, exactly as when the user runs ``make ingest`` by hand.
+The scheduler is a *trigger*, not an orchestrator: it shells out to the same CLI
+entry point a human would run (``mesh-controller --apply``, the sole job). All DB
+writes happen on the controller side, exactly as when the user runs
+``make controller-apply`` by hand.
 
 Phase 9 changes the control model:
 
@@ -58,24 +58,12 @@ def _aps_id(job_id: str, field_id: str) -> str:
         return job_id
     return f"{job_id}:{field_id}"
 
-# job_id → CLI command. The set of job_ids the scheduler will run.
+# job_id → CLI command. The deterministic controller is the only scheduled job:
+# it runs the whole reactive loop (scout → extract → resolve → synthesize →
+# challenge → investigate) plus the formerly-standalone belief and memory
+# consolidation, all as blackboard rules. ``--apply`` writes through the gateway
+# and loops to quiescence; ``--field`` scopes it to the per-field scheduled job.
 JOB_COMMANDS: dict[str, list[str]] = {
-    "ingest": ["uv", "run", "mesh-ingest", "--a2a"],
-    "skeptic": ["uv", "run", "mesh-skeptic"],
-    # Phase 16c: offline memory consolidation (distills episodic history into
-    # procedural heuristics). Fired by the existing scheduler — no new container.
-    "memory_consolidation": ["uv", "run", "mesh-consolidate-memory"],
-    # Phase 19: offline belief consolidation (semantic dedup/merge + staleness
-    # decay/archival). Iterates active fields internally — no --field flag.
-    "belief_consolidation": ["uv", "run", "mesh-consolidate-beliefs"],
-    # Phase 22d: proactive autonomous discovery (gap/trend analysis → opens
-    # discovery investigations → dispatches real search). No new container.
-    "discovery": ["uv", "run", "mesh-discover"],
-    # Deterministic controller: the rule-based, auction-free replacement for
-    # ingest/skeptic/discovery (scout → extract → resolve → synthesize →
-    # challenge → investigate, under explicit rules + a per-round step cap).
-    # Seeded disabled; enable per field from the Pipelines page to flip the
-    # go-live. ``--apply`` lets it write through the gateway and loop to quiescence.
     "controller": ["uv", "run", "mesh-controller", "--apply"],
 }
 
@@ -88,14 +76,16 @@ def _env(name: str, default: str) -> str:
 
 
 def configured_cron_triggers() -> dict[str, CronTrigger]:
-    """Legacy helper for the /status HTML page (kept as-is in Phase 9).
+    """Legacy helper for the /status HTML page's "next run" estimate.
 
-    Reads the env-var cron expressions the pre-Phase-9 scheduler used.
-    Decoupled from the live interval-based schedule now driven by Postgres.
+    The controller is the only job now; this reads an env-var cron purely for the
+    page's approximate next-fire display. Decoupled from the live interval-based
+    schedule driven by Postgres.
     """
     return {
-        "ingest": CronTrigger.from_crontab(_env("MESH_SCHEDULE_PIPELINE_CRON", "0 */6 * * *")),
-        "skeptic": CronTrigger.from_crontab(_env("MESH_SCHEDULE_SWEEP_CRON", "0 3 * * *")),
+        "controller": CronTrigger.from_crontab(
+            _env("MESH_SCHEDULE_CONTROLLER_CRON", "0 */6 * * *")
+        ),
     }
 
 
@@ -207,9 +197,9 @@ class SchedulerManager:
     ) -> None:
         aps_id = _aps_id(job_id, field_id)
         cmd = list(JOB_COMMANDS[job_id])
-        # Only the ingest command accepts --field; sweep/consolidation
-        # process all fields / their own scope.
-        if job_id == "ingest":
+        # Only the controller accepts --field (it runs one field per scheduled
+        # job); the consolidation jobs process all fields in their own scope.
+        if job_id == "controller":
             cmd += ["--field", field_id]
         env = dict(os.environ)
         env["MESH_TRIGGERED_BY"] = triggered_by

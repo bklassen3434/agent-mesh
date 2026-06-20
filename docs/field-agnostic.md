@@ -97,7 +97,7 @@ prompt byte-for-byte (asserted in `tests/test_field_prompts.py`).
 
 Agents build the prompt from the active field's profile, loaded + cached per
 field by `mesh_agents.profiles.load_profile` (best-effort; degrades to the seeded
-`ai-robotics` profile with **no DB read** for the default field). The coordinator
+`ai-robotics` profile with **no DB read** for the default field). The controller
 passes `field_id` in each skill payload; the agent builds the
 `cache_control`-marked system prefix **once per field**. Per-item content (and
 the episodic/heuristic memory blocks) stays in the *user* message, after the
@@ -132,8 +132,8 @@ optional `since` window, produce source records. Each scout's A2A skill
 (`scout_<slug>`) is a conforming connector and already reads its search terms
 (categories / keywords / topics / …) from the dispatched payload.
 
-The coordinator's `scout` node loads the run field's **enabled** connectors,
-maps each `slug → scout_<slug>`, intersects with the discovered scout services,
+The controller's `scout-source` skill loads the run field's **enabled** connectors,
+maps each `slug → scout_<slug>`, intersects with the available scout handlers,
 and dispatches **only** those — passing each its stored config plus the run's
 `max_results`/`since`. `_DEFAULT_AGENT_URLS` is merely the set of *available*
 connector services; *which* run is field-driven. The legacy `--categories` flag
@@ -147,12 +147,11 @@ defaults, so the seeded field behaves exactly as before (asserted in
 ## Running a field
 
 ```bash
-# Pipeline (defaults to the seeded ai-robotics field):
-uv run mesh-ingest --a2a
-uv run mesh-ingest --a2a --field ai-robotics
+# Controller (defaults to the seeded ai-robotics field):
+uv run mesh-controller --apply
+uv run mesh-controller --apply --field ai-robotics
 
-# Skeptic sweep / entity reconciliation are field-scoped too:
-uv run mesh-skeptic --field ai-robotics
+# Entity reconciliation is field-scoped too:
 uv run mesh.cli reconcile-entities --field ai-robotics --apply
 
 # The read API scopes every knowledge endpoint by ?field=<slug> (default ai-robotics):

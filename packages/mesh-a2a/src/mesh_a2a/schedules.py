@@ -10,7 +10,8 @@ There is no general Postgres migration runner — the checkpoint store
 manages its own schema via ``saver.setup()``. So the ``schedules`` table
 is created the same way: an idempotent ``ensure_schedules_table()`` that
 both the API and the scheduler call before touching the table. The seed
-rows match the env-var defaults (ingest 6h, skeptic 24h).
+rows match the defaults in ``DEFAULT_INTERVALS`` (controller 6h, the two
+consolidation jobs 24h).
 """
 from __future__ import annotations
 
@@ -25,25 +26,18 @@ from mesh_a2a.checkpoint import postgres_url
 
 # job_id → default interval (hours). Seeded into the table on first ensure;
 # also the fallback the scheduler uses if the table is somehow empty.
+#
+# The deterministic controller is the only scheduled job: it runs the whole
+# reactive loop (scout → extract → resolve → synthesize → challenge → investigate)
+# plus belief and memory consolidation, all as blackboard rules. The old fixed
+# ingest/skeptic/discovery jobs and the standalone consolidation sweeps are gone.
 DEFAULT_INTERVALS: dict[str, int] = {
-    "ingest": 6,
-    "skeptic": 24,
-    # Phase 16c: memory consolidation runs daily, offline (batch API).
-    "memory_consolidation": 24,
-    # Phase 19: belief consolidation (semantic dedup/merge + decay) runs daily,
-    # offline (batch API).
-    "belief_consolidation": 24,
-    # Phase 22d: autonomous discovery runs daily.
-    "discovery": 24,
-    # Deterministic controller (the rule-based, auction-free replacement for
-    # ingest/skeptic/discovery). Seeded DISABLED — it is flipped on per field from
-    # the Pipelines page once validated in shadow, so it never double-writes
-    # alongside the coordinator (strangler-fig go-live).
     "controller": 6,
 }
 
-# job_ids seeded with enabled=false (opt-in go-live).
-DEFAULT_DISABLED: frozenset[str] = frozenset({"controller"})
+# job_ids seeded with enabled=false (opt-in go-live). The controller is the
+# default orchestrator, so it ships enabled.
+DEFAULT_DISABLED: frozenset[str] = frozenset()
 
 
 class SchedulesUnavailable(RuntimeError):

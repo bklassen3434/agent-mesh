@@ -13,7 +13,7 @@ write functions, enforcing the store's invariants in one auditable place:
 * writes run on the caller's (writer-role) connection — coordinator-owned writes.
 
 Effects are applied **sequentially on one connection**, so they are naturally
-serialized — the future concurrent market must still funnel each target's writes
+serialized — a concurrent controller must still funnel each target's writes
 through a single applier (per-target ordering), but the contract here is simple:
 hand it an ordered list, it applies them in order and returns a report.
 
@@ -36,6 +36,7 @@ from mesh_models.effect import (
     CreateClaimEffect,
     CreateEntityEffect,
     CreateSourceEffect,
+    MergeBeliefsEffect,
     MergeEntitiesEffect,
     OpenInvestigationEffect,
     ReviseBeliefEffect,
@@ -49,6 +50,7 @@ from pydantic import BaseModel, Field
 from mesh_db.beliefs import (
     create_belief,
     get_belief_by_id,
+    merge_beliefs,
     set_belief_embedding,
     update_belief,
 )
@@ -68,7 +70,7 @@ from mesh_db.sources import create_source
 log = structlog.get_logger()
 
 # Recompute a belief's confidence from its evidence signals after its claim links
-# are written. Injected by the market layer (``mesh_agents.confidence`` lives above
+# are written. Injected by the controller layer (``mesh_agents.confidence`` lives above
 # mesh-db in the dependency graph, so the gateway can't import it directly). When
 # ``None`` the gateway keeps the confidence the skill proposed — byte-for-byte the
 # pre-injection behaviour, which the existing gateway tests rely on.
@@ -85,6 +87,7 @@ class ApplyReport(BaseModel):
     beliefs_created: int = 0
     beliefs_revised: int = 0
     entities_merged: int = 0
+    beliefs_merged: int = 0
     relationship_edges: int = 0
     investigations_opened: int = 0
     investigations_updated: int = 0
@@ -172,6 +175,18 @@ def _apply_one(
     elif isinstance(effect, MergeEntitiesEffect):
         merge_entities(conn, effect.canonical_id, effect.duplicate_id)
         report.entities_merged += 1
+
+    elif isinstance(effect, MergeBeliefsEffect):
+        # Append-only belief consolidation: the duplicate is absorbed, not erased
+        # (mirrors the Phase-19 sweep). The same evidence-derived confidence the
+        # gateway computes elsewhere recomputes the canonical's score post-union.
+        merge_beliefs(
+            conn,
+            effect.canonical_id,
+            effect.duplicate_id,
+            confidence_fn=confidence_fn,
+        )
+        report.beliefs_merged += 1
 
     elif isinstance(effect, AddRelationshipEvidenceEffect):
         add_relationship_evidence(

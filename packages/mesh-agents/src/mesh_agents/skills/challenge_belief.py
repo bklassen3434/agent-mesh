@@ -1,7 +1,7 @@
 """Phase 2 skill: ``challenge-belief`` — attack a belief to see if it holds up.
 
 Wraps the existing :class:`~mesh_agents.skeptic.SkepticAgent` (the falsification
-agent) behind the market's Skill contract: it *bids* on a contested/stale belief,
+agent) behind the Skill contract: it handles a contested/stale belief,
 *runs* the unchanged skeptic against the belief's evidence, and translates the
 resulting :class:`SkepticAssessment` into ``Effect``s — **never writing itself**.
 
@@ -50,10 +50,10 @@ from mesh_agents.skeptic import (
     SkepticCounterClaim,
     SkepticInput,
 )
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 from mesh_agents.sota_tracker import BeliefSummary
 
-# Cost the market reserves for one belief challenge (one skeptic LLM call).
+# Rough cost estimate for one belief challenge (one skeptic LLM call).
 _EST_COST_USD = 0.04
 
 
@@ -203,9 +203,6 @@ class ChallengeBeliefSkill:
         # ``llm`` is injectable for tests; in production it's built lazily in
         # ``run`` (the registry instantiates skills no-arg at import time).
         self._llm = llm
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        return Bid(value=tension.value, est_cost_usd=_EST_COST_USD)
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

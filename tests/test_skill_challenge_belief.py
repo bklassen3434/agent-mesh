@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 from mesh_agents.skeptic import SkepticAssessment, SkepticCounterClaim
-from mesh_agents.skill import Bid, Skill, get_skill, register_skill
+from mesh_agents.skill import Skill, get_skill, register_skill
 from mesh_agents.skills.challenge_belief import ChallengeBeliefSkill
 from mesh_db.beliefs import create_belief, get_belief_by_id
 from mesh_db.claims import create_claim, list_claims
@@ -133,13 +133,6 @@ def test_skill_metadata_and_registration() -> None:
     if get_skill("challenge-belief") is None:
         register_skill(ChallengeBeliefSkill)
     assert get_skill("challenge-belief") is not None
-
-
-def test_bid_uses_tension_value_and_fixed_cost() -> None:
-    bid = ChallengeBeliefSkill().bid(None, _tension("bel-x"))
-    assert isinstance(bid, Bid)
-    assert bid.value == pytest.approx(0.6)
-    assert bid.est_cost_usd == pytest.approx(0.04)
 
 
 def test_run_emits_effects_and_gateway_writes(tmp_db: Any) -> None:

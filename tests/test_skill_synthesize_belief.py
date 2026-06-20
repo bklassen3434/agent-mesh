@@ -125,24 +125,6 @@ def test_handles_unsynthesized_claims() -> None:
     assert TensionKind.unsynthesized_claims in _skill().handles
 
 
-# ── bid ────────────────────────────────────────────────────────────────────
-
-
-def test_bid_uses_tension_value_and_fixed_cost(tmp_db: MeshConnection) -> None:
-    skill = _skill()
-    bid = skill.bid(tmp_db, _tension("e1"))
-    assert bid is not None
-    assert bid.value == 0.65
-    assert bid.est_cost_usd == 0.05
-
-
-def test_bid_declines_without_an_entity_target(tmp_db: MeshConnection) -> None:
-    skill = _skill()
-    t = _tension("e1")
-    t.target_ref = {}
-    assert skill.bid(tmp_db, t) is None
-
-
 # ── score claims → SOTA belief ───────────────────────────────────────────────
 
 

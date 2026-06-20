@@ -1,7 +1,7 @@
-"""In-process connector dispatch — the market's source-acquisition path.
+"""In-process connector dispatch — the controller's source-acquisition path.
 
 The coordinator scouts by calling each connector's A2A scout server over HTTP.
-The market does not run the A2A fleet, so it calls the same scout *handlers*
+The controller does not run the A2A fleet, so it calls the same scout *handlers*
 (``_handle_scout_<slug>``) in-process. Every handler is the canonical connector
 implementation (the ``SourceConnector`` protocol): given a per-field config dict
 plus a ``max_results`` cap and optional ``since`` window, it returns

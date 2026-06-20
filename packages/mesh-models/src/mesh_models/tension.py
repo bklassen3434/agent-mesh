@@ -4,19 +4,19 @@ A ``Tension`` is one unit of "something on the knowledge board needs attention":
 a paper that hasn't been read, a belief resting on a single source, an entity the
 mesh barely knows, a head-to-head with no return match. Tensions are *derived*
 from the store (never stored), exactly like ``GapSignal`` — this module just gives
-them a single shape so the future market has one thing to rank and the future
+them a single shape so the controller has one thing to rank and the
 skills have one thing to claim.
 
 This is intentionally read-only and additive. Computing an ``Agenda`` writes
 nothing and calls no LLM; it only reads what the store already knows and scores
 it. If the ranking looks sensible against real data, the rest of the agentic
-architecture (skills + market + write gateway) is sound. If it doesn't, we found
+architecture (skills + controller + write gateway) is sound. If it doesn't, we found
 out for the price of a few SELECTs.
 
 Naming note: ``Tension`` is the generalization of ``GapSignal``. Discovery's
 ``GapSignal`` covers knowledge *gaps* (thin/stale/under-evidenced/trends);
 ``Tension`` also covers operational work (unread sources) and is the unit the
-market will fund. The two will converge once skills exist.
+controller acts on. The two converged once skills landed.
 """
 from __future__ import annotations
 
@@ -41,6 +41,7 @@ class TensionKind(StrEnum):
     missing_reciprocal_edge = "missing_reciprocal_edge"
     # Phase 2a — kinds the skill fan-out resolves.
     merge_candidate = "merge_candidate"  # two entities look like duplicates
+    redundant_beliefs = "redundant_beliefs"  # two held beliefs say the same thing
     contested_claim = "contested_claim"  # a held belief is under challenge
     unsynthesized_claims = "unsynthesized_claims"  # claims no belief reflects yet
     # An open investigation whose evidence still needs to be gathered.
@@ -48,13 +49,14 @@ class TensionKind(StrEnum):
 
 
 class Tension(BaseModel):
-    """One item on the agenda: a thing worth doing, with the market's two numbers.
+    """One item on the agenda: a thing worth doing, with its two signal numbers.
 
     ``value`` is how much resolving this would improve the knowledge base (0..1+,
     higher = more valuable). ``est_cost_usd`` is the rough LLM spend to handle it.
-    The market ranks by ``score`` (value per dollar) and funds top-down under a
-    budget — so cheap, high-value work floats up. Nothing here is written; a
-    Tension is recomputed from board state every round."""
+    ``value`` and ``est_cost_usd`` are informational signals the rules may consult
+    (and the read-only ``mesh.cli agenda`` view ranks by ``score``); the controller
+    itself selects/prioritises via its rule table, not a price. Nothing here is
+    written; a Tension is recomputed from board state every round."""
 
     id: str  # stable identity: "<kind>:<target>" — same board state → same id
     field_id: str
@@ -70,7 +72,7 @@ class Tension(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def score(self) -> float:
-        """Value per dollar — the market's ranking key (knapsack density)."""
+        """Value per dollar — the read-only agenda view's ranking key."""
         return self.value / self.est_cost_usd
 
 
@@ -78,7 +80,7 @@ class Agenda(BaseModel):
     """The full ranked to-do list for one field, plus what a budget would fund.
 
     ``tensions`` are sorted by ``score`` descending. ``funded_ids`` is the greedy
-    market clearing: walk the list top-down, fund each tension whose cost still
+    agenda clearing: walk the list top-down, fund each tension whose cost still
     fits the budget. Everything below the cut line stays for next round — nothing
     is lost, just deferred. ``quiescent`` is the natural stop signal: when no
     tension clears the value floor, the field is settled and the system sleeps."""

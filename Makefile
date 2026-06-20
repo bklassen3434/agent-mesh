@@ -1,4 +1,4 @@
-.PHONY: up down logs ingest skeptic consolidate-memory consolidate-beliefs discover smoke wiki api types \
+.PHONY: up down logs ingest skeptic consolidate-memory consolidate-beliefs discover controller controller-apply smoke wiki api types \
 	pi-up pi-down pi-wiki pi-pipeline \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
@@ -58,18 +58,18 @@ discover:
 	docker compose run --rm --no-deps \
 		--entrypoint "uv run mesh-discover" coordinator
 
-# Agentic market — the self-directed replacement for ingest/skeptic/discovery.
-# `make market` previews one round (shadow, writes nothing); `make market-apply`
-# acts and loops to quiescence under the budget.
-market:
+# Deterministic controller — the rule-based, auction-free replacement for
+# ingest/skeptic/discovery. `make controller` previews one round's plan (shadow,
+# writes nothing); `make controller-apply` acts and loops to quiescence.
+controller:
 	docker compose build coordinator
 	docker compose run --rm --no-deps \
-		--entrypoint "uv run mesh-market" coordinator
+		--entrypoint "uv run mesh-controller" coordinator
 
-market-apply:
+controller-apply:
 	docker compose build coordinator
 	docker compose run --rm --no-deps \
-		--entrypoint "uv run mesh-market --apply" coordinator
+		--entrypoint "uv run mesh-controller --apply" coordinator
 
 # Smoke test: bring up the stack, run one ingest cycle, check row counts.
 smoke: up

@@ -108,6 +108,22 @@ class MergeEntitiesEffect(BaseModel):
     duplicate_id: str
 
 
+class MergeBeliefsEffect(BaseModel):
+    """Fold a redundant belief into a canonical one (append-only ``merge_beliefs``).
+
+    The belief analog of :class:`MergeEntitiesEffect`, emitted by the
+    ``consolidate-beliefs`` skill when two held beliefs in the same family embed
+    near-identically. Strictly append-only: the duplicate is marked
+    ``is_currently_held = false`` and absorbed (its claim-id unions fold onto the
+    canonical) — no belief or revision row is ever deleted, and claim content is
+    never touched. The gateway recomputes the canonical's confidence from the
+    enlarged evidence via the injected ``confidence_fn``."""
+
+    kind: Literal["merge_beliefs"] = "merge_beliefs"
+    canonical_id: str
+    duplicate_id: str
+
+
 class AddRelationshipEvidenceEffect(BaseModel):
     """Claim-grounded edge upsert (one edge per from/to/type, evidence aggregated)."""
 
@@ -161,6 +177,7 @@ Effect = Annotated[
     | CreateBeliefEffect
     | ReviseBeliefEffect
     | MergeEntitiesEffect
+    | MergeBeliefsEffect
     | AddRelationshipEvidenceEffect
     | OpenInvestigationEffect
     | UpdateInvestigationEffect

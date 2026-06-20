@@ -1,11 +1,19 @@
 # Agentic migration — from scheduled pipeline to a self-directed market
 
 This is the shared map for migrating Agent Mesh from a fixed, scheduled assembly
-line to an agentic, **blackboard/market** system: the knowledge store is a board,
-the things that need attention are derived as **tensions**, a **market** funds the
-most valuable ones under a budget, and **skills** (the unit of capability) do the
-work — emitting **effects** that a single **write gateway** applies under the
-store's invariants. It runs to **quiescence** and wakes on new evidence.
+line to an agentic, **blackboard** system: the knowledge store is a board, the
+things that need attention are derived as **tensions**, a deterministic
+**controller** picks and prioritises them via an explicit **rule table**, and
+**skills** (the unit of capability) do the work — emitting **effects** that a
+single **write gateway** applies under the store's invariants. It runs to
+**quiescence**.
+
+> **Update:** the original design used a *market* — skills bid a value/cost on each
+> tension and a budget auction funded the best. That auction has been replaced by a
+> deterministic rule engine (see `docs/deterministic-controller.md`). The blackboard
+> + tensions + skills + effects + gateway are all unchanged; only the selection
+> layer (bidding → rules) changed. Mentions of "market"/"bid"/"value-per-dollar"
+> below are historical.
 
 > Plain-English version: instead of a nightly timer pushing papers through fixed
 > steps, the system keeps a self-writing to-do list, picks the most valuable items
@@ -32,10 +40,12 @@ Two rules keep `main` green and let many workspaces run in parallel:
 | **Agenda** | the ranked tension list + budget clearing | `mesh_agents.agenda` ✅ |
 | **Effect** | a typed write *intent* (skills never write) | `mesh_models.effect` ✅ |
 | **Write gateway** | applies effects under the invariants | `mesh_db.effects` ✅ |
-| **Bid / Skill** | a specialist: bids on a tension, runs it → effects | `mesh_agents.skill` ✅ |
-| **Market** | round loop: agenda → bids → clear → dispatch → apply | `apps/pipeline/market.py` (Phase 1c) |
+| **Skill** | a specialist: handles a tension kind, runs it → effects | `mesh_agents.skill` ✅ |
+| **Rules** | deterministic `state → activations` table (replaced bidding) | `mesh_agents.rules` ✅ |
+| **Controller** | round loop: sense → plan(rules) → dispatch → apply | `apps/pipeline/controller.py` ✅ |
 
-✅ = landed.
+✅ = landed. (The former `Bid` type + `apps/pipeline/market.py` are gone — see
+`docs/deterministic-controller.md`.)
 
 ## Phases (the dependency DAG)
 
@@ -43,18 +53,20 @@ Two rules keep `main` green and let many workspaces run in parallel:
 Phase 0  ──→  Phase 1 (contracts)  ──→  Phase 2 (FAN OUT)  ──→  Phase 3  ──→  Phase 4
 agenda view   Effect+gateway,           N skills, 1 worktree     control      shadow→
 (DONE)        Skill+registry (DONE),     each, parallel          theory       go-live
-              Market shell (1c)                                  (osc.)
+              Controller loop (1c)                              (osc.)
 ```
 
 - **Phase 0 — agenda view. DONE.** `mesh.cli agenda` renders the ranked to-do
   list, read-only. De-risks the value function; freezes `Tension`.
 - **Phase 1 — contracts.**
   - 1a **Effect + write gateway** — `mesh_models.effect`, `mesh_db.effects`. DONE.
-  - 1b **Skill + Bid + registry** — `mesh_agents.skill`. DONE.
-  - 1c **Market shell** — `apps/pipeline/market.py` (`mesh-market`). The round
-    loop: scan board → skills bid → clear under budget → dispatch → gateway.
-    Shadow by default (previews effects, writes nothing); `--apply` to act + loop
-    to quiescence. A safe no-op until skills register. DONE.
+  - 1b **Skill + registry** — `mesh_agents.skill`. DONE. (Originally shipped with a
+    `Bid` type; the auction was later replaced by the rule engine — `Bid` removed.)
+  - 1c **Controller loop** — `apps/pipeline/controller.py` (`mesh-controller`). The
+    round loop: sense board → `plan()` over the rule table → dispatch → gateway.
+    Shadow by default (previews the plan, writes nothing); `--apply` to act + loop
+    to quiescence. (Originally the bidding "market shell"; see
+    `docs/deterministic-controller.md`.) DONE.
 - **Phase 2 — fan out (parallel).** One worktree per skill (table below).
 - **Phase 3 — oscillation control.** Tension identity/idempotency (generalize
   `processed_items`), cooldowns, salience decay, per-target write serialization.
@@ -110,12 +122,13 @@ claim a number *before* writing the file.
 
 - ✅ Phase 0 — agenda view (`mesh.cli agenda`).
 - ✅ Phase 1a — `Effect` + `apply_effects` write gateway.
-- ✅ Phase 1b — `Skill` / `Bid` / registry.
-- ✅ Phase 1c — market shell (`mesh-market`, shadow mode).
+- ✅ Phase 1b — `Skill` / registry (the `Bid` auction was later removed).
+- ✅ Phase 1c — controller loop (`mesh-controller`, shadow mode; was the bidding
+  "market shell" — auction replaced by deterministic rules).
 - ✅ Phase 2a — tension catalog expanded: `merge_candidate`, `contested_claim`,
   `unsynthesized_claims` now appear on the agenda with handler skills assigned.
 - ⏭️ Phase 2b — skill fan-out (spin up the worktrees above). **Next — parallel.**
 
-The skeleton is complete and runnable end-to-end (`mesh-market` shadow → live).
+The skeleton is complete and runnable end-to-end (`mesh-controller` shadow → live).
 Every tension kind the skills target now appears on the agenda; the fan-out is
 additive, low-conflict, parallel work.

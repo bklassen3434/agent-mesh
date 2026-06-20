@@ -105,20 +105,6 @@ def test_registered_and_handles_gap_kinds() -> None:
     assert any(s.skill_id == "investigate-gap" for s in load_builtin_skills())
 
 
-def test_bid_values_the_tension_at_fixed_cost() -> None:
-    skill = InvestigateGapSkill()
-    bid = skill.bid(None, _tension(value=0.6))
-    assert bid is not None
-    assert bid.value == 0.6
-    assert bid.est_cost_usd == 0.05
-    assert bid.score == pytest.approx(12.0)
-
-
-def test_bid_declines_unhandled_kind() -> None:
-    skill = InvestigateGapSkill()
-    assert skill.bid(None, _tension(TensionKind.unextracted_source, entity_id="s1")) is None
-
-
 # ── run → one OpenInvestigationEffect, never writes ──────────────────────────
 
 

@@ -1,40 +1,29 @@
-"""Phase 1 of the agentic migration: the Skill contract + registry.
+"""The Skill contract + registry.
 
 A **skill** is the unit of capability in the agentic mesh. It declares which
-tension kinds it handles, *bids* on a tension (its own value/cost estimate), and
-*runs* it — returning ``Effect``s, never writing. The market ranks bids and funds
-the best under a budget; the write gateway applies the winners' effects.
+tension kinds it handles and *runs* one — returning ``Effect``s, never writing.
+The deterministic **controller** (``apps/pipeline/controller.py``) decides *which*
+tensions to dispatch and in what order via an explicit rule table
+(``mesh_agents.rules``); the write gateway applies the resulting effects.
 
-This is the frozen contract for the Phase-2 fan-out: each skill is one class in
-its own module with ``@register_skill``, so worktrees never edit a shared list
-(the registration-conflict trap). To populate the registry, the skill modules
-must be imported once at startup — ``load_builtin_skills`` does that import sweep.
+This used to be an auction: skills carried a ``bid()`` that returned a
+value/cost ``Bid`` and the market funded the highest value-per-dollar offers
+under a budget. The bidding is gone — selection and prioritisation are now
+deterministic rules over board state, not an emergent price — so a skill is just
+``skill_id`` + ``handles`` + ``run``. Routing stays a 1:1 map (``handler_skill``
+/ the rule table name the skill for each kind); there was never more than one
+skill per kind, so nothing is lost by dropping the bid-off.
 
-Design parallels you already have:
-* ``handles`` mirrors a connector's declared capabilities — dispatch by kind.
-* ``bid`` is where the *value function* finally lives per-skill (Phase 0's
-  central ``compute_agenda`` scorer is the temporary stand-in until skills own it).
-* ``run`` returns ``list[Effect]`` so the decision/write split holds.
+Each skill is one class in its own module with ``@register_skill``, so worktrees
+never edit a shared list (the registration-conflict trap). To populate the
+registry, the skill modules must be imported once at startup —
+``load_builtin_skills`` does that import sweep.
 """
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
 from mesh_models.tension import Tension, TensionKind
-from pydantic import BaseModel, computed_field
-
-
-class Bid(BaseModel):
-    """A skill's offer to handle one tension: how much it's worth and what it'll
-    cost. The market ranks by ``score`` (value per dollar) and funds top-down."""
-
-    value: float
-    est_cost_usd: float
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def score(self) -> float:
-        return self.value / self.est_cost_usd if self.est_cost_usd > 0 else 0.0
 
 
 @runtime_checkable
@@ -46,14 +35,11 @@ class Skill(Protocol):
     skill_id: str
     handles: tuple[TensionKind, ...]
 
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        """Offer to handle ``tension`` (value + cost), or ``None`` to decline.
-        Cheap and read-only — called for every candidate every round."""
-        ...
-
     async def run(self, conn: Any, tension: Tension, *, budget_usd: float) -> list[Any]:
         """Do the work and return ``Effect``s for the gateway. Writes nothing
-        itself. ``budget_usd`` is what the market awarded this tension."""
+        itself. ``budget_usd`` is an advisory per-tension spend hint the controller
+        passes (the rough per-kind cost estimate); a skill may consult it but the
+        controller no longer auctions a budget across skills."""
         ...
 
 
@@ -71,7 +57,6 @@ def register_skill(skill_cls: type[Any]) -> type[Any]:
         class ExtractSourceSkill:
             skill_id = "extract-source"
             handles = (TensionKind.unextracted_source,)
-            def bid(self, conn, tension): ...
             async def run(self, conn, tension, *, budget_usd): ...
     """
     instance = skill_cls()
@@ -92,8 +77,8 @@ def all_skills() -> list[Skill]:
 
 
 def skills_for(kind: TensionKind) -> list[Skill]:
-    """Every registered skill that handles ``kind`` (may be more than one — the
-    market lets them bid against each other)."""
+    """Every registered skill that handles ``kind``. The controller routes 1:1
+    (one skill per kind), but the lookup stays a list for forward-compatibility."""
     return [s for s in _REGISTRY.values() if kind in s.handles]
 
 
@@ -104,15 +89,11 @@ def clear_registry() -> None:
 
 def load_builtin_skills() -> list[Skill]:
     """Import the built-in skill modules so their ``@register_skill`` decorators
-    run, then return the populated registry. Phase-2 worktrees add one import line
-    here per skill (the *only* shared edit — append-only, conflict-trivial).
-
-    No built-in skills exist yet (they land in Phase 2). Listed for shape::
-
-        from mesh_agents.skills import extract_source  # noqa: F401
-    """
+    run, then return the populated registry. The one shared edit per new skill is
+    appending an import here (append-only, conflict-trivial)."""
     from mesh_agents.skills import (  # noqa: F401
         challenge_belief,
+        consolidate_beliefs,
         dispatch_investigation,
         extract_source,
         investigate_gap,

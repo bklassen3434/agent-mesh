@@ -15,7 +15,8 @@ _KNOWLEDGE_TABLES = [
     "knowledge.entities", "knowledge.sources", "knowledge.claims",
     "knowledge.beliefs", "knowledge.belief_revisions", "knowledge.relationships",
     "knowledge.investigations", "runtime.pipeline_runs", "runtime.llm_usage",
-    "runtime.processed_items", "agents.agent_heuristics",
+    "runtime.processed_items", "runtime.controller_tension_state",
+    "agents.agent_heuristics",
     "agents.agent_heuristic_revisions", "agents.agent_invocations",
 ]
 

@@ -92,15 +92,6 @@ def _run(skill: ExtractSourceSkill, conn: Any, tension: Tension) -> list[Any]:
     return asyncio.run(skill.run(conn, tension, budget_usd=0.008))
 
 
-def test_bid_uses_tension_value_and_fixed_cost(tmp_db: MeshConnection) -> None:
-    skill = ExtractSourceSkill(llm=MockLLMClient())  # type: ignore[arg-type]
-    tension = _tension("nope")
-    bid = skill.bid(tmp_db, tension)
-    assert bid is not None
-    assert bid.value == tension.value
-    assert bid.est_cost_usd == 0.008
-
-
 def test_emits_one_create_claim_effect_per_known_subject(tmp_db: MeshConnection) -> None:
     source = _seed_source(tmp_db)
     _seed_entity(tmp_db, "TestModel-7B")  # all four canned claims share this subject

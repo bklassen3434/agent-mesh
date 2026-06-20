@@ -35,15 +35,15 @@ DEFAULT_INTERVALS: dict[str, int] = {
     "belief_consolidation": 24,
     # Phase 22d: autonomous discovery runs daily.
     "discovery": 24,
-    # Agentic market (the self-directed replacement for ingest/skeptic/discovery).
-    # Seeded DISABLED — it is flipped on per field from the Pipelines page once
-    # validated in shadow, so it never double-writes alongside the coordinator
-    # (strangler-fig go-live).
-    "market": 6,
+    # Deterministic controller (the rule-based, auction-free replacement for
+    # ingest/skeptic/discovery). Seeded DISABLED — it is flipped on per field from
+    # the Pipelines page once validated in shadow, so it never double-writes
+    # alongside the coordinator (strangler-fig go-live).
+    "controller": 6,
 }
 
 # job_ids seeded with enabled=false (opt-in go-live).
-DEFAULT_DISABLED: frozenset[str] = frozenset({"market"})
+DEFAULT_DISABLED: frozenset[str] = frozenset({"controller"})
 
 
 class SchedulesUnavailable(RuntimeError):

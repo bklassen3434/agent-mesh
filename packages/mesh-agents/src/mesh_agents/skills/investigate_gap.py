@@ -1,7 +1,7 @@
 """Phase 2 fan-out skill: ``investigate-gap`` — open an investigation for a gap.
 
 Wraps the Discovery analyzer/hypothesis-drafter (``mesh_agents.discovery``) as a
-market skill. When the board surfaces a knowledge-gap tension (an under-evidenced
+controller skill. When the board surfaces a knowledge-gap tension (an under-evidenced
 entity, a thin belief, a rising topic, or a comparison edge with no reciprocal),
 this skill turns that one tension into a single, testable ``Investigation``
 (``origin='discovery'``) and returns it as **one** ``OpenInvestigationEffect``.
@@ -41,7 +41,7 @@ from mesh_agents.discovery import (
     draft_hypotheses,
 )
 from mesh_agents.profiles import load_profile
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def _plan_investigation(
             logger.warning("investigate_gap_llm_unavailable", extra={"error": str(exc)})
     if not proposals:
         proposals = [_fallback_proposal(gap)]
-    # existing=[] so a funded tension always yields one investigation; the market
+    # existing=[] so a dispatched tension always yields one investigation; the controller
     # / write gateway own idempotency (Phase 3), not this skill.
     built = build_discovery_investigations([gap], proposals, existing=[])
     return built[0]
@@ -124,7 +124,7 @@ def _plan_investigation(
 
 @register_skill
 class InvestigateGapSkill:
-    """Bid on a knowledge-gap tension and open one investigation for it."""
+    """Handle a knowledge-gap tension and open one investigation for it."""
 
     skill_id = "investigate-gap"
     handles = (
@@ -146,12 +146,6 @@ class InvestigateGapSkill:
         except Exception as exc:  # construction issues degrade to the fallback path
             logger.debug("investigate_gap_llm_build_failed", extra={"error": str(exc)})
             return None
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        if tension.kind not in self.handles:
-            return None
-        # Value is the board's estimate (a gap's priority); fixed planning cost.
-        return Bid(value=tension.value, est_cost_usd=_EST_COST_USD)
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

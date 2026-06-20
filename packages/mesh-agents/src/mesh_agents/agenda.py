@@ -49,6 +49,7 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.rising_topic: 0.05,
     TensionKind.missing_reciprocal_edge: 0.03,
     TensionKind.merge_candidate: 0.02,
+    TensionKind.redundant_beliefs: 0.02,
     TensionKind.contested_claim: 0.04,
     TensionKind.unsynthesized_claims: 0.05,
     TensionKind.open_investigation: 0.05,
@@ -63,6 +64,7 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.rising_topic: "investigate-gap",
     TensionKind.missing_reciprocal_edge: "investigate-gap",
     TensionKind.merge_candidate: "merge-candidate",
+    TensionKind.redundant_beliefs: "consolidate-beliefs",
     TensionKind.contested_claim: "challenge-belief",
     TensionKind.unsynthesized_claims: "synthesize-belief",
     TensionKind.open_investigation: "dispatch-investigation",
@@ -80,13 +82,13 @@ _GAP_TO_TENSION: dict[GapKind, TensionKind] = {
 
 def scout_tensions(conn: Any, field_id: str) -> list[Tension]:
     """One tension per enabled connector that has an in-process scout handler —
-    the market's source-acquisition work (→ the scout-source skill). The connector
+    the controller's source-acquisition work (→ the scout-source skill). The connector
     config rides in ``signals`` so the skill needs no second read.
 
     Source acquisition is an *operational*, connector-config-driven concern, not a
-    knowledge gap derived from the board, so it lives here (called by the market
+    knowledge gap derived from the board, so it lives here (called by the controller
     loop) rather than inside ``compute_agenda`` (the board's knowledge-work view,
-    also rendered read-only by ``mesh.cli agenda``). The market loop's
+    also rendered read-only by ``mesh.cli agenda``). The controller loop's
     once-per-run dispatch guard keeps it from re-scouting so the field can still
     reach quiescence."""
     kind = TensionKind.unscouted_connector
@@ -116,7 +118,7 @@ def investigation_tensions(conn: Any, field_id: str, *, limit: int = 50) -> list
     """One tension per open/in-progress investigation that can still be worked —
     i.e. one whose suggested source types include a connector that is enabled for
     the field AND has an in-process investigate handler (→ the dispatch-investigation
-    skill). Operational, like ``scout_tensions``; the market loop calls it.
+    skill). Operational, like ``scout_tensions``; the controller loop calls it.
 
     Investigations whose sources aren't reachable are skipped (not a tension), so
     the agenda never surfaces work no skill can do."""
@@ -231,6 +233,42 @@ def _merge_candidate_tensions(conn: Any, field_id: str, *, limit: int) -> list[T
     return out
 
 
+def _redundant_belief_tensions(conn: Any, field_id: str, *, limit: int) -> list[Tension]:
+    """Held belief pairs that say the same thing (→ the consolidate-beliefs skill).
+
+    The belief analog of ``_merge_candidate_tensions``: a pgvector self-join finds
+    same-family, near-identical held beliefs; each pair becomes one tension the
+    controller's consolidation rule can act on. This is what turns "if beliefs are
+    very similar, consolidate them" into a deterministic, board-derived item rather
+    than a separately-scheduled job."""
+    from mesh_db.beliefs import find_duplicate_belief_pairs
+
+    kind = TensionKind.redundant_beliefs
+    min_sim = float(os.environ.get("MESH_BELIEF_MERGE_LOW", "0.85"))
+    out: list[Tension] = []
+    for id_a, topic_a, id_b, topic_b, sim in find_duplicate_belief_pairs(
+        conn, field_id=field_id, min_similarity=min_sim, limit=limit
+    ):
+        out.append(
+            Tension(
+                id=f"{kind.value}:{id_a}:{id_b}",
+                field_id=field_id,
+                kind=kind,
+                subject=f"{topic_a} ≈ {topic_b}",
+                rationale=(
+                    f"Held beliefs '{topic_a}' and '{topic_b}' look redundant "
+                    f"(similarity {sim:.2f}) — consolidate them."
+                ),
+                value=sim,  # more confident match → more valuable to consolidate
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"belief_id": id_a, "candidate_id": id_b},
+                signals={"candidate_id": id_b, "similarity": sim},
+            )
+        )
+    return out
+
+
 def _contested_claim_tensions(conn: Any, field_id: str, *, limit: int) -> list[Tension]:
     """Held beliefs under unresolved challenge (→ the challenge-belief skill)."""
     kind = TensionKind.contested_claim
@@ -317,6 +355,7 @@ def compute_agenda(
 
     # Phase 2a tensions the skill fan-out resolves.
     tensions.extend(_merge_candidate_tensions(conn, field_id, limit=gap_limit))
+    tensions.extend(_redundant_belief_tensions(conn, field_id, limit=gap_limit))
     tensions.extend(_contested_claim_tensions(conn, field_id, limit=gap_limit))
     tensions.extend(_unsynthesized_tensions(conn, field_id, limit=gap_limit))
 

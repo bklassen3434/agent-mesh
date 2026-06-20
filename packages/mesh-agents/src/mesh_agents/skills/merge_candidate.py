@@ -33,7 +33,7 @@ from mesh_agents.entity_resolution import (
     classify_pair,
     entity_for_match_from_claims,
 )
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 
 # Flat per-decision cost estimate (matches the agenda's ``_KIND_COST_USD`` entry
 # for ``merge_candidate``): most pairs resolve via the cheap high/low bands, only
@@ -52,11 +52,6 @@ class MergeCandidateSkill:
         # Injectable for tests; in production the adjudication client is built
         # lazily in ``run`` only when the middle band actually needs it.
         self._llm = llm
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        if tension.kind not in self.handles:
-            return None
-        return Bid(value=tension.value, est_cost_usd=_EST_COST_USD)
 
     async def run(
         self, conn: MeshConnection, tension: Tension, *, budget_usd: float

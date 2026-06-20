@@ -1,8 +1,10 @@
-"""Phase 1 of the agentic migration: the Skill contract + registry.
+"""The Skill contract + registry (auction-free).
 
 Defines a fake skill, exercises the registry, and runs the full vertical slice —
-tension → bid → run → Effect → write gateway → store — with no LLM, proving the
-frozen contract holds end to end before any real skill is built.
+tension → run → Effect → write gateway → store — with no LLM, proving the
+contract holds end to end. Skills no longer carry a ``bid``: the controller's
+rule table (``mesh_agents.rules``) decides what to dispatch; a skill is just
+``skill_id`` + ``handles`` + ``run``.
 """
 from __future__ import annotations
 
@@ -11,7 +13,6 @@ from typing import Any
 
 import pytest
 from mesh_agents.skill import (
-    Bid,
     Skill,
     all_skills,
     clear_registry,
@@ -53,9 +54,6 @@ def test_register_and_lookup_by_kind() -> None:
         skill_id = "fake-extract"
         handles = (TensionKind.unextracted_source,)
 
-        def bid(self, conn: Any, tension: Tension) -> Bid | None:
-            return Bid(value=tension.value, est_cost_usd=tension.est_cost_usd)
-
         async def run(self, conn: Any, tension: Tension, *, budget_usd: float) -> list[Any]:
             return []
 
@@ -74,9 +72,6 @@ def test_duplicate_skill_id_rejected() -> None:
         skill_id = "dup"
         handles = (TensionKind.thin_belief,)
 
-        def bid(self, conn: Any, tension: Tension) -> Bid | None:
-            return None
-
         async def run(self, conn: Any, tension: Tension, *, budget_usd: float) -> list[Any]:
             return []
 
@@ -87,30 +82,18 @@ def test_duplicate_skill_id_rejected() -> None:
             skill_id = "dup"
             handles = (TensionKind.stale_belief,)
 
-            def bid(self, conn: Any, tension: Tension) -> Bid | None:
-                return None
-
             async def run(self, conn: Any, tension: Tension, *, budget_usd: float) -> list[Any]:
                 return []
 
 
-def test_bid_score_is_value_per_dollar() -> None:
-    bid = Bid(value=0.6, est_cost_usd=0.05)
-    assert bid.score == pytest.approx(12.0)
-    assert Bid(value=1.0, est_cost_usd=0.0).score == 0.0  # guard div-by-zero
-
-
 def test_full_slice_tension_to_store(tmp_db: MeshConnection) -> None:
-    """A skill bids, runs, returns an Effect; the gateway writes it. The skill
-    itself never touches the DB."""
+    """A skill runs and returns an Effect; the gateway writes it. The skill itself
+    never touches the DB."""
 
     @register_skill
     class _MakeBelief:
         skill_id = "make-belief"
         handles = (TensionKind.unextracted_source,)
-
-        def bid(self, conn: Any, tension: Tension) -> Bid | None:
-            return Bid(value=tension.value, est_cost_usd=tension.est_cost_usd)
 
         async def run(self, conn: Any, tension: Tension, *, budget_usd: float) -> list[Any]:
             return [
@@ -129,10 +112,7 @@ def test_full_slice_tension_to_store(tmp_db: MeshConnection) -> None:
     assert skill is not None
     tension = _tension()
 
-    bid = skill.bid(tmp_db, tension)
-    assert bid is not None and bid.score > 0
-
-    effects = asyncio.run(skill.run(tmp_db, tension, budget_usd=bid.est_cost_usd))
+    effects = asyncio.run(skill.run(tmp_db, tension, budget_usd=tension.est_cost_usd))
     report = apply_effects(tmp_db, effects)
 
     assert report.beliefs_created == 1

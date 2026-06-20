@@ -42,7 +42,7 @@ from mesh_models.effect import (
 )
 from mesh_models.tension import Tension, TensionKind
 
-from mesh_agents.skill import Bid, register_skill
+from mesh_agents.skill import register_skill
 from mesh_agents.sota_tracker import (
     BeliefSummary,
     BeliefUpdate,
@@ -222,11 +222,6 @@ class SynthesizeBeliefSkill:
 
     skill_id = "synthesize-belief"
     handles = (TensionKind.unsynthesized_claims,)
-
-    def bid(self, conn: Any, tension: Tension) -> Bid | None:
-        if tension.kind not in self.handles or not tension.target_ref.get("entity_id"):
-            return None
-        return Bid(value=tension.value, est_cost_usd=0.05)
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

@@ -1,18 +1,20 @@
 # The deterministic controller — rules, not bidding
 
-The agentic orchestrator no longer runs an auction. The market metaphor (skills
-*bid* a value/cost on each tension, the loop funds the highest value-per-dollar
-offers under a budget) is gone, replaced by an **explicit, ordered table of
-deterministic rules**. The blackboard stays — the knowledge store is still sensed
-into a self-writing checklist of `Tension`s every round — but *what gets done, in
-what order, by which skill* is now a pure function of stored numbers, not an
-emergent price.
+The deterministic controller (`mesh-controller`) is the system's **only**
+orchestration job: it runs the whole reactive loop (scout → extract → resolve →
+consolidate → synthesize → challenge → investigate) in-process. It does not run an
+auction. The market metaphor (skills *bid* a value/cost on each tension, the loop
+funds the highest value-per-dollar offers under a budget) is gone, replaced by an
+**explicit, ordered table of deterministic rules**. The blackboard stays — the
+knowledge store is still sensed into a self-writing checklist of `Tension`s every
+round — but *what gets done, in what order, by which skill* is now a pure function
+of stored numbers, not an emergent price.
 
 > Plain-English version: instead of letting skills haggle over a budget, the
 > system has a fixed rulebook ("unread source → extract", "duplicate entities →
-> merge", "very similar beliefs → consolidate", "board idle for a while → scout",
-> "a skill keeps failing → throw a swarm at it"). Same board + same counters +
-> same clock → same plan, every time.
+> merge", "very similar beliefs → consolidate", "beliefs going stale → decay them",
+> "board idle for a while → scout", "a skill keeps failing → throw a swarm at it").
+> Same board + same counters + same clock → same plan, every time.
 
 ## What changed
 
@@ -77,6 +79,7 @@ tension.
 | `dispatch-open-investigations` | an `open_investigation` tension | `dispatch-investigation` | 35 |
 | `challenge-contested-beliefs` | a `contested_claim` / `stale_belief` tension | `challenge-belief` | 40 |
 | `investigate-knowledge-gaps` | a gap tension (under-evidenced / thin / rising / missing-edge) | `investigate-gap` | 50 |
+| `maintain-when-due` | an `aging_belief` / `consolidatable_memory` tension (one per field, maintenance cooldown elapsed) | `maintain-belief` / `consolidate-memory` | 60 |
 | `scout-when-idle` | board has no actionable knowledge work **and** scout cooldown elapsed | `scout-source` | 90 |
 
 Skill routing stays a 1:1 map: each tension names its `handler_skill`, so a rule
@@ -114,8 +117,8 @@ operational state the controller owns directly (writer role), like the
 
 ## Belief consolidation as a rule
 
-The user-facing example "if beliefs are very similar, consolidate them" is now a
-first-class controller capability rather than a separately-scheduled job:
+The user-facing example "if beliefs are very similar, consolidate them" is a
+first-class controller capability:
 
 * a `redundant_beliefs` tension is produced by `find_duplicate_belief_pairs` (a
   pgvector self-join over held, same-family beliefs — the belief analog of the
@@ -127,9 +130,28 @@ first-class controller capability rather than a separately-scheduled job:
   strictly append-only `merge_beliefs` (the duplicate is absorbed and marked
   not-held — no row deleted, no claim touched).
 
-The standalone Phase-19 `mesh-consolidate-beliefs` sweep still exists (it also
-runs the LLM-free decay/archival pass); the controller rule is the *reactive*
-path that consolidates as redundancy appears.
+This is the *reactive* path that consolidates as redundancy appears.
+
+## Maintenance as cooldown-gated rules
+
+Belief decay/archival and memory consolidation — formerly standalone scheduled
+jobs — are now controller rules, fired on a timer via the same
+"temporal-condition = state-condition" pattern as `scout-when-idle`. Both are
+**cooldown-gated**: the sensors emit a single tension per field once
+`now - last_attempt_at >= MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC`, and the
+`maintain-when-due` rule routes it:
+
+* an `aging_belief` tension → the **`maintain-belief`** skill: an LLM-free decay +
+  archival pass that emits append-only `ReviseBeliefEffect`s (the effect gained
+  `set_not_held` + `recompute_confidence` flags). It decays stale beliefs toward a
+  floor and archives long-dead unsupported ones — never deleting a row or touching
+  a claim;
+* a `consolidatable_memory` tension → the **`consolidate-memory`** skill: distils
+  episodic history into heuristics, emitting a new `WriteHeuristicEffect`. It runs
+  synchronously (no Batch-API path).
+
+The standalone `mesh.cli consolidate-beliefs` CLI command (a one-time backfill via
+`mesh_agents.belief_reconcile.reconcile_beliefs`) still exists and is unchanged.
 
 ## Configuration
 
@@ -139,6 +161,7 @@ path that consolidates as redundancy appears.
 | `MESH_CONTROLLER_ESCALATE_AFTER` | `3` | Stalled-dispatch count past which a tension escalates to a swarm |
 | `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances an escalation fans out to |
 | `MESH_CONTROLLER_SCOUT_COOLDOWN_SEC` | `600` | Min seconds between scouts of a connector once the board is idle |
+| `MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC` | `86400` | Min seconds between maintenance passes (belief decay/archival + memory consolidation) per field |
 
 ## Running it
 
@@ -149,9 +172,9 @@ uv run mesh-controller --step-cap 4    # smaller per-round batch
 make controller / make controller-apply
 ```
 
-It is a scheduler job (`controller`, `mesh-controller --apply`) seeded **disabled**
-— flip it on per field from the Pipelines page once shadow output looks right, so
-it never double-writes alongside the coordinator (the strangler-fig go-live).
+It is the scheduler's sole orchestration job (`controller`, `mesh-controller
+--apply`), seeded **enabled** and run per field. It is the only writer of the
+ingest loop — there is no separate coordinator to double-write alongside.
 
 ## Testing
 

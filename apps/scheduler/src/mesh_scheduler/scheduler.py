@@ -1,9 +1,9 @@
 """APScheduler wiring for the mesh (Phase 9).
 
-The scheduler is a *trigger*, not an orchestrator: each job shells out to
-the same CLI entry point a human would run (``mesh-ingest``,
-``mesh-skeptic``). All DB writes happen on the coordinator/sweep
-side, exactly as when the user runs ``make ingest`` by hand.
+The scheduler is a *trigger*, not an orchestrator: it shells out to the same CLI
+entry point a human would run (``mesh-controller --apply``, the sole job). All DB
+writes happen on the controller side, exactly as when the user runs
+``make controller-apply`` by hand.
 
 Phase 9 changes the control model:
 
@@ -76,14 +76,16 @@ def _env(name: str, default: str) -> str:
 
 
 def configured_cron_triggers() -> dict[str, CronTrigger]:
-    """Legacy helper for the /status HTML page (kept as-is in Phase 9).
+    """Legacy helper for the /status HTML page's "next run" estimate.
 
-    Reads the env-var cron expressions the pre-Phase-9 scheduler used.
-    Decoupled from the live interval-based schedule now driven by Postgres.
+    The controller is the only job now; this reads an env-var cron purely for the
+    page's approximate next-fire display. Decoupled from the live interval-based
+    schedule driven by Postgres.
     """
     return {
-        "ingest": CronTrigger.from_crontab(_env("MESH_SCHEDULE_PIPELINE_CRON", "0 */6 * * *")),
-        "skeptic": CronTrigger.from_crontab(_env("MESH_SCHEDULE_SWEEP_CRON", "0 3 * * *")),
+        "controller": CronTrigger.from_crontab(
+            _env("MESH_SCHEDULE_CONTROLLER_CRON", "0 */6 * * *")
+        ),
     }
 
 

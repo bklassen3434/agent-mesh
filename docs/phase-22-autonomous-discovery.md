@@ -1,5 +1,14 @@
 # Phase 22 — Autonomous Discovery: Self-Directed Investigation From Gaps & Trends
 
+> **Historical design doc.** The standalone `mesh-discover` LangGraph sweep
+> described here no longer exists. Discovery is now the controller's
+> `investigate-gap` rule (opens `origin="discovery"` investigations) plus the
+> `dispatch-investigation` skill (works them), both inside `mesh-controller`. The
+> `mesh.cli discover` command is now a read-only preview (its `--apply` flag was
+> removed; acting on discovery is `mesh-controller --apply`). The gap taxonomy and
+> hypothesis-drafting mechanics below still hold. See
+> `docs/autonomous-discovery.md` and `docs/deterministic-controller.md`.
+
 ## Context
 
 Agent Mesh ingests on a fixed cadence: the scheduler fires `mesh-ingest`, the

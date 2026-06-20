@@ -2,12 +2,12 @@
 
 ## Overview
 
-The agent fleet started (Phase 1) as plain Python classes, each with a single `async run()` method over Pydantic input/output models. **Every agent is now an A2A server** (Phase 2 onward): each subclasses `BaseAgent`, advertises one or more skills (`skill_id`), and is dispatched by the LangGraph coordinator over the A2A protocol via `mesh_a2a.node.call_skill_node`. Core agent logic is unchanged from the original classes; the transport and orchestration moved out into `apps/pipeline/` and `mesh-a2a`.
+The agent fleet started (Phase 1) as plain Python classes, each with a single `async run()` method over Pydantic input/output models. Phase 2 promoted each into an A2A server (subclassing `BaseAgent`, advertising skills). Those A2A servers still exist but are now **orphaned**: the deterministic controller (`mesh-controller`) is the only orchestrator, and its skills call the shared core agent functions in-process rather than dispatching over A2A. Core agent logic is unchanged; this doc describes each agent's capability regardless of transport.
 
 Cross-cutting properties of the current fleet:
 
-- **Field-agnostic (Phase 17).** All agents operate within a **Field** (`catalog.fields`). A run scopes to one field and the coordinator dispatches only that field's enabled connectors. The three coupled system prompts (extractor, skeptic, research-QA) are profile-driven **builders** (`mesh_llm.prompts.build_*` from a `FieldProfile`), and agents build the `cache_control` prefix once per field via `mesh_agents.profiles.load_profile`. Entity resolution and memory **never cross fields**. `field_id` is a partition, never a content axis — synthesis/confidence/curator logic never branches on it. See `docs/field-agnostic.md`.
-- **Observable (Phase 23).** Every agent dispatched through the standard skill path is recorded: a `_dispatch` wrapper in the coordinator times each skill call and writes an `AgentInvocation` (bounded input/output summary, status, trace id, latency, model/tokens/cost, injected memory) to `agents.agent_invocations`. Rows surface on the wiki **Agents** page (roster → an agent's recent invocations → one invocation's inputs/outputs/context + Langfuse deep-link). No per-agent code is needed for an agent to appear. See `docs/agent-observability.md`.
+- **Field-agnostic (Phase 17).** All agents operate within a **Field** (`catalog.fields`). A run scopes to one field and the controller dispatches only that field's enabled connectors. The three coupled system prompts (extractor, skeptic, research-QA) are profile-driven **builders** (`mesh_llm.prompts.build_*` from a `FieldProfile`), and agents build the `cache_control` prefix once per field via `mesh_agents.profiles.load_profile`. Entity resolution and memory **never cross fields**. `field_id` is a partition, never a content axis — synthesis/confidence/curator logic never branches on it. See `docs/field-agnostic.md`.
+- **Observable (Phase 23).** Every agent dispatched through the standard skill path is recorded: a dispatch wrapper in the controller times each skill call and writes an `AgentInvocation` (bounded input/output summary, status, trace id, latency, model/tokens/cost, injected memory) to `agents.agent_invocations`. Rows surface on the wiki **Agents** page (roster → an agent's recent invocations → one invocation's inputs/outputs/context + Langfuse deep-link). No per-agent code is needed for an agent to appear. See `docs/agent-observability.md`.
 - **Memory.** Agents can inject episodic recall + learned heuristics and attach an optional debug envelope to skill output (`mesh_agents.memory`). See `docs/agent-memory.md`.
 
 ## Agent Catalogue
@@ -52,9 +52,9 @@ On provider connection failure: re-raises (pipeline must abort).
 
 **Skill**: `resolve_entities` (port `8003`).
 
-Resolution is **block → match → merge** on `name_embedding` similarity (pgvector, HNSW cosine; embedder `fastembed`/`BAAI/bge-small-en-v1.5` via the `Embedder` protocol). An alias/canonical exact-match fast-path still wins first; otherwise the coordinator runs `resolve_entity_semantic` (`mesh_agents.entity_resolution`) before creating any new entity: type-filtered blocking finds candidates, then conservative bands decide — cosine ≥ `MESH_ENTITY_MERGE_HIGH` (0.93) auto-merges, ≤ `MESH_ENTITY_MERGE_LOW` (0.80) auto-rejects, and the middle band is adjudicated by the LLM (defaulting to not-same). Blocking and the name fast-path **never cross fields**.
+Resolution is **block → match → merge** on `name_embedding` similarity (pgvector, HNSW cosine; embedder `fastembed`/`BAAI/bge-small-en-v1.5` via the `Embedder` protocol). An alias/canonical exact-match fast-path still wins first; otherwise the controller runs `resolve_entity_semantic` (`mesh_agents.entity_resolution`) before creating any new entity: type-filtered blocking finds candidates, then conservative bands decide — cosine ≥ `MESH_ENTITY_MERGE_HIGH` (0.93) auto-merges, ≤ `MESH_ENTITY_MERGE_LOW` (0.80) auto-rejects, and the middle band is adjudicated by the LLM (defaulting to not-same). Blocking and the name fast-path **never cross fields**.
 
-A transactional `merge_entities` re-points claim/relationship/investigation references B→A, aggregates colliding edges, folds aliases, and deletes B — never touching claim content. The one-time backfill is `mesh.cli reconcile-entities` (Batch API). The coordinator's adjudication call opts into tiered routing. See `docs/entity-resolution.md`.
+A transactional `merge_entities` re-points claim/relationship/investigation references B→A, aggregates colliding edges, folds aliases, and deletes B — never touching claim content. The one-time backfill is `mesh.cli reconcile-entities` (Batch API). The controller's adjudication call opts into tiered routing. See `docs/entity-resolution.md`.
 
 **DB exception**: This agent reads and writes the DB directly (find-or-create pattern).
 
@@ -74,7 +74,7 @@ Groups `achieves_score` claims by `object["benchmark"]`. For each benchmark:
 - New score beats existing → `BeliefUpdate(is_new_belief=False, existing_belief_id=...)`
 - New score ≤ existing → no update
 
-No LLM calls. This is one branch of a **generalized synthesis** layer (Phase 14): the coordinator's `synthesize` node dispatches on each claim's `claim_type` (`mesh_agents.synthesis`):
+No LLM calls. This is one branch of a **generalized synthesis** layer (Phase 14): the `synthesize-belief` skill dispatches on each claim's `claim_type` (`mesh_agents.synthesis`):
 
 - `score` → this SOTA handler (unchanged).
 - `capability` → entity-anchored beliefs keyed `capability:<entity_id>` that converge per canonical entity.
@@ -159,15 +159,15 @@ Pure / rule-based — no LLM. The score weights staleness, supporter weakness, c
 
 Concurrency cap is `MESH_PIPELINE_CONCURRENCY` (default 3). One bad paper records an error and continues; LLM provider failure aborts.
 
-## Falsification Sweep (Phase 4)
+## Falsification (Phase 4, now the challenge-belief rule)
 
-Out-of-band from the main pipeline. Triggered manually by `make skeptic`.
+Belief challenge runs as the controller's `challenge-belief` skill (the `contested_claim` / `stale_belief` tensions), not a separate sweep. The flow is unchanged:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                  run_skeptic_sweep()                            │
+│                  challenge_belief_with_memory()                 │
 │                                                                 │
-│  1. Discover Curator + Skeptic via MESH_SKEPTIC_AGENT_URLS      │
+│  1. (controller dispatches the challenge-belief skill)          │
 │                                                                 │
 │  2. Read all currently_held beliefs                             │
 │                                                                 │
@@ -193,14 +193,14 @@ Out-of-band from the main pipeline. Triggered manually by `make skeptic`.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Coordinator (`apps/pipeline/coordinator.py`) is **unchanged** by this flow. Curator never calls Skeptic directly — `skeptic_sweep` brokers everything via A2A so the agent boundary stays load-bearing.
+The `challenge-belief` skill calls the shared `challenge_belief_with_memory` core function directly; the skeptic and curator logic is reused unchanged, just driven from the controller rather than a standalone sweep.
 
 ---
 
 ## Phase 5b — New scouts (complete)
 
 Phase 5b adds four new scout agents. All drop in via the existing
-`scout_*` skill-id prefix dispatch in the coordinator — no per-source
+`scout_*` skill-id prefix dispatch (now the controller's `scout-source` skill) — no per-source
 branching was added.
 
 ### GitHubScoutAgent (Phase 5b)
@@ -365,10 +365,10 @@ These run on their own LangGraph jobs and schedules rather than inline in the ma
 
 **Responsibility**: Proactively propose investigations from whole-field gaps — never proposes facts.
 
-`mesh_agents.discovery.analyze_field` is a rule-based pass that mines under-evidenced entities, thin/stale beliefs, rising-activity topics, and missing reciprocal edges into ranked `GapSignal`s; one LLM pass (`draft_hypotheses`, `make_routed_llm_client(agent_name="discovery")`, field-framed via `build_discovery_system`) turns them into testable proposals, degrading to `[]` on failure and deduping against open investigations. The `mesh-discover` job opens capped `origin="discovery"` investigations per active field and dispatches real search via `dispatch_open_investigations` (only to connectors enabled for the field). Fired by a daily scheduler job; `mesh.cli discover [--field --apply]` is the dry-run/manual entry. See `docs/autonomous-discovery.md`.
+`mesh_agents.discovery.analyze_field` is a rule-based pass that mines under-evidenced entities, thin/stale beliefs, rising-activity topics, and missing reciprocal edges into ranked `GapSignal`s; one LLM pass (`draft_hypotheses`, `make_routed_llm_client(agent_name="discovery")`, field-framed via `build_discovery_system`) turns them into testable proposals, degrading to `[]` on failure and deduping against open investigations. The controller's `investigate-gap` rule opens capped `origin="discovery"` investigations per active field and the `dispatch-investigation` skill dispatches real search via `dispatch_open_investigations` (only to connectors enabled for the field). `mesh.cli discover [--field]` is the read-only dry-run preview. See `docs/autonomous-discovery.md`.
 
 ### belief_consolidator (Phase 19)
 
 **Responsibility**: Append-only belief de-duplication + decay/archive — the world-model analog of entity resolution, but it never deletes.
 
-Beliefs carry a `statement_embedding`; `mesh_agents.belief_consolidation`/`belief_reconcile` block held, field-scoped, family-restricted candidate beliefs, then merge on conservative bands (`MESH_BELIEF_MERGE_HIGH`/`_LOW` 0.95/0.85; middle band → LLM, defaulting to not-same). `merge_beliefs` folds claim-id unions, recomputes confidence, re-points investigation refs, and marks the duplicate not-held — never deleting a row or touching a claim. A second LLM-free pass decays stale beliefs (confidence half-life) and archives long-dead unsupported ones. Every change appends a `BeliefRevision` attributed to `belief_consolidator`, never crossing fields. Runs as the daily `mesh-consolidate-beliefs` job; `mesh.cli consolidate-beliefs` is the backfill/manual entry. See `docs/belief-consolidation.md`.
+Beliefs carry a `statement_embedding`; `mesh_agents.belief_consolidation`/`belief_reconcile` block held, field-scoped, family-restricted candidate beliefs, then merge on conservative bands (`MESH_BELIEF_MERGE_HIGH`/`_LOW` 0.95/0.85; middle band → LLM, defaulting to not-same). `merge_beliefs` folds claim-id unions, recomputes confidence, re-points investigation refs, and marks the duplicate not-held — never deleting a row or touching a claim. An LLM-free `maintain-belief` pass decays stale beliefs (confidence half-life) and archives long-dead unsupported ones. Every change appends a `BeliefRevision` attributed to `belief_consolidator`, never crossing fields. Runs as controller rules (the `consolidate-beliefs` and `maintain-belief` skills); `mesh.cli consolidate-beliefs` is the one-time backfill entry. See `docs/belief-consolidation.md`.

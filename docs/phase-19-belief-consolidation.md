@@ -1,5 +1,13 @@
 # Phase 19 — Belief Consolidation: Semantic Dedup, Merge & Decay
 
+> **Historical design doc.** The standalone `mesh-consolidate-beliefs` LangGraph
+> job described here no longer exists. Belief consolidation is now the controller's
+> `consolidate-beliefs` skill (reactive) and the `maintain-belief` skill (LLM-free
+> decay/archival, cooldown-gated); both run inside `mesh-controller`. The CLI
+> `mesh.cli consolidate-beliefs` one-time backfill is unchanged. The append-only
+> merge/decay mechanics below still hold. See `docs/belief-consolidation.md` and
+> `docs/deterministic-controller.md` for current state.
+
 ## Context
 
 Agent Mesh is an A2A-based multi-agent research-tracking system on Postgres,

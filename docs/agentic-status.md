@@ -14,11 +14,12 @@ ledger: which `TensionKind` maps to which skill, and what (if anything) is left.
 
 ## Tension kind → skill
 
-There are twelve `TensionKind`s (`mesh_models.tension`). Ten are *board-derived*
-(`compute_agenda`); two are *operational* (connector/investigation-config-driven)
-and injected by the controller loop alongside the agenda (`scout_tensions`,
-`investigation_tensions`). All twelve are claimed by one of the eight registered
-built-in skills (`load_builtin_skills()`):
+The `TensionKind`s (`mesh_models.tension`) split three ways: *board-derived*
+(`compute_agenda`); *operational* (connector/investigation-config-driven) and
+injected by the controller loop alongside the agenda (`scout_tensions`,
+`investigation_tensions`); and *maintenance* tensions (`aging_belief`,
+`consolidatable_memory`), one per field, cooldown-gated on a timer. All are claimed
+by one of the registered built-in skills (`load_builtin_skills()`):
 
 | Tension kind | Skill (`skill_id`) | Wraps | Effects it emits | Status |
 |---|---|---|---|---|
@@ -34,14 +35,16 @@ built-in skills (`load_builtin_skills()`):
 | `rising_topic` | `investigate-gap` | `discovery` | `OpenInvestigationEffect` | ✅ handled |
 | `missing_reciprocal_edge` | `investigate-gap` | `discovery` | `OpenInvestigationEffect` | ✅ handled |
 | `open_investigation` | `dispatch-investigation` | in-process investigate dispatch | `CreateSourceEffect` + `UpdateInvestigationEffect` | ✅ handled |
+| `aging_belief` | `maintain-belief` | LLM-free decay/archival | `ReviseBeliefEffect` | ✅ handled |
+| `consolidatable_memory` | `consolidate-memory` | episodic → heuristic distillation | `WriteHeuristicEffect` | ✅ handled |
 
-Eight skills, twelve kinds, full coverage. The skill→kind mapping is enforced by
+Full coverage across every board-derived, operational, and maintenance tension. The skill→kind mapping is enforced by
 `@register_skill` + each skill's `handles` tuple; the agenda's `_KIND_SKILL`
 (`mesh_agents.agenda`) names the same handler for every kind, so the
 board→skill map and the registry agree. The controller's rule table
 (`mesh_agents.rules`) routes each kind to that same handler.
 
-With these the controller now runs the coordinator's whole ingest loop end-to-end
+With these the controller runs the whole ingest loop end-to-end
 — **scout → extract → resolve/merge → consolidate → synthesize → challenge →
 investigate (open + dispatch)** — acquiring its own sources, minting entities so a
 fresh field bootstraps, recomputing evidence-derived belief confidence in the
@@ -54,8 +57,8 @@ yet — the gateway branch exists and is exercised by unit tests).
 ## Nothing is "unhandled"
 
 A tension is *unhandled* only if no registered skill's `handles` contains its
-kind — the controller counts those as `skipped_no_skill`. With all eight skills
-registered, that count is **0** for every kind the board can produce.
+kind — the controller counts those as `skipped_no_skill`. With all the built-in
+skills registered, that count is **0** for every kind the board can produce.
 `tests/test_controller_integration.py` asserts this directly: it seeds a small board
 (an unread source, a thin belief, a duplicate-looking entity pair), registers the
 real skills via `load_builtin_skills()`, runs `run_controller(shadow=True)`, and
@@ -67,12 +70,14 @@ merge + investigations through the gateway.
 These exist in the system but are *not* expressed as tensions, so the absence of a
 controller skill for them is by design, not a gap:
 
-- **Housekeeping consolidation** — the standalone belief-consolidation sweep
-  (Phase 19, which also does LLM-free decay/archival) and entity reconcile
-  (Phase 13) still run as their own scheduled LangGraph jobs
-  (`mesh-consolidate-beliefs`, `mesh.cli reconcile-entities`). Note: *reactive*
-  belief consolidation IS now a controller skill (`consolidate-beliefs`, the
-  `redundant_beliefs` tension); the scheduled sweep is the periodic backstop.
+- **Entity reconcile** — the one-time entity-reconcile backfill (Phase 13) still
+  runs as a CLI command (`mesh.cli reconcile-entities`), not a controller skill.
+  *Reactive* entity resolution IS a controller skill (`merge-candidate`, the
+  `merge_candidate` tension); the CLI is the one-shot cleanup pass. Belief
+  consolidation, decay/archival, and memory consolidation are all controller rules
+  now (the `redundant_beliefs`, `aging_belief`, and `consolidatable_memory`
+  tensions); the `mesh.cli consolidate-beliefs` backfill command stays for one-time
+  use.
 - **Relationship synthesis** — the planned standalone `relationship` skill
   (`wt-edges`) was folded into existing skills: `synthesize-belief` emits
   `AddRelationshipEvidenceEffect`s directly from relational claims, and
@@ -95,15 +100,15 @@ The controller now acquires its own material rather than assuming sources arrive
 - **`dispatch-investigation`** works the investigations `investigate-gap` opens:
   it runs the in-process investigate handlers, acquires evidence sources tagged
   with the investigation lineage, and advances the lifecycle (in-progress →
-  resolved/abandoned on the same `MESH_INVESTIGATION_*` thresholds the coordinator
-  uses). `extract-source` attaches the resulting claims back via
+  resolved/abandoned on the `MESH_INVESTIGATION_*` thresholds). `extract-source`
+  attaches the resulting claims back via
   `AttachClaimToInvestigationEffect`, so investigations actually resolve.
 
 ## Go-live (scheduler)
 
-`controller` is a scheduler job (`mesh-controller --apply`) seeded **disabled** — flip it on
-per field from the Pipelines page once shadow output looks right, so it never
-double-writes alongside the coordinator (the strangler-fig go-live).
+`controller` is the scheduler's sole orchestration job (`mesh-controller --apply`),
+seeded **enabled** and run per field. It is the only writer of the ingest loop —
+there is no separate coordinator to double-write alongside.
 
 ## Known limitations
 
@@ -119,11 +124,12 @@ double-writes alongside the coordinator (the strangler-fig go-live).
   capture still need the `Skill.run` contract to surface usage. Run-level
   observability (`/status`, Pipelines, `pipeline-stats`) works today.
 - **Belief `statement_embedding` on controller synthesis** is left to the
-  consolidation sweep's backfill rather than computed inline by `synthesize-belief`.
+  `mesh.cli consolidate-beliefs` backfill rather than computed inline by
+  `synthesize-belief`.
 - **LLM-bound skills degrade, they don't fail the round.** With no provider
   reachable, the LLM-bound skills return no effects (caught by the controller's
   per-skill guard) and the discovery-backed ones fall back to deterministic,
-  LLM-free proposals — the coordinator's "one bad item never fails the run"
+  LLM-free proposals — preserving the "one bad item never fails the run"
   philosophy.
 
 ## Verification

@@ -3,7 +3,7 @@
 Phase 15 made agent **episodic memory** readable (what an agent did, and how it
 fared). Phase 16 makes memory **load-bearing**: agents read their own history
 and learned heuristics into their prompts, a procedural store captures those
-heuristics, and a scheduled job distills raw episodes into them offline.
+heuristics, and a controller rule distills raw episodes into them offline.
 
 ```
  episodic (15)            procedural (16b)            consumption (16a/d)
@@ -58,24 +58,22 @@ learned, revisable how-to, mirroring `belief` / `belief_revision`:
   `expires_at`; consumption excludes expired and inactive rows.
 
 Agents *propose* heuristics via the `propose_heuristic` skill contract
-(`mesh_agents.consolidator`); only the coordinator persists. This phase's sole
-producer — the consolidation job — runs coordinator-side, so it calls
-`persist_heuristic` directly (the same way the coordinator persists beliefs and
-investigation suggestions); no agent→coordinator A2A server is stood up.
+(`mesh_agents.consolidator`); only the controller persists, through the write
+gateway via the `WriteHeuristicEffect`.
 
 ### 3. Consolidation (16c)
 
-`mesh_pipeline.consolidation` is a LangGraph graph cloned from
-`skeptic_sweep.py` (same checkpointing, traceparent, Batch-API path with a sync
-fallback, finalize-idempotency guard, Langfuse cost attribution). For each
-target `(agent, skill)` it:
+Memory consolidation is the controller's **`consolidate-memory`** skill (the
+cooldown-gated `consolidatable_memory` tension). For each target `(agent, skill)`
+it:
 
 1. reads recent episodic + outcome history (`recall_history`),
-2. distills candidate heuristics via a **batch-API** LLM call
-   (`CONSOLIDATION_SYSTEM`; model env-routed for the `consolidator` role —
-   `MESH_LLM_MODEL_CONSOLIDATOR` → default), and
-3. persists each candidate through `persist_heuristic` with provenance (the runs
-   + claims the history was drawn from), the low starting confidence, and a TTL.
+2. distills candidate heuristics via an LLM call (`CONSOLIDATION_SYSTEM`; model
+   env-routed for the `consolidator` role — `MESH_LLM_MODEL_CONSOLIDATOR` →
+   default), run **synchronously** (the former Batch-API path is gone), and
+3. emits a `WriteHeuristicEffect` per candidate with provenance (the runs +
+   claims the history was drawn from), the low starting confidence, and a TTL;
+   the gateway persists it via `persist_heuristic`.
 
 It is **offline** — no LLM is added to the hot path. Identical active heuristics
 are de-duplicated across runs.
@@ -98,18 +96,15 @@ The Anthropic client marks **only the system prompt** with
 therefore added to the **user** message, *after* the cached system prefix. The
 block is prepended to the task content within the user message (giving the
 plan's order: heuristics → recent history → task), but it never touches the
-system prompt, so the Phase-11 prompt-cache prefix is unchanged. The skeptic's
-batch path (`skeptic_sweep`) builds the same block via the sweep's connection so
-the batch prompt matches the sync prompt.
+system prompt, so the Phase-11 prompt-cache prefix is unchanged.
 
 ## Cadence
 
-The existing scheduler fires consolidation like the skeptic sweep — a
-`memory_consolidation` row in the Postgres `schedules` table (default **24h**) and a
-`JOB_COMMANDS["memory_consolidation"] = mesh-consolidate-memory` entry. **No new service or
-container.** Run one cycle manually with `make consolidate-memory` (reuses the
-skeptic-sweep job container with `--no-deps` + an entrypoint override; needs
-`make up` for Postgres) or `uv run mesh-consolidate-memory`.
+Consolidation runs as the controller's `consolidate-memory` skill, fired by the
+cooldown-gated `consolidatable_memory` tension (one per field, gated by
+`MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC`, 24h default) — the same
+"temporal-condition = state-condition" pattern as `scout-when-idle`. **No
+separate service, container, or scheduled job.**
 
 ## Inspection
 
@@ -123,7 +118,6 @@ uv run mesh.cli heuristics list --skill extract_claims --include-expired
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MESH_CONSOLIDATION_BATCH` | `true` | Use the Batch API (Anthropic only); else the sync fallback |
 | `MESH_CONSOLIDATION_HISTORY_LIMIT` | `50` | Episodic entries per target fed to distillation |
 | `MESH_CONSOLIDATION_TTL_DAYS` | `30` | TTL stamped on distilled heuristics |
 | `MESH_CONSOLIDATION_TARGETS` | `claim_extractor:extract_claims,skeptic:challenge_belief` | `(agent:skill)` pairs to consolidate |

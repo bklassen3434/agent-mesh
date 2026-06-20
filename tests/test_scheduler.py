@@ -41,18 +41,16 @@ def _schedules(
 
 
 def test_default_cron_triggers_match_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MESH_SCHEDULE_PIPELINE_CRON", raising=False)
-    monkeypatch.delenv("MESH_SCHEDULE_SWEEP_CRON", raising=False)
+    monkeypatch.delenv("MESH_SCHEDULE_CONTROLLER_CRON", raising=False)
     triggers = configured_cron_triggers()
-    assert set(triggers.keys()) == {"ingest", "skeptic"}
-    assert "hour='*/6'" in str(triggers["ingest"])
-    assert "hour='3'" in str(triggers["skeptic"])
+    assert set(triggers.keys()) == {"controller"}
+    assert "hour='*/6'" in str(triggers["controller"])
 
 
 def test_cron_env_overrides_picked_up(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MESH_SCHEDULE_PIPELINE_CRON", "*/20 * * * *")
+    monkeypatch.setenv("MESH_SCHEDULE_CONTROLLER_CRON", "*/20 * * * *")
     triggers = configured_cron_triggers()
-    assert "minute='*/20'" in str(triggers["ingest"])
+    assert "minute='*/20'" in str(triggers["controller"])
 
 
 # ── SchedulerManager — run claiming + status ─────────────────────────────────

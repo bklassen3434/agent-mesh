@@ -62,7 +62,7 @@ def _next_runs() -> dict[str, datetime | None]:
     try:
         from mesh_scheduler import configured_cron_triggers
     except ImportError:
-        return {"ingest": None, "skeptic": None}
+        return {"controller": None}
     now = datetime.now(UTC)
     out: dict[str, datetime | None] = {}
     for job_id, trig in configured_cron_triggers().items():
@@ -146,53 +146,41 @@ def _row(k: str, v: str, *, cls: str = "") -> str:
 
 
 def _section_runs(conn: MeshConnection) -> str:
-    pipeline = _last_run(conn, "ingest")
-    sweep = _last_run(conn, "skeptic")
+    run = _last_run(conn, "controller")
     nexts = _next_runs()
     rows: list[str] = []
-    for label, run, next_run_key in (
-        ("Ingest", pipeline, "ingest"),
-        ("Skeptic sweep", sweep, "skeptic"),
-    ):
-        if run is None:
-            rows.append(_row(f"{label} — last run", "never", cls="muted"))
-        else:
-            dur = _duration_seconds(run)
-            dur_str = f"{dur}s" if dur is not None else "running"
-            errs = len(run.errors)
-            err_class = "bad" if errs else "ok"
-            rows.append(
-                _row(
-                    f"{label} — last run",
-                    f"{run.started_at.strftime('%Y-%m-%d %H:%M')} "
-                    f"({_ago(run.started_at)}) · dur {dur_str} · "
-                    f"{run.triggered_by} · "
-                    f"<span class='{err_class}'>{errs} errors</span>",
-                )
-            )
-            if label == "Ingest":
-                rows.append(
-                    _row(
-                        "&nbsp;&nbsp;&nbsp;deltas",
-                        f"+{run.claims_inserted} claims, "
-                        f"+{run.beliefs_created} / ~{run.beliefs_revised} beliefs",
-                    )
-                )
-            else:
-                rows.append(
-                    _row(
-                        "&nbsp;&nbsp;&nbsp;deltas",
-                        f"~{run.beliefs_revised} beliefs revised",
-                    )
-                )
-        nxt = nexts.get(next_run_key)
+    label = "Controller"
+    if run is None:
+        rows.append(_row(f"{label} — last run", "never", cls="muted"))
+    else:
+        dur = _duration_seconds(run)
+        dur_str = f"{dur}s" if dur is not None else "running"
+        errs = len(run.errors)
+        err_class = "bad" if errs else "ok"
         rows.append(
             _row(
-                f"{label} — next run",
-                nxt.strftime("%Y-%m-%d %H:%M %Z") if nxt else "—",
-                cls="" if nxt else "muted",
+                f"{label} — last run",
+                f"{run.started_at.strftime('%Y-%m-%d %H:%M')} "
+                f"({_ago(run.started_at)}) · dur {dur_str} · "
+                f"{run.triggered_by} · "
+                f"<span class='{err_class}'>{errs} errors</span>",
             )
         )
+        rows.append(
+            _row(
+                "&nbsp;&nbsp;&nbsp;deltas",
+                f"+{run.claims_inserted} claims, "
+                f"+{run.beliefs_created} / ~{run.beliefs_revised} beliefs",
+            )
+        )
+    nxt = nexts.get("controller")
+    rows.append(
+        _row(
+            f"{label} — next run",
+            nxt.strftime("%Y-%m-%d %H:%M %Z") if nxt else "—",
+            cls="" if nxt else "muted",
+        )
+    )
     return f"<section><h2>Runs</h2><table>{''.join(rows)}</table></section>"
 
 

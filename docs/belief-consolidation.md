@@ -15,10 +15,13 @@ aged — a SOTA belief from eight months ago stayed `is_currently_held = true` a
 full confidence forever. `find_stale_beliefs` *flagged* staleness for the Curator,
 but nothing consolidated or aged the corpus.
 
-Phase 19 is the **world-model analog of entity resolution**, packaged in the
-**job shape of the Phase 16c consolidation graph**: a scheduled batch sweep that
-semantically de-duplicates beliefs (block → match → merge), then ages stale ones
-(decay + archival).
+Phase 19 is the **world-model analog of entity resolution**: it semantically
+de-duplicates beliefs (block → match → merge), then ages stale ones (decay +
+archival). It now runs as **controller rules** — reactive belief consolidation is
+the `consolidate-beliefs` skill (the `redundant_beliefs` tension), and the
+cooldown-gated decay/archival pass is the `maintain-belief` skill (the
+`aging_belief` tension). (Originally shipped as a standalone scheduled batch job
+in the shape of the Phase 16c consolidation graph; that job is gone.)
 
 ## The hard invariant: append-only
 
@@ -95,8 +98,8 @@ updating a row already referenced by a freshly-inserted revision in the same tx)
 
 ## Staleness decay + archival (LLM-free)
 
-A second pass in the same job ages the held corpus — cheap, time-and-evidence
-based, append-only. Deliberately narrow: decay + archival only, not a
+The `maintain-belief` skill ages the held corpus — cheap, time-and-evidence
+based, append-only, LLM-free. Deliberately narrow: decay + archival only, not a
 belief-lifecycle redesign.
 
 - **Decay:** a held belief not revised for longer than the half-life
@@ -117,33 +120,25 @@ cross-field belief merge is a correctness bug — the candidate query takes
 `field_id` exactly like `find_candidate_duplicates`. The sweep iterates active
 fields and never compares or merges across them.
 
-## The sweep + cadence
+## The controller rules + cadence
 
-`apps/pipeline/.../belief_consolidation.py` is a checkpointed LangGraph job cloned
-from the Phase 16c consolidation graph:
+Consolidation and aging run as controller rules, not a standalone job:
 
-```
-START → load_candidates ─[middle pairs?]→ submit_batch | adjudicate_sync | decay
-  submit_batch → poll_batch → collect_results → decay
-  decay → finalize → END
-```
+- **`consolidate-beliefs`** (the `redundant_beliefs` tension, produced by
+  `find_duplicate_belief_pairs` — a held/same-family pgvector self-join) bands
+  each candidate pair and emits a `MergeBeliefsEffect` for confirmed merges. The
+  middle-band adjudicator runs synchronously; the model is env-routed for the
+  `belief_consolidator` role (`MESH_LLM_MODEL_BELIEF_CONSOLIDATOR` →
+  `resolve_model` default), traced to Langfuse and ledgered in `llm_usage`. It
+  fires as redundancy appears, not on a fixed schedule.
+- **`maintain-belief`** (the cooldown-gated `aging_belief` tension) runs the
+  LLM-free decay/archival pass, emitting append-only `ReviseBeliefEffect`s (with
+  `set_not_held` / `recompute_confidence` flags). It is gated one-per-field by
+  `MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC` (24h default).
 
-`load_candidates` (per active field) backfills missing embeddings, blocks +
-bands the candidate set, applies high-band merges immediately, and stages the
-middle band. Middle-band adjudication runs through the **Anthropic Batch API**
-(50% cheaper) by default, with a synchronous fallback for other providers. The
-model is env-routed for the `belief_consolidator` role
-(`MESH_LLM_MODEL_BELIEF_CONSOLIDATOR` → `resolve_model` default); batched
-generations are traced to Langfuse and ledgered in `llm_usage`. The `finalize`
-node is idempotency-guarded (`pipeline_run_exists`).
-
-Incrementality: each run scans at most `MESH_BELIEF_CANDIDATE_LIMIT` (500)
-most-recently-revised held beliefs per field (blocking still searches the full
-held set), and logs what it skipped — so the sweep is not a full O(n²) re-scan
-every run.
-
-The existing scheduler fires it daily (`belief_consolidation`, 24h default in
-`DEFAULT_INTERVALS` + `JOB_COMMANDS`) — **no new service or container.**
+Incrementality: blocking restricts candidates to the same field/family and
+respects `MESH_BELIEF_CANDIDATE_LIMIT` (500), so consolidation is not a full
+O(n²) re-scan.
 
 ## The one-time backfill
 

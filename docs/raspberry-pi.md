@@ -131,10 +131,10 @@ pi-wiki:
 	docker compose up -d wiki
 	@echo "wiki → http://localhost:3000 (or the Pi's tailnet name)"
 
-# One bounded pipeline run via the scheduler image (PAPERS defaults to 5).
+# One bounded controller run via the scheduler image.
 pi-pipeline:
 	docker compose run --rm --no-deps \
-		--entrypoint "uv run mesh-ingest --a2a --max-papers $${PAPERS:-5}" scheduler
+		--entrypoint "uv run mesh-controller --apply" scheduler
 ```
 
 ### A3. (Optional) Scheduler misfire grace — `apps/scheduler/src/mesh_scheduler/scheduler.py`
@@ -312,9 +312,8 @@ uv run mesh.cli pipeline-stats   # confirm claims / entities / beliefs landed
 
 ### Step 6 — Disable the unused connectors
 
-The trimmed scouts aren't running, but `ai-robotics` still enables all 7
-connectors, so the coordinator would try (and fail, noisily) to reach the
-missing ones. Turn them off:
+`ai-robotics` still enables all 7 connectors, so the controller would try (and
+fail, noisily) to reach the trimmed-out ones. Turn them off:
 
 ```bash
 docker compose exec mesh-postgres psql -U langgraph -d langgraph -c \
@@ -359,16 +358,15 @@ docker compose exec mesh-postgres psql -U langgraph -d langgraph -c \
 # Applies within ~30s via the scheduler's reconcile poll.
 ```
 
-### Run maintenance loops manually (if you dropped the `skeptic` profile)
+### Run the controller manually
 
-If you remove `skeptic` from `COMPOSE_PROFILES` to save ~350 MB, disable the
-`skeptic`/`discovery` schedules and run them by hand — each spins the
-needed agents up, runs, and exits:
+Challenge, discovery, belief consolidation, decay/archival, and memory
+consolidation are all controller rules now — there are no separate maintenance
+jobs to run by hand. A single controller run exercises whichever rules have
+pending tensions:
 
 ```bash
-make skeptic             # curator + skeptic + one falsification sweep
-make consolidate-beliefs # semantic belief dedup + decay/archival
-make discover            # autonomous gap analysis → discovery investigations
+make controller-apply    # one full controller run: extract, challenge, consolidate, discover, …
 ```
 
 ### Nightly backup of the knowledge store (recommended)
@@ -388,26 +386,21 @@ make discover            # autonomous gap analysis → discovery investigations
 
 | Symptom | Cause / fix |
 |---|---|
-| Container exits with **code 137** | OOM-kill. Drop the `skeptic` profile, or move to in-process mode (below). |
-| Pipeline logs "card discovery failed" for a scout | That scout isn't running. Either disable its connector (Step 6) or start it: `docker compose up -d <name>-scout`. |
+| Container exits with **code 137** | OOM-kill. Stop the orphaned agent containers (the controller runs skills in-process — see low-footprint mode below). |
+| Controller logs a connector reach failure | Disable that connector for the field (Step 6). |
 | Postgres won't start, permission errors on data dir | `/mnt/ssd/mesh_pg_data` not writable / SSD not mounted. Confirm `mount -a` and the dir exists. |
 | Wiki build killed | Build it on a laptop with `docker buildx --platform linux/arm64`, push/load the image, then `docker compose up -d wiki`. |
 | Everything dies on reboot | `sudo systemctl enable docker`; confirm services show `restart: unless-stopped` in `docker inspect`. |
 
-### Break-glass fallback: in-process mode (zero agent containers)
+### Low-footprint mode (zero agent containers)
 
-If 4 GB is still too tight even after trimming, run the legacy in-process
-orchestrator: agents run inside one process, so **only `mesh-postgres` +
-`scheduler` + `api`** need to be up.
-
-Change the scheduler's ingest command from `mesh-ingest --a2a` to
-`mesh-ingest` (drop `--a2a`) — edit `JOB_COMMANDS["ingest"]` in
-`apps/scheduler/src/mesh_scheduler/scheduler.py`, and stop the scout/extractor
-containers.
-
-**Cost:** the in-process orchestrator is the Phase-1 path — **arxiv-only**, no
-per-field connectors, no semantic entity resolution, no discovery, no
-observability capture. Treat it as a last resort, not the default.
+The deterministic controller already runs every skill in-process — the A2A agent
+servers are orphaned and need not run. So **only `mesh-postgres` + `scheduler` +
+`api`** need to be up; you can stop the scout/extractor containers entirely with
+no loss of functionality. The scheduler's single `controller` job
+(`mesh-controller --apply`) drives the whole loop. There is no separate in-process
+fallback to switch to — the controller *is* the in-process path, with full
+per-field connectors, semantic entity resolution, discovery, and observability.
 
 ---
 

@@ -1,19 +1,24 @@
-# Agentic migration — from scheduled pipeline to a self-directed market
+# Agentic migration — from scheduled pipeline to a self-directed controller
 
-This is the shared map for migrating Agent Mesh from a fixed, scheduled assembly
-line to an agentic, **blackboard** system: the knowledge store is a board, the
-things that need attention are derived as **tensions**, a deterministic
-**controller** picks and prioritises them via an explicit **rule table**, and
-**skills** (the unit of capability) do the work — emitting **effects** that a
-single **write gateway** applies under the store's invariants. It runs to
+This is the map for the (now-complete) migration of Agent Mesh from a fixed,
+scheduled assembly line to an agentic, **blackboard** system: the knowledge store
+is a board, the things that need attention are derived as **tensions**, a
+deterministic **controller** picks and prioritises them via an explicit **rule
+table**, and **skills** (the unit of capability) do the work — emitting **effects**
+that a single **write gateway** applies under the store's invariants. It runs to
 **quiescence**.
 
-> **Update:** the original design used a *market* — skills bid a value/cost on each
-> tension and a budget auction funded the best. That auction has been replaced by a
-> deterministic rule engine (see `docs/deterministic-controller.md`). The blackboard
-> + tensions + skills + effects + gateway are all unchanged; only the selection
-> layer (bidding → rules) changed. Mentions of "market"/"bid"/"value-per-dollar"
-> below are historical.
+> **Status:** the migration is complete. The deterministic controller
+> (`mesh-controller`) is now the **only** orchestration job — the old scheduled
+> LangGraph pipelines (the coordinator/ingest, skeptic sweep, discovery, and the
+> standalone consolidation jobs) and their console scripts are deleted; their work
+> is now controller rules. See `docs/deterministic-controller.md`.
+
+> **Historical note:** the original design used a *market* — skills bid a value/cost
+> on each tension and a budget auction funded the best. That auction was replaced by
+> a deterministic rule engine. The blackboard + tensions + skills + effects +
+> gateway are all unchanged; only the selection layer (bidding → rules) changed.
+> Mentions of "market"/"bid"/"value-per-dollar" below are historical.
 
 > Plain-English version: instead of a nightly timer pushing papers through fixed
 > steps, the system keeps a self-writing to-do list, picks the most valuable items
@@ -26,10 +31,11 @@ Two rules keep `main` green and let many workspaces run in parallel:
 1. **Contract-first.** The shared shapes (`Tension`, `Effect`, `Skill`, `Bid`) are
    frozen on `main` *before* the fan-out. Every worktree branches from a stable
    interface instead of a moving target.
-2. **Strangler-fig.** We do **not** rewrite `coordinator.py`. The market grows
-   *next to* it as a new entry point. The old pipeline keeps running untouched;
-   skills migrate into the market one at a time; when the last one lands, the
-   coordinator becomes "the market with one award per round" and is deleted.
+2. **Strangler-fig (now complete).** The controller grew *next to* the old
+   `coordinator.py` as a new entry point; skills migrated into it one at a time;
+   once the last one landed and the controller was running every step end-to-end,
+   the old coordinator/ingest, skeptic-sweep, discovery, and standalone
+   consolidation jobs were deleted. The controller is now the only orchestrator.
 
 ## The pieces (and where they live)
 

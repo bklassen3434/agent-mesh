@@ -37,6 +37,7 @@ def test_status_shows_recent_runs(empty_client: TestClient, empty_db_path: Path)
     conn = get_connection(read_only=False)
     try:
         run = PipelineRun(
+            run_type="controller",
             started_at=datetime.now(UTC),
             finished_at=datetime.now(UTC),
             triggered_by="scheduled",

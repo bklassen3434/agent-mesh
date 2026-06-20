@@ -46,10 +46,10 @@ MESH_ROUTE_ENTITY_RESOLUTION_ENABLED=true
 > agent route, leave its model unpinned (comment `MESH_LLM_MODEL` out).
 
 The three opted-in call sites are `claim_extractor` (highest volume, most input
-variance — the primary win), the coordinator's entity-resolution adjudication
+variance — the primary win), the controller's entity-resolution adjudication
 (already best-effort; cheap-first with escalate-on-ambiguity fits its posture),
-and the skeptic sync path. The personalizer, the Phase-1 orchestrator, and the
-CLI backfill stay on the plain factory.
+and the skeptic challenge path. The personalizer and the CLI backfill stay on the
+plain factory.
 
 ---
 
@@ -119,12 +119,13 @@ Routing knobs:
 
 ## The batch caveat
 
-Routing is a **hot-path / sync** concern. The Anthropic Batch API
-(`submit_batch`, used by `skeptic` / `memory_consolidation` /
-`belief_consolidation`) submits a homogeneous model, so batch jobs choose their
-tier **once per batch** (cheap by default), not per item. Per-item batch routing
-is out of scope for this phase. The router exposes its `strong_client` so a batch
-caller can opt a whole batch into the strong tier.
+Routing is a **hot-path / sync** concern. Where the Anthropic Batch API
+(`submit_batch`) is still used, a batch submits a homogeneous model, so it chooses
+its tier **once per batch** (cheap by default), not per item. Per-item batch
+routing is out of scope for this phase. The router exposes its `strong_client` so a
+batch caller can opt a whole batch into the strong tier. (The controller's skills —
+including the migrated skeptic, memory-consolidation, and belief-consolidation
+paths — now run synchronously, so routing applies per call there.)
 
 ---
 
@@ -133,8 +134,8 @@ caller can opt a whole batch into the strong tier.
 Every routing decision is observable with **no schema change and no migration**:
 
 - The **realized model** is already recorded per call in `llm_usage.model` (the
-  ledger written from the coordinator / skeptic-sweep finalize). Per-tier volume
-  is therefore queryable straight from the ledger.
+  ledger written from the controller's finalize). Per-tier volume is therefore
+  queryable straight from the ledger.
 - The **tier + escalation reason** are additionally attached to the Langfuse
   generation metadata (the router threads them through a reserved options key
   that both clients strip before the wire and forward to `trace_generation`), so

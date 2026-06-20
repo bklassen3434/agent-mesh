@@ -828,7 +828,9 @@ def show_sota_beliefs() -> None:
     conn.close()
 
     if not beliefs:
-        console.print("[dim]No SOTA beliefs recorded yet. Run mesh-ingest first.[/dim]")
+        console.print(
+            "[dim]No SOTA beliefs recorded yet. Run `mesh-controller --apply` first.[/dim]"
+        )
         return
 
     table = Table(title="SOTA Beliefs")
@@ -1045,15 +1047,11 @@ def schedule_status() -> None:
 
     conn = _get_conn()
     try:
-        recent_pipeline = list_pipeline_runs(conn, limit=1, run_type="ingest")
-        recent_sweep = list_pipeline_runs(conn, limit=1, run_type="skeptic")
+        recent = list_pipeline_runs(conn, limit=1, run_type="controller")
     finally:
         conn.close()
 
-    last_by_job = {
-        "ingest": recent_pipeline[0] if recent_pipeline else None,
-        "skeptic": recent_sweep[0] if recent_sweep else None,
-    }
+    last_by_job = {"controller": recent[0] if recent else None}
 
     # Latest checkpoint state per run_type (read_run_states is newest-first;
     # empty when no Postgres checkpoint store is configured).
@@ -1070,7 +1068,7 @@ def schedule_status() -> None:
     table.add_column("Triggered by")
     table.add_column("Counts")
     table.add_column("Checkpoint")
-    for job_id in ("ingest", "skeptic"):
+    for job_id in ("controller",):
         next_run = next_runs.get(job_id)
         last = last_by_job.get(job_id)
         if last is None:
@@ -1086,13 +1084,10 @@ def schedule_status() -> None:
             else:
                 duration = "running"
             trig = last.triggered_by
-            if job_id == "ingest":
-                counts = (
-                    f"claims +{last.claims_inserted} / "
-                    f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"
-                )
-            else:
-                counts = f"beliefs ~{last.beliefs_revised}"
+            counts = (
+                f"claims +{last.claims_inserted} / "
+                f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"
+            )
         cp = latest_checkpoint.get(job_id)
         if cp is None:
             checkpoint = "—"

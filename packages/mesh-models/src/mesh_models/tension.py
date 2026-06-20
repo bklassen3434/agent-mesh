@@ -30,8 +30,9 @@ class TensionKind(StrEnum):
     """What kind of attention the board is asking for. Each kind maps 1:1 to the
     skill that would resolve it (``Tension.handler_skill``)."""
 
-    # Operational — cheap, foundational work (read what we haven't read).
-    unextracted_source = "unextracted_source"
+    # Operational — cheap, foundational work.
+    unscouted_connector = "unscouted_connector"  # an enabled connector to poll
+    unextracted_source = "unextracted_source"  # a source we have but haven't read
     # Knowledge gaps — the ``analyze_field`` (GapSignal) family, lifted in.
     under_evidenced_entity = "under_evidenced_entity"
     thin_belief = "thin_belief"
@@ -42,6 +43,8 @@ class TensionKind(StrEnum):
     merge_candidate = "merge_candidate"  # two entities look like duplicates
     contested_claim = "contested_claim"  # a held belief is under challenge
     unsynthesized_claims = "unsynthesized_claims"  # claims no belief reflects yet
+    # An open investigation whose evidence still needs to be gathered.
+    open_investigation = "open_investigation"
 
 
 class Tension(BaseModel):

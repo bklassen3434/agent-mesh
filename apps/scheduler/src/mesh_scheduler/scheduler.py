@@ -71,6 +71,11 @@ JOB_COMMANDS: dict[str, list[str]] = {
     # Phase 22d: proactive autonomous discovery (gap/trend analysis → opens
     # discovery investigations → dispatches real search). No new container.
     "discovery": ["uv", "run", "mesh-discover"],
+    # Agentic market: the self-directed replacement for ingest/skeptic/discovery
+    # (scout → extract → resolve → synthesize → challenge → investigate, under a
+    # budget). Seeded disabled; enable per field from the Pipelines page to flip
+    # the go-live. ``--apply`` lets it write through the gateway.
+    "market": ["uv", "run", "mesh-market", "--apply"],
 }
 
 _RECONCILE_JOB_ID = "_reconcile"

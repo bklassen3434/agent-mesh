@@ -23,12 +23,17 @@ from typing import Any
 
 from mesh_db.beliefs import get_belief_signals, list_beliefs
 from mesh_db.claims import unsynthesized_claim_counts_by_entity
+from mesh_db.connectors import list_field_connectors
 from mesh_db.entities import find_duplicate_candidate_pairs, get_entities_by_ids
-from mesh_db.sources import unextracted_sources
+from mesh_db.investigations import list_investigations
+from mesh_db.sources import get_source_payload, unextracted_sources
 from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
+from mesh_models.investigation import InvestigationStatus
 from mesh_models.source import Source
 from mesh_models.tension import Agenda, Tension, TensionKind
 
+from mesh_agents.connector import investigate_source_name
+from mesh_agents.connector_dispatch import has_connector, has_investigate
 from mesh_agents.discovery import GapKind, GapSignal, analyze_field
 
 # Rough per-kind LLM spend (USD) to resolve one tension, and the skill that would
@@ -36,6 +41,7 @@ from mesh_agents.discovery import GapKind, GapSignal, analyze_field
 # investigation is search + extract + synthesize. These are the market's cost
 # side; calibrate later from the real ``llm_usage`` ledger.
 _KIND_COST_USD: dict[TensionKind, float] = {
+    TensionKind.unscouted_connector: 0.001,
     TensionKind.unextracted_source: 0.008,
     TensionKind.under_evidenced_entity: 0.05,
     TensionKind.thin_belief: 0.05,
@@ -45,9 +51,11 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.merge_candidate: 0.02,
     TensionKind.contested_claim: 0.04,
     TensionKind.unsynthesized_claims: 0.05,
+    TensionKind.open_investigation: 0.05,
 }
 
 _KIND_SKILL: dict[TensionKind, str] = {
+    TensionKind.unscouted_connector: "scout-source",
     TensionKind.unextracted_source: "extract-source",
     TensionKind.under_evidenced_entity: "investigate-gap",
     TensionKind.thin_belief: "investigate-gap",
@@ -57,6 +65,7 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.merge_candidate: "merge-candidate",
     TensionKind.contested_claim: "challenge-belief",
     TensionKind.unsynthesized_claims: "synthesize-belief",
+    TensionKind.open_investigation: "dispatch-investigation",
 }
 
 # GapKind → TensionKind (the lift-in is 1:1; names already match).
@@ -69,12 +78,96 @@ _GAP_TO_TENSION: dict[GapKind, TensionKind] = {
 }
 
 
-def _tension_from_source(src: Source, field_id: str) -> Tension:
+def scout_tensions(conn: Any, field_id: str) -> list[Tension]:
+    """One tension per enabled connector that has an in-process scout handler —
+    the market's source-acquisition work (→ the scout-source skill). The connector
+    config rides in ``signals`` so the skill needs no second read.
+
+    Source acquisition is an *operational*, connector-config-driven concern, not a
+    knowledge gap derived from the board, so it lives here (called by the market
+    loop) rather than inside ``compute_agenda`` (the board's knowledge-work view,
+    also rendered read-only by ``mesh.cli agenda``). The market loop's
+    once-per-run dispatch guard keeps it from re-scouting so the field can still
+    reach quiescence."""
+    kind = TensionKind.unscouted_connector
+    out: list[Tension] = []
+    for fc in list_field_connectors(conn, field_id, enabled_only=True):
+        if not has_connector(fc.connector_id):
+            continue
+        out.append(
+            Tension(
+                id=f"{kind.value}:{fc.connector_id}",
+                field_id=field_id,
+                kind=kind,
+                subject=fc.connector_id,
+                rationale=f"Poll the enabled '{fc.connector_id}' connector for new sources.",
+                # High: fresh material feeds every downstream tension, and it's cheap.
+                value=0.6,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                target_ref={"connector_id": fc.connector_id},
+                signals={"config": fc.config},
+            )
+        )
+    return out
+
+
+def investigation_tensions(conn: Any, field_id: str, *, limit: int = 50) -> list[Tension]:
+    """One tension per open/in-progress investigation that can still be worked —
+    i.e. one whose suggested source types include a connector that is enabled for
+    the field AND has an in-process investigate handler (→ the dispatch-investigation
+    skill). Operational, like ``scout_tensions``; the market loop calls it.
+
+    Investigations whose sources aren't reachable are skipped (not a tension), so
+    the agenda never surfaces work no skill can do."""
+    kind = TensionKind.open_investigation
+    investigable = {
+        investigate_source_name(fc.connector_id)
+        for fc in list_field_connectors(conn, field_id, enabled_only=True)
+        if has_investigate(investigate_source_name(fc.connector_id))
+    }
+    if not investigable:
+        return []
+    out: list[Tension] = []
+    for status in (InvestigationStatus.open, InvestigationStatus.in_progress):
+        for inv in list_investigations(conn, status=status, limit=limit, field_id=field_id):
+            if not (set(inv.suggested_source_types) & investigable):
+                continue
+            out.append(
+                Tension(
+                    id=f"{kind.value}:{inv.id}",
+                    field_id=field_id,
+                    kind=kind,
+                    subject=inv.hypothesis or inv.question,
+                    rationale=f"Gather evidence for open investigation: {inv.question}",
+                    value=0.4 + 0.4 * inv.priority,
+                    est_cost_usd=_KIND_COST_USD[kind],
+                    handler_skill=_KIND_SKILL[kind],
+                    target_ref={"investigation_id": inv.id},
+                    signals={"origin": inv.origin.value, "attempts": inv.pipeline_runs_attempted},
+                )
+            )
+    return out
+
+
+def _tension_from_source(src: Source, field_id: str, payload: dict[str, Any] | None) -> Tension:
     kind = TensionKind.unextracted_source
     # Foundational + cheap: reading what we already have is the lowest-cost way to
     # add knowledge. Nudge by the source's reliability prior so a trusted unread
     # source ranks a touch higher than a sketchy one.
     value = 0.40 + 0.20 * src.reliability_prior
+    signals: dict[str, Any] = {
+        "source_type": src.type.value,
+        "reliability_prior": src.reliability_prior,
+    }
+    # Carry the scouted content (title/abstract) so extract-source — which reads
+    # the paper text from the tension, not the row — can recover it (Phase market).
+    # An investigation lineage (set when the source was gathered for one) rides
+    # along so extract-source can attach the resulting claims back.
+    if payload:
+        signals.update({k: payload[k] for k in ("title", "abstract") if k in payload})
+        if payload.get("investigation_id"):
+            signals["investigation_id"] = payload["investigation_id"]
     return Tension(
         id=f"{kind.value}:{src.id}",
         field_id=field_id,
@@ -85,7 +178,7 @@ def _tension_from_source(src: Source, field_id: str) -> Tension:
         est_cost_usd=_KIND_COST_USD[kind],
         handler_skill=_KIND_SKILL[kind],
         target_ref={"source_id": src.id},
-        signals={"source_type": src.type.value, "reliability_prior": src.reliability_prior},
+        signals=signals,
     )
 
 
@@ -212,7 +305,9 @@ def compute_agenda(
 
     # Operational: papers/posts we have but haven't read (cheap, high-leverage).
     for src in unextracted_sources(conn, field_id=field_id, limit=source_limit):
-        tensions.append(_tension_from_source(src, field_id))
+        tensions.append(
+            _tension_from_source(src, field_id, get_source_payload(conn, src.id))
+        )
 
     # Knowledge gaps: reuse the existing rule-based analyzer verbatim.
     for gap in analyze_field(conn, field_id, limit=gap_limit):

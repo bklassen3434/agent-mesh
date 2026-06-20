@@ -58,6 +58,19 @@ discover:
 	docker compose run --rm --no-deps \
 		--entrypoint "uv run mesh-discover" coordinator
 
+# Agentic market — the self-directed replacement for ingest/skeptic/discovery.
+# `make market` previews one round (shadow, writes nothing); `make market-apply`
+# acts and loops to quiescence under the budget.
+market:
+	docker compose build coordinator
+	docker compose run --rm --no-deps \
+		--entrypoint "uv run mesh-market" coordinator
+
+market-apply:
+	docker compose build coordinator
+	docker compose run --rm --no-deps \
+		--entrypoint "uv run mesh-market --apply" coordinator
+
 # Smoke test: bring up the stack, run one ingest cycle, check row counts.
 smoke: up
 	@echo "Running smoke ingest..."

@@ -19,7 +19,7 @@ from mesh_db.connection import MeshConnection
 from mesh_db.effects import apply_effects
 from mesh_db.entities import create_entity
 from mesh_db.sources import create_source
-from mesh_models.effect import CreateClaimEffect
+from mesh_models.effect import CreateClaimEffect, CreateEntityEffect
 from mesh_models.entity import Entity, EntityType
 from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.source import Source, SourceType
@@ -128,12 +128,43 @@ def test_emits_one_create_claim_effect_per_known_subject(tmp_db: MeshConnection)
     assert count_claims(tmp_db, field_id=DEFAULT_FIELD_ID) == 4
 
 
-def test_skips_claims_whose_subject_is_unknown(tmp_db: MeshConnection) -> None:
-    # Source exists but the subject entity does not → nothing resolvable, no effects.
+def test_skips_unknown_subject_when_minting_disabled(tmp_db: MeshConnection) -> None:
+    # Conservative path (no embedder / minting off): unknown subject → no effects.
     source = _seed_source(tmp_db)
-    skill = ExtractSourceSkill(llm=MockLLMClient())  # type: ignore[arg-type]
+    skill = ExtractSourceSkill(llm=MockLLMClient(), mint_entities=False)  # type: ignore[arg-type]
     effects = _run(skill, tmp_db, _tension(source.id))
     assert effects == []
+
+
+class _StubEmbedder:
+    """Deterministic 384-dim unit vectors so entity minting can populate
+    ``name_embedding`` without loading the real fastembed model."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 383 + [1.0] for _ in texts]
+
+
+def test_mints_unknown_subject_as_create_entity_effect(tmp_db: MeshConnection) -> None:
+    # With an embedder, an unseen subject is minted (entity effect precedes its
+    # claims) and the gateway creates the entity + claims for a fresh field.
+    source = _seed_source(tmp_db)
+    skill = ExtractSourceSkill(llm=MockLLMClient(), embedder=_StubEmbedder())  # type: ignore[arg-type]
+    effects = _run(skill, tmp_db, _tension(source.id))
+
+    entity_effects = [e for e in effects if isinstance(e, CreateEntityEffect)]
+    claim_effects = [e for e in effects if isinstance(e, CreateClaimEffect)]
+    assert len(entity_effects) == 1  # all four canned claims share one new subject
+    assert entity_effects[0].entity.canonical_name == "TestModel-7B"
+    assert entity_effects[0].name_embedding is not None
+    assert len(claim_effects) == 4
+    # The entity effect comes before the claims that FK it (gateway applies in order).
+    assert effects.index(entity_effects[0]) < min(effects.index(c) for c in claim_effects)
+
+    report = apply_effects(tmp_db, effects)
+    assert report.entities_created == 1
+    assert report.claims_created == 4
+    assert not report.errors
+    assert count_claims(tmp_db, field_id=DEFAULT_FIELD_ID) == 4
 
 
 def test_missing_source_returns_empty(tmp_db: MeshConnection) -> None:

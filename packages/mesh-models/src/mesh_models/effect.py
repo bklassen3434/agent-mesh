@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
+from mesh_models.entity import Entity
 from mesh_models.investigation import Investigation
 from mesh_models.source import Source
 
@@ -33,6 +34,22 @@ class CreateSourceEffect(BaseModel):
     kind: Literal["create_source"] = "create_source"
     field_id: str
     source: Source
+
+
+class CreateEntityEffect(BaseModel):
+    """Mint a new entity. Emitted by ``extract-source`` for a claim subject that
+    resolves to no existing entity in the field, so a fresh field can bootstrap
+    (the frozen Phase-1 contract had no entity-creation effect, which left the
+    extractor unable to create claims on an empty field). Dedup is *not* this
+    effect's job — the ``merge-candidate`` skill reconciles near-duplicates from
+    its own tension; this only adds. ``name_embedding`` (a local fastembed vector,
+    not an LLM call) is populated by the gateway so entity-resolution blocking can
+    find the new entity later."""
+
+    kind: Literal["create_entity"] = "create_entity"
+    field_id: str
+    entity: Entity
+    name_embedding: list[float] | None = None
 
 
 class CreateClaimEffect(BaseModel):
@@ -57,6 +74,9 @@ class CreateBeliefEffect(BaseModel):
     kind: Literal["create_belief"] = "create_belief"
     field_id: str
     belief: Belief
+    # Local fastembed vector of (topic, statement) so the Phase-19 belief
+    # consolidation sweep can block on it; the gateway persists it (no LLM).
+    statement_embedding: list[float] | None = None
 
 
 class ReviseBeliefEffect(BaseModel):
@@ -75,6 +95,8 @@ class ReviseBeliefEffect(BaseModel):
     trigger_claim_ids: list[str] = Field(default_factory=list)
     supporting_claim_ids: list[str] | None = None
     contradicting_claim_ids: list[str] | None = None
+    # Re-embed the head when the statement changed (gateway persists it; no LLM).
+    new_statement_embedding: list[float] | None = None
 
 
 class MergeEntitiesEffect(BaseModel):
@@ -104,18 +126,44 @@ class OpenInvestigationEffect(BaseModel):
     investigation: Investigation
 
 
+class UpdateInvestigationEffect(BaseModel):
+    """Advance an investigation's lifecycle (the only mutation it allows here):
+    move it to in_progress while a dispatch gathers evidence, or resolve/abandon
+    it. ``increment_attempts`` bumps ``pipeline_runs_attempted`` from the live
+    row; ``set_resolved_at`` stamps the resolution time."""
+
+    kind: Literal["update_investigation"] = "update_investigation"
+    investigation_id: str
+    status: str | None = None  # an InvestigationStatus value
+    increment_attempts: bool = False
+    set_resolved_at: bool = False
+
+
+class AttachClaimToInvestigationEffect(BaseModel):
+    """Link a claim gathered for an investigation to it (append-only on
+    ``collected_claim_ids``). Emitted by extract-source when the source it read was
+    acquired for an investigation (carried in the source payload's lineage)."""
+
+    kind: Literal["attach_claim_to_investigation"] = "attach_claim_to_investigation"
+    investigation_id: str
+    claim_id: str
+
+
 # Discriminated union — match on ``.kind`` in the gateway; JSON-safe for
 # checkpoint state. Extend here (and add a branch to apply_effects) when a new
 # kind of write is needed; that is the one coordination point across skill
 # worktrees, so keep it small and append-only.
 Effect = Annotated[
     CreateSourceEffect
+    | CreateEntityEffect
     | CreateClaimEffect
     | SupersedeClaimEffect
     | CreateBeliefEffect
     | ReviseBeliefEffect
     | MergeEntitiesEffect
     | AddRelationshipEvidenceEffect
-    | OpenInvestigationEffect,
+    | OpenInvestigationEffect
+    | UpdateInvestigationEffect
+    | AttachClaimToInvestigationEffect,
     Field(discriminator="kind"),
 ]

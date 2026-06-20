@@ -23,6 +23,7 @@ philosophy). Pass ``strict=True`` to raise on the first failure instead.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,33 +31,55 @@ import structlog
 from mesh_models.claim import ClaimStatus
 from mesh_models.effect import (
     AddRelationshipEvidenceEffect,
+    AttachClaimToInvestigationEffect,
     CreateBeliefEffect,
     CreateClaimEffect,
+    CreateEntityEffect,
     CreateSourceEffect,
     MergeEntitiesEffect,
     OpenInvestigationEffect,
     ReviseBeliefEffect,
     SupersedeClaimEffect,
+    UpdateInvestigationEffect,
 )
+from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from pydantic import BaseModel, Field
 
-from mesh_db.beliefs import create_belief, get_belief_by_id, update_belief
+from mesh_db.beliefs import (
+    create_belief,
+    get_belief_by_id,
+    set_belief_embedding,
+    update_belief,
+)
 from mesh_db.claims import create_claim, update_claim_status
 from mesh_db.connection import MeshConnection
-from mesh_db.entities import merge_entities
-from mesh_db.investigations import create_investigation
+from mesh_db.entities import create_entity, merge_entities, set_entity_embedding
+from mesh_db.investigations import (
+    attach_claim_to_investigation,
+    create_investigation,
+    get_investigation_by_id,
+    update_investigation,
+)
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source
 
 log = structlog.get_logger()
 
+# Recompute a belief's confidence from its evidence signals after its claim links
+# are written. Injected by the market layer (``mesh_agents.confidence`` lives above
+# mesh-db in the dependency graph, so the gateway can't import it directly). When
+# ``None`` the gateway keeps the confidence the skill proposed — byte-for-byte the
+# pre-injection behaviour, which the existing gateway tests rely on.
+ConfidenceFn = Callable[[MeshConnection, str], float]
+
 
 class ApplyReport(BaseModel):
     """Counts of what the gateway wrote, plus any per-effect failures."""
 
     sources_created: int = 0
+    entities_created: int = 0
     claims_created: int = 0
     claims_superseded: int = 0
     beliefs_created: int = 0
@@ -64,6 +87,8 @@ class ApplyReport(BaseModel):
     entities_merged: int = 0
     relationship_edges: int = 0
     investigations_opened: int = 0
+    investigations_updated: int = 0
+    investigation_claims_attached: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -72,13 +97,19 @@ def apply_effects(
     effects: list[Any],
     *,
     strict: bool = False,
+    confidence_fn: ConfidenceFn | None = None,
 ) -> ApplyReport:
     """Apply an ordered list of ``Effect``s through the invariant-preserving
-    write paths. Returns an ``ApplyReport``. Best-effort unless ``strict``."""
+    write paths. Returns an ``ApplyReport``. Best-effort unless ``strict``.
+
+    ``confidence_fn`` (optional) recomputes a belief's confidence from its
+    evidence signals once its claim links are written — the evidence-derived
+    score the coordinator's synthesize node applies (Phase 14d). When omitted the
+    gateway keeps the confidence the skill proposed."""
     report = ApplyReport()
     for effect in effects:
         try:
-            _apply_one(conn, effect, report)
+            _apply_one(conn, effect, report, confidence_fn)
         except Exception as exc:
             if strict:
                 raise
@@ -93,10 +124,21 @@ def apply_effects(
     return report
 
 
-def _apply_one(conn: MeshConnection, effect: Any, report: ApplyReport) -> None:
+def _apply_one(
+    conn: MeshConnection,
+    effect: Any,
+    report: ApplyReport,
+    confidence_fn: ConfidenceFn | None = None,
+) -> None:
     if isinstance(effect, CreateSourceEffect):
         create_source(conn, effect.source, field_id=effect.field_id)
         report.sources_created += 1
+
+    elif isinstance(effect, CreateEntityEffect):
+        create_entity(conn, effect.entity, field_id=effect.field_id)
+        if effect.name_embedding is not None:
+            set_entity_embedding(conn, effect.entity.id, effect.name_embedding)
+        report.entities_created += 1
 
     elif isinstance(effect, CreateClaimEffect):
         create_claim(conn, effect.claim, field_id=effect.field_id)
@@ -113,10 +155,18 @@ def _apply_one(conn: MeshConnection, effect: Any, report: ApplyReport) -> None:
 
     elif isinstance(effect, CreateBeliefEffect):
         create_belief(conn, effect.belief, field_id=effect.field_id)
+        if effect.statement_embedding is not None:
+            set_belief_embedding(conn, effect.belief.id, effect.statement_embedding)
+        # Recompute confidence from the evidence signals now that the belief (with
+        # its supporting_claim_ids) exists — the view reads those claim links.
+        if confidence_fn is not None:
+            update_belief(
+                conn, effect.belief.id, confidence=confidence_fn(conn, effect.belief.id)
+            )
         report.beliefs_created += 1
 
     elif isinstance(effect, ReviseBeliefEffect):
-        _apply_revise_belief(conn, effect)
+        _apply_revise_belief(conn, effect, confidence_fn)
         report.beliefs_revised += 1
 
     elif isinstance(effect, MergeEntitiesEffect):
@@ -139,24 +189,78 @@ def _apply_one(conn: MeshConnection, effect: Any, report: ApplyReport) -> None:
         create_investigation(conn, effect.investigation, field_id=effect.field_id)
         report.investigations_opened += 1
 
+    elif isinstance(effect, UpdateInvestigationEffect):
+        _apply_update_investigation(conn, effect)
+        report.investigations_updated += 1
+
+    elif isinstance(effect, AttachClaimToInvestigationEffect):
+        attach_claim_to_investigation(conn, effect.investigation_id, effect.claim_id)
+        report.investigation_claims_attached += 1
+
     else:  # pragma: no cover — guards against an unrouted Effect kind
         raise TypeError(f"No gateway branch for effect: {type(effect).__name__}")
 
 
-def _apply_revise_belief(conn: MeshConnection, effect: ReviseBeliefEffect) -> None:
+def _apply_update_investigation(
+    conn: MeshConnection, effect: UpdateInvestigationEffect
+) -> None:
+    """Advance an investigation's lifecycle. Increments attempts from the live row
+    (so concurrent dispatches don't clobber) and optionally sets status +
+    resolved_at. Raises if the investigation is gone (best-effort wrapper records
+    it)."""
+    updates: dict[str, Any] = {}
+    if effect.status is not None:
+        updates["status"] = InvestigationStatus(effect.status)
+    if effect.increment_attempts:
+        inv = get_investigation_by_id(conn, effect.investigation_id)
+        if inv is None:
+            raise ValueError(f"Investigation {effect.investigation_id} not found")
+        updates["pipeline_runs_attempted"] = inv.pipeline_runs_attempted + 1
+    if effect.set_resolved_at:
+        updates["resolved_at"] = datetime.now(UTC)
+    if updates:
+        update_investigation(conn, effect.investigation_id, **updates)
+
+
+def _apply_revise_belief(
+    conn: MeshConnection,
+    effect: ReviseBeliefEffect,
+    confidence_fn: ConfidenceFn | None = None,
+) -> None:
     """Append-only belief revision (mirrors the coordinator's synthesize node):
     write the revision row from the live head, then update the head. Raises if the
-    belief is gone (caller's best-effort wrapper records it)."""
+    belief is gone (caller's best-effort wrapper records it).
+
+    With ``confidence_fn``, the new claim links are applied first so the
+    belief_signals view reflects them, confidence is recomputed from those
+    signals, and both the revision row and the head record that derived value —
+    so the audit trail and head stay consistent (Phase 14d fidelity)."""
     existing = get_belief_by_id(conn, effect.belief_id)
     if existing is None:
         raise ValueError(f"Belief {effect.belief_id} not found")
+
+    link_updates: dict[str, Any] = {}
+    if effect.supporting_claim_ids is not None:
+        link_updates["supporting_claim_ids"] = effect.supporting_claim_ids
+    if effect.contradicting_claim_ids is not None:
+        link_updates["contradicting_claim_ids"] = effect.contradicting_claim_ids
+
+    # Apply claim-link changes before deriving confidence (the view reads them).
+    if confidence_fn is not None and link_updates:
+        update_belief(conn, effect.belief_id, **link_updates)
+
+    new_confidence = (
+        confidence_fn(conn, effect.belief_id)
+        if confidence_fn is not None
+        else effect.new_confidence
+    )
 
     revision = BeliefRevision(
         belief_id=effect.belief_id,
         previous_statement=existing.statement,
         new_statement=effect.new_statement,
         previous_confidence=existing.confidence,
-        new_confidence=effect.new_confidence,
+        new_confidence=new_confidence,
         trigger_claim_ids=effect.trigger_claim_ids,
         revised_by_agent=effect.revised_by_agent,
         revised_at=datetime.now(UTC),
@@ -166,12 +270,12 @@ def _apply_revise_belief(conn: MeshConnection, effect: ReviseBeliefEffect) -> No
 
     head_updates: dict[str, Any] = {
         "statement": effect.new_statement,
-        "confidence": effect.new_confidence,
+        "confidence": new_confidence,
         "last_revised_at": revision.revised_at,
         "revision_count": existing.revision_count + 1,
+        **link_updates,
     }
-    if effect.supporting_claim_ids is not None:
-        head_updates["supporting_claim_ids"] = effect.supporting_claim_ids
-    if effect.contradicting_claim_ids is not None:
-        head_updates["contradicting_claim_ids"] = effect.contradicting_claim_ids
     update_belief(conn, effect.belief_id, **head_updates)
+
+    if effect.new_statement_embedding is not None:
+        set_belief_embedding(conn, effect.belief_id, effect.new_statement_embedding)

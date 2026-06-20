@@ -53,7 +53,18 @@ _SKILL_MODULES = (
     "mesh_agents.skills.synthesize_belief",
     "mesh_agents.skills.challenge_belief",
     "mesh_agents.skills.investigate_gap",
+    "mesh_agents.skills.scout_source",
 )
+
+
+def _disable_connectors(conn: MeshConnection) -> None:
+    """The seeded field enables every built-in connector; disable them so the
+    market's source-acquisition tensions don't fire a real network scout in this
+    test (scouting is covered by test_skill_scout_source with a stubbed handler)."""
+    from mesh_db.connectors import enable_connector, list_field_connectors
+
+    for fc in list_field_connectors(conn, DEFAULT_FIELD_ID, enabled_only=True):
+        enable_connector(conn, DEFAULT_FIELD_ID, fc.connector_id, config=fc.config, enabled=False)
 
 
 def _register_real_skills() -> list[str]:
@@ -92,6 +103,8 @@ def _unit_vec() -> list[float]:
 def _seed_board(conn: MeshConnection) -> dict[str, Any]:
     """Seed the three things the migration doc names: an unread source, a thin
     belief, and a duplicate-looking entity pair."""
+    _disable_connectors(conn)
+
     # 1. An unread source — a paper we have but no claim references yet.
     source = Source(
         type=SourceType.arxiv,

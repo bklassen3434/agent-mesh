@@ -1,9 +1,11 @@
 """Phase 2 skill: ``challenge-belief`` — attack a belief to see if it holds up.
 
-Wraps the existing :class:`~mesh_agents.skeptic.SkepticAgent` (the falsification
-agent) behind the Skill contract: it handles a contested/stale belief,
-*runs* the unchanged skeptic against the belief's evidence, and translates the
-resulting :class:`SkepticAssessment` into ``Effect``s — **never writing itself**.
+The skill is the agentic unit: it handles a contested/stale belief, calls the
+shared skeptic core (``challenge_belief_with_memory`` — prompt + LLM + structured
+output + injected memory) directly against the belief's evidence, and translates
+the resulting :class:`SkepticAssessment` into ``Effect``s — **never writing
+itself**. (``SkepticAgent`` is now only the orphaned A2A adapter over that same
+core.)
 
 The effect translation reproduces, intent-for-intent, what
 ``apps/pipeline/skeptic_sweep.py`` persists today (``_persist_assessment`` +
@@ -26,6 +28,7 @@ Everything is scoped to ``tension.field_id``; the gateway
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 from datetime import UTC, datetime
@@ -45,10 +48,10 @@ from mesh_models.tension import Tension, TensionKind
 from mesh_agents.skeptic import (
     HydratedClaim,
     InScopeEntity,
-    SkepticAgent,
     SkepticAssessment,
     SkepticCounterClaim,
     SkepticInput,
+    challenge_belief_with_memory,
 )
 from mesh_agents.skill import register_skill
 from mesh_agents.sota_tracker import BeliefSummary
@@ -232,8 +235,14 @@ class ChallengeBeliefSkill:
             ),
         )
 
+        # The skill is the agentic unit: call the shared challenge core (prompt +
+        # LLM + structured output + injected memory, on this skill's connection)
+        # directly. A parse failure resolves to an inconclusive assessment inside
+        # the core, so no extra guard is needed here.
         llm = self._llm or make_routed_llm_client(agent_name="skeptic")
-        assessment = await SkepticAgent(llm=llm).run(skeptic_input)
+        assessment, _usage, _model = await asyncio.to_thread(
+            challenge_belief_with_memory, llm, skeptic_input, "skeptic", tension.field_id, conn
+        )
         return _assessment_to_effects(
             belief, assessment, tension.field_id, datetime.now(UTC)
         )

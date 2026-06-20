@@ -2,10 +2,11 @@
 
 This is the operational, foundational skill of the agentic controller: it resolves an
 ``unextracted_source`` tension (a source the mesh has but no claim references yet)
-by reading it and pulling structured facts out. It is a thin *wrapper* — the
-extraction itself is the existing ``ClaimExtractorAgent`` and the name→id
-resolution is the existing ``EntityTrackerAgent`` — so there is one extraction
-implementation, not two.
+by reading it and pulling structured facts out. The skill *is* the agentic unit:
+it calls the shared extraction core (``extract_claims_with_memory`` — prompt + LLM
++ structured output + injected memory) directly, then the pure entity resolver. The
+``ClaimExtractorAgent`` class is now only the (orphaned) A2A adapter over the same
+core, so there is one extraction implementation, not two.
 
 The headline invariant holds: **the skill never writes.** It reads the source and
 the entities through ``conn`` and returns ``CreateClaimEffect``s; the write
@@ -24,9 +25,16 @@ subjects rather than minting un-blockable entities.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from mesh_llm import Embedder, LLMClient, make_embedder, make_llm_client
+from mesh_llm import (
+    Embedder,
+    LLMClient,
+    LLMResponseError,
+    make_embedder,
+    make_llm_client,
+)
 from mesh_llm.embeddings import entity_embed_text
 from mesh_models.claim import Claim
 from mesh_models.effect import (
@@ -39,7 +47,7 @@ from mesh_models.entity import Entity, EntityType
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.arxiv_scout import ScoutedPaper
-from mesh_agents.claim_extractor import ClaimExtractorAgent, ClaimExtractorInput
+from mesh_agents.claim_extractor import extract_claims_with_memory
 from mesh_agents.entity_tracker import (
     EntityResolveSkillInput,
     EntitySummary,
@@ -141,16 +149,24 @@ class ExtractSourceSkill:
         if source is None:
             return []
 
-        # 1. Extract claims via the existing agent (no DB writes; pure LLM call).
+        # 1. Extract claims via the shared extraction core (prompt + LLM +
+        #    structured output + injected memory; memory reads run on this skill's
+        #    connection). A parse failure yields no claims — the source is left for
+        #    a later pass, matching the agent/A2A degradation.
         llm = self._llm or make_llm_client()
-        extractor = ClaimExtractorAgent(llm=llm)
         paper = _paper_from_source(source, tension)
-        extracted = await extractor.run(ClaimExtractorInput(paper=paper))
-        if not extracted.claims:
+        try:
+            extracted_claims, _latency, _usage, _model, _debug = await asyncio.to_thread(
+                extract_claims_with_memory,
+                llm, paper, "claim_extractor", tension.field_id, conn,
+            )
+        except LLMResponseError:
+            return []
+        if not extracted_claims:
             return []
 
         # 2. Resolve subject names against existing entities (pure, read-only).
-        candidate_names = list({c.subject_name for c in extracted.claims})
+        candidate_names = list({c.subject_name for c in extracted_claims})
         existing = _load_existing_entities(conn, candidate_names, tension.field_id)
         tracker = EntityTrackerAgent()
         resolved = await tracker.run_skill(
@@ -177,7 +193,7 @@ class ExtractSourceSkill:
         #    the source was gathered for an investigation (lineage on the tension),
         #    attach each claim back so the investigation can resolve.
         investigation_id = tension.signals.get("investigation_id")
-        for ec in extracted.claims:
+        for ec in extracted_claims:
             entity_id = name_to_id.get(ec.subject_name)
             if entity_id is None:
                 continue

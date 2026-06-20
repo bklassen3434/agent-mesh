@@ -42,6 +42,7 @@ from mesh_models.effect import (
     ReviseBeliefEffect,
     SupersedeClaimEffect,
     UpdateInvestigationEffect,
+    WriteHeuristicEffect,
 )
 from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
@@ -57,6 +58,7 @@ from mesh_db.beliefs import (
 from mesh_db.claims import create_claim, update_claim_status
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity, merge_entities, set_entity_embedding
+from mesh_db.heuristics import create_heuristic, create_heuristic_revision
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     create_investigation,
@@ -92,6 +94,7 @@ class ApplyReport(BaseModel):
     investigations_opened: int = 0
     investigations_updated: int = 0
     investigation_claims_attached: int = 0
+    heuristics_written: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -211,6 +214,13 @@ def _apply_one(
     elif isinstance(effect, AttachClaimToInvestigationEffect):
         attach_claim_to_investigation(conn, effect.investigation_id, effect.claim_id)
         report.investigation_claims_attached += 1
+
+    elif isinstance(effect, WriteHeuristicEffect):
+        # Append-only procedural memory: head row + genesis revision (the skill
+        # built both and bound provenance; the gateway only inserts).
+        create_heuristic(conn, effect.heuristic, field_id=effect.field_id)
+        create_heuristic_revision(conn, effect.genesis_revision)
+        report.heuristics_written += 1
 
     else:  # pragma: no cover — guards against an unrouted Effect kind
         raise TypeError(f"No gateway branch for effect: {type(effect).__name__}")

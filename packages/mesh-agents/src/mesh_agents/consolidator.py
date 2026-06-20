@@ -13,15 +13,32 @@ would use.
 from __future__ import annotations
 
 import logging
+import os
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mesh_db.episodic import EpisodicEntry
+from mesh_db.heuristics import list_heuristics
 from mesh_llm import LLMClient, LLMProviderNotReadyError, LLMResponseError, LLMUsage
 from mesh_llm.prompts import CONSOLIDATION_SYSTEM, format_consolidation_user
-from mesh_models.heuristic import DEFAULT_CONFIDENCE, DEFAULT_TTL_DAYS
+from mesh_models.heuristic import (
+    DEFAULT_CONFIDENCE,
+    DEFAULT_TTL_DAYS,
+    AgentHeuristic,
+    AgentHeuristicRevision,
+)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# (agent, skill) pairs to consolidate — the LLM skills that stamp episodic
+# artifacts. Each agent id matches the identity recall_history keys on.
+_DEFAULT_TARGETS: list[tuple[str, str]] = [
+    ("claim_extractor", "extract_claims"),
+    ("skeptic", "challenge_belief"),
+]
+# Cap on how many existing heuristics to scan for the dedup check.
+_MAX_DEDUP = 200
 
 
 class HeuristicProposal(BaseModel):
@@ -181,3 +198,101 @@ def distill_pure(
     # usage.model is the realized model (correct under cheap→strong routing
     # escalation); fall back to the client attribute if unset.
     return result, usage, usage.model or getattr(llm, "model", "")
+
+
+# ── consolidation orchestration helpers (Phase 16c) ──────────────────────────
+# Shared between the controller's ``consolidate-memory`` skill and (until it is
+# retired) the standalone sweep. Pure reads + env config — no writes.
+
+
+def consolidation_targets() -> list[tuple[str, str]]:
+    """The (agent, skill) pairs to distil. ``MESH_CONSOLIDATION_TARGETS`` is a
+    comma-separated ``agent:skill`` override; empty → the built-in defaults."""
+    raw = os.environ.get("MESH_CONSOLIDATION_TARGETS", "")
+    if not raw:
+        return _DEFAULT_TARGETS
+    out: list[tuple[str, str]] = []
+    for pair in raw.split(","):
+        agent, _, skill = pair.strip().partition(":")
+        if agent and skill:
+            out.append((agent, skill))
+    return out or _DEFAULT_TARGETS
+
+
+def consolidation_history_limit() -> int:
+    return int(os.environ.get("MESH_CONSOLIDATION_HISTORY_LIMIT", "50"))
+
+
+def consolidation_ttl_days() -> int:
+    return int(os.environ.get("MESH_CONSOLIDATION_TTL_DAYS", "30"))
+
+
+def provenance_from_entries(entries: list[EpisodicEntry]) -> tuple[list[str], list[str]]:
+    """Collect the runs + claims an agent's history was drawn from — the
+    provenance every distilled heuristic links back to."""
+    run_ids: set[str] = set()
+    claim_ids: set[str] = set()
+    for e in entries:
+        if e.run_id:
+            run_ids.add(e.run_id)
+        for cid in e.refs.get("claim_ids", []) or []:
+            claim_ids.add(str(cid))
+        for cid in e.refs.get("trigger_claim_ids", []) or []:
+            claim_ids.add(str(cid))
+    return sorted(run_ids), sorted(claim_ids)
+
+
+def heuristic_already_present(
+    conn: Any, agent: str, skill: str, text: str, field_id: str
+) -> bool:
+    """Skip a candidate whose exact text is already an active, unexpired heuristic
+    for this scope — avoids re-distilled duplicates flooding the store across
+    runs."""
+    existing = list_heuristics(
+        conn, agent=agent, skill=skill, active=True, include_expired=False,
+        limit=_MAX_DEDUP, field_id=field_id,
+    )
+    return any(h.heuristic.strip() == text.strip() for h in existing)
+
+
+def proposal_to_heuristic(
+    proposal: HeuristicProposal,
+    *,
+    now: datetime | None = None,
+    revised_by_agent: str = "consolidator",
+) -> tuple[AgentHeuristic, AgentHeuristicRevision]:
+    """Build the head row + genesis revision for a *new* heuristic, WITHOUT
+    writing (the gateway inserts both via a ``WriteHeuristicEffect``). Mirrors the
+    coordinator's former ``persist_heuristic`` build: ``ttl_days`` becomes an
+    absolute ``expires_at``, and the genesis revision records creation from
+    nothing so the log is complete from the first persist. Caller must have
+    checked ``proposal.has_provenance()``."""
+    now = now or datetime.now(UTC)
+    heuristic = AgentHeuristic(
+        agent=proposal.agent,
+        skill=proposal.skill,
+        source=proposal.source,
+        entity_id=proposal.entity_id,
+        heuristic=proposal.heuristic,
+        confidence=proposal.confidence,
+        provenance_run_ids=proposal.provenance_run_ids,
+        provenance_claim_ids=proposal.provenance_claim_ids,
+        created_at=now,
+        last_revised_at=now,
+        revision_count=0,
+        expires_at=now + timedelta(days=proposal.ttl_days),
+        is_currently_active=True,
+    )
+    genesis = AgentHeuristicRevision(
+        heuristic_id=heuristic.id,
+        previous_heuristic="",
+        new_heuristic=heuristic.heuristic,
+        previous_confidence=0.0,
+        new_confidence=heuristic.confidence,
+        provenance_run_ids=heuristic.provenance_run_ids,
+        provenance_claim_ids=heuristic.provenance_claim_ids,
+        revised_by_agent=revised_by_agent,
+        revised_at=now,
+        rationale=proposal.rationale or "distilled from recent episodic history",
+    )
+    return heuristic, genesis

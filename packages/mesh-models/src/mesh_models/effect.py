@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.entity import Entity
+from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
 from mesh_models.investigation import Investigation
 from mesh_models.source import Source
 
@@ -173,6 +174,21 @@ class AttachClaimToInvestigationEffect(BaseModel):
     claim_id: str
 
 
+class WriteHeuristicEffect(BaseModel):
+    """Persist a newly-distilled procedural heuristic + its genesis revision
+    (append-only). Emitted by the ``consolidate-memory`` skill once it has
+    distilled an agent's recent episodic history into a candidate heuristic and
+    bound it to provenance. The skill builds both rows (it owns the consolidation
+    logic); the gateway only inserts them, so the coordinator-owned-write boundary
+    holds. Like the belief/entity writes, nothing is ever deleted — a stale
+    heuristic simply expires (``expires_at``) and is filtered at read time."""
+
+    kind: Literal["write_heuristic"] = "write_heuristic"
+    field_id: str
+    heuristic: AgentHeuristic
+    genesis_revision: AgentHeuristicRevision
+
+
 # Discriminated union — match on ``.kind`` in the gateway; JSON-safe for
 # checkpoint state. Extend here (and add a branch to apply_effects) when a new
 # kind of write is needed; that is the one coordination point across skill
@@ -189,6 +205,7 @@ Effect = Annotated[
     | AddRelationshipEvidenceEffect
     | OpenInvestigationEffect
     | UpdateInvestigationEffect
-    | AttachClaimToInvestigationEffect,
+    | AttachClaimToInvestigationEffect
+    | WriteHeuristicEffect,
     Field(discriminator="kind"),
 ]

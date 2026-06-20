@@ -94,6 +94,7 @@ def load_builtin_skills() -> list[Skill]:
     from mesh_agents.skills import (  # noqa: F401
         challenge_belief,
         consolidate_beliefs,
+        consolidate_memory,
         dispatch_investigation,
         extract_source,
         investigate_gap,

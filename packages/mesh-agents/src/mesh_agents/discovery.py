@@ -26,18 +26,24 @@ Everything is field-scoped; a field's discovery never reads or seeds another.
 from __future__ import annotations
 
 import logging
+import os
 from enum import StrEnum
 from typing import Any
 
 from mesh_db.beliefs import find_stale_beliefs, get_belief_signals, list_beliefs
 from mesh_db.claims import recent_claim_counts_by_entity
+from mesh_db.connectors import list_field_connectors
 from mesh_db.entities import get_entities_by_ids, under_evidenced_entities
+from mesh_db.investigations import list_investigations
 from mesh_db.relationships import list_relationships
 from mesh_llm import LLMClient, LLMResponseError, LLMUsage
 from mesh_llm.prompts import build_discovery_system
 from mesh_models.field import DEFAULT_FIELD_ID, FieldProfile
 from mesh_models.investigation import Investigation, InvestigationOrigin, InvestigationStatus
 from pydantic import BaseModel, Field
+
+from mesh_agents.connector import investigate_source_name
+from mesh_agents.profiles import load_profile
 
 logger = logging.getLogger(__name__)
 
@@ -387,3 +393,65 @@ def build_discovery_investigations(
             )
         )
     return out
+
+
+# ── discovery config knobs ───────────────────────────────────────────────────
+
+
+def discover_max_new() -> int:
+    """Max ``discovery``-origin investigations a sweep opens per field."""
+    return int(os.environ.get("MESH_DISCOVER_MAX_NEW", "5"))
+
+
+def discover_gap_limit() -> int:
+    """Max gap signals ``analyze_field`` returns."""
+    return int(os.environ.get("MESH_DISCOVER_GAP_LIMIT", "20"))
+
+
+def open_investigations(conn: Any, *, field_id: str = DEFAULT_FIELD_ID) -> list[Investigation]:
+    """The open + in-progress investigations for a field (the dedup baseline)."""
+    return list_investigations(
+        conn, status=InvestigationStatus.open, limit=100, field_id=field_id
+    ) + list_investigations(
+        conn, status=InvestigationStatus.in_progress, limit=100, field_id=field_id
+    )
+
+
+def allowed_source_types(conn: Any, field_id: str) -> list[str]:
+    """The investigate sources a field's enabled connectors back — the set
+    discovery may suggest (and the dispatch will honour)."""
+    return sorted(
+        {
+            investigate_source_name(fc.connector_id)
+            for fc in list_field_connectors(conn, field_id, enabled_only=True)
+        }
+    )
+
+
+def plan_field_discovery(
+    conn: Any,
+    llm: LLMClient | None,
+    field_id: str,
+    *,
+    gap_limit: int,
+    max_new: int,
+) -> tuple[
+    list[GapSignal], list[DiscoveryProposal], list[Investigation], LLMUsage | None, str
+]:
+    """Analyze → draft → build (deduped, capped) WITHOUT writing anything.
+
+    Returns ``(gaps, proposals, investigations, draft_usage, draft_model)``. The
+    controller's ``investigate-gap`` skill is the live path that opens these; the
+    CLI ``discover`` dry-run just reports them. With no LLM (provider unavailable)
+    drafting is skipped and no investigations are built."""
+    gaps = analyze_field(conn, field_id, limit=gap_limit)
+    if llm is None or not gaps:
+        return gaps, [], [], None, ""
+    profile = load_profile(field_id)
+    allowed = allowed_source_types(conn, field_id)
+    proposals, usage, model = draft_hypotheses(
+        profile, gaps, llm=llm, allowed_source_types=allowed
+    )
+    existing = open_investigations(conn, field_id=field_id)
+    built = build_discovery_investigations(gaps, proposals, existing)[:max_new]
+    return gaps, proposals, built, usage, model

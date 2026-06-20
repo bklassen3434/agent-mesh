@@ -25,11 +25,8 @@ mesh-agents = { workspace = true }
 mesh-a2a = { workspace = true }
 
 [project.scripts]
-"mesh-ingest" = "mesh_pipeline.__main__:main"
-"mesh-skeptic" = "mesh_pipeline.skeptic_sweep:main"
 "mesh-consolidate-memory" = "mesh_pipeline.consolidation:main"
 "mesh-consolidate-beliefs" = "mesh_pipeline.belief_consolidation:main"
-"mesh-discover" = "mesh_pipeline.discovery:main"
 "mesh-controller" = "mesh_pipeline.controller:main"
 
 [tool.hatch.build.targets.wheel]

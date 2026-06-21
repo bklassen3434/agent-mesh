@@ -1,4 +1,4 @@
-.PHONY: up down logs controller controller-apply wiki api types types-check check wiki-install \
+.PHONY: up down logs controller controller-apply wiki api types types-check check hooks wiki-install \
 	pi-up pi-down pi-wiki pi-pipeline \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
@@ -85,6 +85,15 @@ types-check: types
 		|| { echo "ERROR: api-types.ts was stale — the regenerated file above is now staged for commit."; exit 1; }
 
 # ── Local CI gate ────────────────────────────────────────────────────────────
+
+# One-time per clone: activate the committed git hooks (.githooks/). The pre-push
+# hook runs `make types-check` when apps/api changed and `make test-ui` when
+# apps/wiki changed, so API↔wiki drift is caught before it reaches CI. Bypass an
+# individual push with `git push --no-verify`.
+hooks:
+	chmod +x .githooks/*
+	git config core.hooksPath .githooks
+	@echo "Git hooks activated (core.hooksPath=.githooks). pre-push now guards API↔wiki drift."
 
 # Install the wiki's npm deps (needed by lint/typecheck/build/test-ui/types).
 wiki-install:

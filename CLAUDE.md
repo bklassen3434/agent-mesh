@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## How to respond
 
-Be concise and plain-spoken. Lead with the answer, then only the detail that's needed. Prefer short sentences and bullets over dense paragraphs. Skip jargon when a simpler word works; define a term only if it's load-bearing. Don't restate the question or pad with preamble.
+Straight to the point. No preamble, no padding, no restating the question.
+
+- Lead with the answer. Stop when it's answered.
+- Plain words. No jargon unless it's the only word that works — then define it in one line.
+- Short sentences. Bullets over paragraphs.
+- Don't list every option or trade-off. Give the recommendation.
+- When you ask the user something, keep it a simple choice in plain language. No technical detail unless they ask.
+- Don't narrate your reasoning or what you're about to do. Just do it, then report briefly.
 
 ## What this is
 

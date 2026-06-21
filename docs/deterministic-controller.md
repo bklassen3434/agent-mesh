@@ -71,9 +71,10 @@ tension.
 
 | Rule | Condition | Action | Priority |
 |---|---|---|---|
-| `escalate-stalled` | a tension was dispatched `≥ N` times and last attempt changed nothing | re-route to the same skill with `fanout = K` (a swarm) | 0 |
+| `escalate-stalled` | a non-deep tension was dispatched `≥ N` times and last attempt changed nothing | re-route to the same skill with `fanout = K` (a swarm) | 0 |
 | `extract-unread` | an `unextracted_source` tension | `extract-source` | 10 |
 | `resolve-duplicate-entities` | a `merge_candidate` tension | `merge-candidate` | 20 |
+| `adjudicate-contradicted-beliefs` | a `contradicted_belief` tension (load-bearing belief, fresh contradiction) | `adjudicate-contradiction` (deep) | 22 |
 | `consolidate-redundant-beliefs` | a `redundant_beliefs` tension | `consolidate-beliefs` | 25 |
 | `synthesize-claims` | an `unsynthesized_claims` tension | `synthesize-belief` | 30 |
 | `dispatch-open-investigations` | an `open_investigation` tension | `dispatch-investigation` | 35 |
@@ -85,6 +86,16 @@ tension.
 Skill routing stays a 1:1 map: each tension names its `handler_skill`, so a rule
 just forwards it — there was never more than one skill per kind, so nothing needed
 an auction to choose.
+
+**Reasoning tiers.** Routing also carries *how much reasoning* a tension is born
+needing — its `ReasoningTier` (`simple` / `swarm` / `deep`), stamped per kind at
+production. A handler rule reads it to set fanout: a **swarm**-tier tension (e.g.
+`contested_claim`) runs `K` parallel copies from the *first* dispatch, not only on
+escalation; a **deep**-tier tension (`investigate-gap` family, `open_investigation`,
+`contradicted_belief`) runs a single instance and gets its depth from a
+*plan → gather → reason → decide* loop that unfolds across rounds. See
+[`reasoning-tiers.md`](reasoning-tiers.md) for the full board → tier map and the
+deep adjudication flow.
 
 ## Three things make it deterministic and daemon-free
 
@@ -105,9 +116,13 @@ needed.
    swarm" is "this tension has been dispatched `≥ N` times and the last attempt
    produced no effects (or errored)". The controller then re-routes the tension to
    its *same* skill with `fanout = K`: K instances run in parallel and their
-   effects are unioned (deduped). For LLM-bound skills this is a real deep/parallel
-   attempt; for rule-based skills the dedup collapses the K identical results to
-   one. The stall is read from the stored counters — no timer.
+   effects are reconciled (union by default, or a `MESH_CONTROLLER_SWARM_QUORUM`
+   majority vote that suppresses a single copy's hallucination). For LLM-bound
+   skills this is a real parallel attempt; for rule-based skills the dedup collapses
+   the K identical results to one. **Deep**-tier tensions are exempt: their progress
+   is the across-rounds gather investigation (which widens/abandons on its own
+   budget), so cloning a stateful skill K times would race, not deepen. The stall
+   is read from the stored counters — no timer.
 
 The counters that make (2) and (3) work live in
 `runtime.controller_tension_state` (migration 017): one row per `(field, tension)`
@@ -158,10 +173,14 @@ The standalone `mesh.cli consolidate-beliefs` CLI command (a one-time backfill v
 | Variable | Default | Purpose |
 |---|---|---|
 | `MESH_CONTROLLER_STEP_CAP` | `8` | Max activations dispatched per round |
-| `MESH_CONTROLLER_ESCALATE_AFTER` | `3` | Stalled-dispatch count past which a tension escalates to a swarm |
-| `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances an escalation fans out to |
+| `MESH_CONTROLLER_ESCALATE_AFTER` | `3` | Stalled-dispatch count past which a non-deep tension escalates to a swarm |
+| `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances a swarm-tier dispatch (or an escalation) fans out to |
+| `MESH_CONTROLLER_SWARM_QUORUM` | `false` | Swarm reconcile: off = union the K copies' effects; on = keep only effects a majority (`⌈K/2⌉`) agree on |
 | `MESH_CONTROLLER_SCOUT_COOLDOWN_SEC` | `600` | Min seconds between scouts of a connector once the board is idle |
 | `MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC` | `86400` | Min seconds between maintenance passes (belief decay/archival + memory consolidation) per field |
+| `MESH_ADJUDICATE_MIN_CONFIDENCE` | `0.7` | Min belief confidence for a fresh contradiction to be deep-adjudicated (else routine challenge) |
+| `MESH_ADJUDICATE_MIN_DEPENDENTS` | `2` | Min supporting-claim fan-in before a contradiction is treated as load-bearing |
+| `MESH_ADJUDICATE_REFUTE_FLOOR` | `0.2` | Post-adjudication confidence below which a `contradicted` verdict drops the belief from the held set (append-only) |
 
 ## Running it
 

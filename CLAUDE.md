@@ -191,7 +191,11 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_MARKET_INVESTIGATE_MAX` | `10` | Per-investigation fetch cap for one `dispatch-investigation` run |
 | `MESH_CONTROLLER_STEP_CAP` | `8` | Max activations the controller dispatches per round (replaces the market budget) |
 | `MESH_CONTROLLER_ESCALATE_AFTER` | `3` | Stalled-dispatch count past which a tension escalates to a swarm |
-| `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances an escalation fans out to |
+| `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances a swarm-tier dispatch (or an escalation) fans out to |
+| `MESH_CONTROLLER_SWARM_QUORUM` | `false` | Swarm reconcile: off = union the K copies' effects; on = keep only effects a majority (`⌈K/2⌉`) agree on |
+| `MESH_ADJUDICATE_MIN_CONFIDENCE` | `0.7` | Min belief confidence for a fresh contradiction to be deep-adjudicated (`contradicted_belief`) vs a routine challenge |
+| `MESH_ADJUDICATE_MIN_DEPENDENTS` | `2` | Min supporting-claim fan-in before a contradiction is treated as load-bearing |
+| `MESH_ADJUDICATE_REFUTE_FLOOR` | `0.2` | Post-adjudication confidence below which a `contradicted` verdict drops the belief from the held set (append-only) |
 | `MESH_CONTROLLER_SCOUT_COOLDOWN_SEC` | `600` | Min seconds between scouts of a connector once the board is idle |
 
 ## Debugging discipline

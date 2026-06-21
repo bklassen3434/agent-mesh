@@ -26,11 +26,12 @@ from mesh_db.claims import list_claims, unsynthesized_claim_counts_by_entity
 from mesh_db.connectors import list_field_connectors
 from mesh_db.entities import find_duplicate_candidate_pairs, get_entities_by_ids
 from mesh_db.investigations import list_investigations
+from mesh_db.revisions import list_revisions
 from mesh_db.sources import get_source_payload, unextracted_sources
 from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
-from mesh_models.investigation import InvestigationStatus
+from mesh_models.investigation import InvestigationOrigin, InvestigationStatus
 from mesh_models.source import Source
-from mesh_models.tension import Agenda, Tension, TensionKind
+from mesh_models.tension import Agenda, ReasoningTier, Tension, TensionKind
 
 from mesh_agents.connector import investigate_source_name
 from mesh_agents.connector_dispatch import has_connector, has_investigate
@@ -55,6 +56,7 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.open_investigation: 0.05,
     TensionKind.aging_belief: 0.001,  # LLM-free corpus scan
     TensionKind.consolidatable_memory: 0.04,  # one sync distil call per target
+    TensionKind.contradicted_belief: 0.08,  # gather corroboration + weigh both sides
 }
 
 _KIND_SKILL: dict[TensionKind, str] = {
@@ -72,7 +74,66 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.open_investigation: "dispatch-investigation",
     TensionKind.aging_belief: "maintain-belief",
     TensionKind.consolidatable_memory: "consolidate-memory",
+    TensionKind.contradicted_belief: "adjudicate-contradiction",
 }
+
+# How much reasoning each kind is *born* needing (ReasoningTier). The rule engine
+# reads ``Tension.tier`` to decide dispatch: simple → one shot, swarm → K parallel
+# copies, deep → a plan→gather→reason→decide loop across controller rounds.
+#   simple — the answer is already on the board (extract, synthesize, dedup, scout).
+#   swarm  — one answer, noisy path; run K skeptics and union/quorum them.
+#   deep   — the answer needs evidence we don't have yet (gap investigation,
+#            evidence-gathering, contradiction adjudication).
+_KIND_TIER: dict[TensionKind, ReasoningTier] = {
+    TensionKind.unscouted_connector: ReasoningTier.simple,
+    TensionKind.unextracted_source: ReasoningTier.simple,
+    TensionKind.under_evidenced_entity: ReasoningTier.deep,
+    TensionKind.thin_belief: ReasoningTier.deep,
+    TensionKind.stale_belief: ReasoningTier.swarm,
+    TensionKind.rising_topic: ReasoningTier.deep,
+    TensionKind.missing_reciprocal_edge: ReasoningTier.simple,
+    TensionKind.merge_candidate: ReasoningTier.simple,
+    TensionKind.redundant_beliefs: ReasoningTier.simple,
+    TensionKind.contested_claim: ReasoningTier.swarm,
+    TensionKind.unsynthesized_claims: ReasoningTier.simple,
+    TensionKind.open_investigation: ReasoningTier.deep,
+    TensionKind.aging_belief: ReasoningTier.simple,
+    TensionKind.consolidatable_memory: ReasoningTier.simple,
+    TensionKind.contradicted_belief: ReasoningTier.deep,
+}
+
+# Gray-band thresholds per dedup kind: a similarity at/above HIGH auto-merges
+# deterministically (simple); a similarity strictly between LOW and HIGH is the
+# genuinely ambiguous case worth a swarm of adjudicators.
+_GRAY_BAND_BOUNDS: dict[TensionKind, tuple[str, str, str, str]] = {
+    # kind -> (LOW env, LOW default, HIGH env, HIGH default)
+    TensionKind.merge_candidate: (
+        "MESH_ENTITY_MERGE_LOW", "0.80", "MESH_ENTITY_MERGE_HIGH", "0.93",
+    ),
+    TensionKind.redundant_beliefs: (
+        "MESH_BELIEF_MERGE_LOW", "0.85", "MESH_BELIEF_MERGE_HIGH", "0.95",
+    ),
+}
+
+
+def resolve_tier(kind: TensionKind, signals: dict[str, Any]) -> ReasoningTier:
+    """The intrinsic tier for a kind, with signal-driven upgrades.
+
+    A dedup tension (merge/redundant) whose similarity lands in the ambiguous
+    gray band — above auto-reject, below auto-merge — is upgraded simple → swarm
+    so K adjudicators vote rather than one noisy call deciding. (The high-stakes
+    upgrade of a contested belief to deep adjudication is handled separately by
+    ``_contradicted_belief_tensions``, which emits a dedicated kind.)"""
+    base = _KIND_TIER.get(kind, ReasoningTier.simple)
+    bounds = _GRAY_BAND_BOUNDS.get(kind)
+    if bounds is not None:
+        sim = signals.get("similarity")
+        if isinstance(sim, (int, float)):
+            low = float(os.environ.get(bounds[0], bounds[1]))
+            high = float(os.environ.get(bounds[2], bounds[3]))
+            if low < sim < high:
+                return ReasoningTier.swarm
+    return base
 
 # GapKind → TensionKind (the lift-in is 1:1; names already match).
 _GAP_TO_TENSION: dict[GapKind, TensionKind] = {
@@ -111,6 +172,7 @@ def scout_tensions(conn: Any, field_id: str) -> list[Tension]:
                 value=0.6,
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
                 target_ref={"connector_id": fc.connector_id},
                 signals={"config": fc.config},
             )
@@ -149,6 +211,7 @@ def investigation_tensions(conn: Any, field_id: str, *, limit: int = 50) -> list
                     value=0.4 + 0.4 * inv.priority,
                     est_cost_usd=_KIND_COST_USD[kind],
                     handler_skill=_KIND_SKILL[kind],
+                    tier=resolve_tier(kind, {}),
                     target_ref={"investigation_id": inv.id},
                     signals={"origin": inv.origin.value, "attempts": inv.pipeline_runs_attempted},
                 )
@@ -184,6 +247,7 @@ def maintenance_tensions(conn: Any, field_id: str) -> list[Tension]:
                 value=0.2,  # low — housekeeping yields to real knowledge work
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
                 target_ref={"field_id": field_id},
                 signals={},
             )
@@ -201,6 +265,7 @@ def maintenance_tensions(conn: Any, field_id: str) -> list[Tension]:
                 value=0.2,
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
                 target_ref={"field_id": field_id},
                 signals={},
             )
@@ -235,6 +300,7 @@ def _tension_from_source(src: Source, field_id: str, payload: dict[str, Any] | N
         value=value,
         est_cost_usd=_KIND_COST_USD[kind],
         handler_skill=_KIND_SKILL[kind],
+        tier=resolve_tier(kind, signals),
         target_ref={"source_id": src.id},
         signals=signals,
     )
@@ -256,6 +322,7 @@ def _tension_from_gap(gap: GapSignal, field_id: str) -> Tension:
         value=gap.priority,  # GapSignal's priority IS the value estimate
         est_cost_usd=_KIND_COST_USD[kind],
         handler_skill=_KIND_SKILL[kind],
+        tier=resolve_tier(kind, gap.signals),
         target_ref=target_ref,
         signals=gap.signals,
     )
@@ -282,6 +349,7 @@ def _merge_candidate_tensions(conn: Any, field_id: str, *, limit: int) -> list[T
                 value=sim,  # more confident match → more valuable to resolve
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {"similarity": sim}),
                 target_ref={"entity_id": id_a, "candidate_id": id_b},
                 signals={"candidate_id": id_b, "similarity": sim},
             )
@@ -318,6 +386,7 @@ def _redundant_belief_tensions(conn: Any, field_id: str, *, limit: int) -> list[
                 value=sim,  # more confident match → more valuable to consolidate
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {"similarity": sim}),
                 target_ref={"belief_id": id_a, "candidate_id": id_b},
                 signals={"candidate_id": id_b, "similarity": sim},
             )
@@ -348,6 +417,7 @@ def _contested_claim_tensions(conn: Any, field_id: str, *, limit: int) -> list[T
                 value=0.75,
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
                 target_ref={"belief_id": belief.id},
                 signals={"skeptic_counter_claims": skeptic, "contradictions": contradictions},
             )
@@ -373,8 +443,97 @@ def _unsynthesized_tensions(conn: Any, field_id: str, *, limit: int) -> list[Ten
                 value=0.65,
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
                 target_ref={"entity_id": entity_id},
                 signals={"unsynthesized_claims": count},
+            )
+        )
+    return out
+
+
+def _adjudicate_min_confidence() -> float:
+    return float(os.environ.get("MESH_ADJUDICATE_MIN_CONFIDENCE", "0.7"))
+
+
+def _adjudicate_min_dependents() -> int:
+    return int(os.environ.get("MESH_ADJUDICATE_MIN_DEPENDENTS", "2"))
+
+
+_ADJUDICATOR_AGENT = "adjudicator"
+
+
+def _contradicted_belief_tensions(conn: Any, field_id: str, *, limit: int) -> list[Tension]:
+    """Load-bearing held beliefs contradicted by *fresh* evidence (→ the deep
+    ``adjudicate-contradiction`` skill). The flagship deep-reasoning case.
+
+    A belief qualifies when it is confident (``confidence >= MIN_CONFIDENCE``),
+    load-bearing (``len(supporting_claim_ids) >= MIN_DEPENDENTS``), and carries at
+    least one contradicting claim not yet adjudicated (no ``adjudicator`` revision
+    whose ``trigger_claim_ids`` covers it). This produces a deep tension whose
+    resolution unfolds across rounds: the skill opens an ``origin=adjudication``
+    investigation to gather corroboration, that investigation is worked by the
+    normal dispatch chain, and once it terminates the tension re-surfaces for the
+    decide step.
+
+    **Suppression (the deep invariant):** while a non-terminal adjudication
+    investigation is in flight for the belief, the tension is withheld — the open
+    investigation drives the gather step, and re-emitting here would just thrash.
+    It returns only at the plan step (no investigation yet) and the decide step
+    (the investigation has resolved/abandoned)."""
+    # All adjudication sub-investigations for the field, grouped by belief.
+    in_flight: set[str] = set()
+    for inv in list_investigations(
+        conn, origin=InvestigationOrigin.adjudication, field_id=field_id, limit=limit * 4
+    ):
+        if inv.opened_by_belief_id and inv.status in (
+            InvestigationStatus.open,
+            InvestigationStatus.in_progress,
+        ):
+            in_flight.add(inv.opened_by_belief_id)
+
+    kind = TensionKind.contradicted_belief
+    min_conf = _adjudicate_min_confidence()
+    min_deps = _adjudicate_min_dependents()
+    out: list[Tension] = []
+    for belief in list_beliefs(conn, currently_held=True, limit=limit, field_id=field_id):
+        if belief.confidence < min_conf:
+            continue
+        if len(belief.supporting_claim_ids) < min_deps:
+            continue
+        if not belief.contradicting_claim_ids:
+            continue
+        if belief.id in in_flight:
+            continue  # gather sub-step in flight — let the investigation drive it
+        # Already-adjudicated contradicting claims (cited by an adjudicator revision).
+        adjudicated: set[str] = set()
+        for rev in list_revisions(conn, belief_id=belief.id, limit=100):
+            if rev.revised_by_agent == _ADJUDICATOR_AGENT:
+                adjudicated.update(rev.trigger_claim_ids)
+        fresh = [c for c in belief.contradicting_claim_ids if c not in adjudicated]
+        if not fresh:
+            continue  # every contradiction already weighed
+        out.append(
+            Tension(
+                id=f"{kind.value}:{belief.id}",
+                field_id=field_id,
+                kind=kind,
+                subject=belief.topic,
+                rationale=(
+                    f"Load-bearing belief '{belief.statement}' (confidence "
+                    f"{belief.confidence:.2f}, {len(belief.supporting_claim_ids)} supporting "
+                    f"claim(s)) is contradicted by {len(fresh)} fresh claim(s) — "
+                    f"gather corroboration and adjudicate."
+                ),
+                value=0.9,  # high: a wrong load-bearing belief poisons everything downstream
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),  # always deep
+                target_ref={"belief_id": belief.id},
+                signals={
+                    "contradicting_claim_ids": fresh,
+                    "dependents": len(belief.supporting_claim_ids),
+                    "confidence": belief.confidence,
+                },
             )
         )
     return out
@@ -412,8 +571,19 @@ def compute_agenda(
     # Phase 2a tensions the skill fan-out resolves.
     tensions.extend(_merge_candidate_tensions(conn, field_id, limit=gap_limit))
     tensions.extend(_redundant_belief_tensions(conn, field_id, limit=gap_limit))
-    tensions.extend(_contested_claim_tensions(conn, field_id, limit=gap_limit))
     tensions.extend(_unsynthesized_tensions(conn, field_id, limit=gap_limit))
+
+    # Deep adjudication of contradicted load-bearing beliefs pre-empts the routine
+    # swarm-tier challenge for the same belief: a fresh contradiction to a confident,
+    # load-bearing belief deserves the gather→weigh→decide loop, not one skeptic pass.
+    contradicted = _contradicted_belief_tensions(conn, field_id, limit=gap_limit)
+    adjudicating = {t.target_ref.get("belief_id") for t in contradicted}
+    tensions.extend(contradicted)
+    tensions.extend(
+        t
+        for t in _contested_claim_tensions(conn, field_id, limit=gap_limit)
+        if t.target_ref.get("belief_id") not in adjudicating
+    )
 
     # Rank by value-per-dollar (the market's knapsack density).
     tensions.sort(key=lambda t: t.score, reverse=True)

@@ -92,6 +92,7 @@ def load_builtin_skills() -> list[Skill]:
     run, then return the populated registry. The one shared edit per new skill is
     appending an import here (append-only, conflict-trivial)."""
     from mesh_agents.skills import (  # noqa: F401
+        adjudicate_contradiction,
         challenge_belief,
         consolidate_beliefs,
         consolidate_memory,

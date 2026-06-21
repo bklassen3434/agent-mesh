@@ -11,12 +11,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from mesh_agents.rules import (
+    P_ADJUDICATE,
     P_ESCALATE,
     ControllerState,
     plan,
+    swarm_size,
 )
 from mesh_db.controller_state import DispatchOutcome, TensionState
-from mesh_models.tension import Tension, TensionKind
+from mesh_models.tension import ReasoningTier, Tension, TensionKind
 
 _FIELD = "field-1"
 _NOW = datetime(2026, 6, 20, 12, 0, 0, tzinfo=UTC)
@@ -30,10 +32,17 @@ _HANDLER = {
     TensionKind.unsynthesized_claims: "synthesize-belief",
     TensionKind.contested_claim: "challenge-belief",
     TensionKind.under_evidenced_entity: "investigate-gap",
+    TensionKind.contradicted_belief: "adjudicate-contradiction",
 }
 
 
-def _tension(kind: TensionKind, target: str, value: float = 0.5) -> Tension:
+def _tension(
+    kind: TensionKind,
+    target: str,
+    value: float = 0.5,
+    *,
+    tier: ReasoningTier = ReasoningTier.simple,
+) -> Tension:
     return Tension(
         id=f"{kind.value}:{target}",
         field_id=_FIELD,
@@ -43,6 +52,7 @@ def _tension(kind: TensionKind, target: str, value: float = 0.5) -> Tension:
         value=value,
         est_cost_usd=0.01,
         handler_skill=_HANDLER[kind],
+        tier=tier,
     )
 
 
@@ -184,3 +194,51 @@ def test_every_kind_routes_to_its_handler(kind: TensionKind) -> None:
     # Scout only fires when idle, which it is here (only one tension) → all route.
     assert len(acts) == 1
     assert acts[0].skill_id == _HANDLER[kind]
+
+
+# ── reasoning tiers ──────────────────────────────────────────────────────────
+
+
+def test_swarm_tier_fans_out_from_first_dispatch() -> None:
+    # A swarm-tier tension runs K copies immediately — no stall required (the old
+    # behaviour only fanned out on escalation).
+    t = _tension(TensionKind.contested_claim, "b1", tier=ReasoningTier.swarm)
+    acts = plan(_state([t]))
+    assert len(acts) == 1
+    assert acts[0].skill_id == "challenge-belief"
+    assert acts[0].fanout == swarm_size()
+
+
+def test_simple_and_deep_tiers_run_a_single_instance() -> None:
+    simple = _tension(TensionKind.unextracted_source, "s1", tier=ReasoningTier.simple)
+    deep = _tension(TensionKind.under_evidenced_entity, "e1", tier=ReasoningTier.deep)
+    acts = {a.tension.id: a for a in plan(_state([simple, deep]))}
+    assert acts[simple.id].fanout == 1
+    assert acts[deep.id].fanout == 1  # deep gets depth across rounds, not parallel clones
+
+
+def test_contradicted_belief_routes_to_adjudicate_at_its_priority() -> None:
+    t = _tension(TensionKind.contradicted_belief, "b9", tier=ReasoningTier.deep)
+    acts = plan(_state([t]))
+    assert len(acts) == 1
+    assert acts[0].skill_id == "adjudicate-contradiction"
+    assert acts[0].priority == P_ADJUDICATE
+
+
+def test_deep_tension_is_not_escalated_to_a_swarm() -> None:
+    # Even fully stalled, a deep tension must not be cloned K times — its progress
+    # is the across-rounds gather investigation, not parallel copies of a stateful skill.
+    t = _tension(TensionKind.contradicted_belief, "b9", tier=ReasoningTier.deep)
+    states = {t.id: _st(t.id, attempts=9, outcome=DispatchOutcome.no_effects)}
+    acts = plan(_state([t], states))
+    assert len(acts) == 1
+    assert acts[0].priority == P_ADJUDICATE  # normal handler, not P_ESCALATE
+    assert acts[0].fanout == 1
+
+
+def test_adjudicate_outranks_consolidate_and_challenge() -> None:
+    adjudicate = _tension(TensionKind.contradicted_belief, "b1", tier=ReasoningTier.deep)
+    consolidate = _tension(TensionKind.redundant_beliefs, "b2:b3")
+    challenge = _tension(TensionKind.contested_claim, "b4", tier=ReasoningTier.swarm)
+    acts = plan(_state([challenge, consolidate, adjudicate]))
+    assert acts[0].skill_id == "adjudicate-contradiction"  # P_ADJUDICATE=22 wins

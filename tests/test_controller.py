@@ -193,3 +193,143 @@ def tmp_db_field_id(conn: MeshConnection) -> str:
     field = get_field_by_slug(conn, _FIELD)
     assert field is not None
     return field.id
+
+
+# ── swarm reconcile: union (default) vs quorum ───────────────────────────────
+
+
+def _swarm_activation(batches: list[list[Any]]) -> Any:
+    """An Activation whose skill returns one pre-seeded batch per instance (so K
+    copies can disagree), with fanout = len(batches)."""
+    from mesh_agents.rules import Activation
+    from mesh_models.tension import ReasoningTier, Tension, TensionKind
+
+    queue = list(batches)
+
+    @register_skill
+    class _Disagree:
+        skill_id = "challenge-belief"
+        handles = (TensionKind.contested_claim,)
+
+        async def run(self, conn: Any, tension: Any, *, budget_usd: float) -> list[Any]:
+            return queue.pop()  # atomic in single-thread asyncio after the semaphore
+
+    tension = Tension(
+        id="contested_claim:b1",
+        field_id=_FIELD,
+        kind=TensionKind.contested_claim,
+        subject="b1",
+        rationale="x",
+        value=0.7,
+        est_cost_usd=0.04,
+        handler_skill="challenge-belief",
+        tier=ReasoningTier.swarm,
+    )
+    return Activation(
+        tension=tension, skill_id="challenge-belief", priority=40, fanout=len(batches), reason="x"
+    )
+
+
+def _belief_effect(topic: str) -> Any:
+    return CreateBeliefEffect(
+        field_id=_FIELD,
+        belief=Belief(topic=topic, statement="x", confidence=0.5, is_currently_held=True),
+    )
+
+
+def test_swarm_union_keeps_every_distinct_effect(monkeypatch: Any, tmp_db: MeshConnection) -> None:
+    from mesh_pipeline.controller import _dispatch_one
+
+    monkeypatch.delenv("MESH_CONTROLLER_SWARM_QUORUM", raising=False)  # default: union
+    a, b, c = _belief_effect("A"), _belief_effect("B"), _belief_effect("C")
+    act = _swarm_activation([[a, b], [a], [a, c]])
+    effects, _outcome = asyncio.run(_dispatch_one(tmp_db, act, asyncio.Semaphore(3)))
+    topics = sorted(e.belief.topic for e in effects)
+    assert topics == ["A", "B", "C"]  # union of all instances
+
+
+def test_swarm_quorum_keeps_only_majority_effects(
+    monkeypatch: Any, tmp_db: MeshConnection
+) -> None:
+    from mesh_pipeline.controller import _dispatch_one
+
+    monkeypatch.setenv("MESH_CONTROLLER_SWARM_QUORUM", "true")
+    a, b, c = _belief_effect("A"), _belief_effect("B"), _belief_effect("C")
+    # A in 3/3 instances (≥ ceil(3/2)=2 → kept); B and C in 1/3 each → dropped.
+    act = _swarm_activation([[a, b], [a], [a, c]])
+    effects, _outcome = asyncio.run(_dispatch_one(tmp_db, act, asyncio.Semaphore(3)))
+    assert [e.belief.topic for e in effects] == ["A"]
+
+
+# ── deep adjudication wired end-to-end through the controller (plan step) ─────
+
+
+def test_controller_opens_an_adjudication_investigation_for_a_contradiction(
+    tmp_db: MeshConnection,
+) -> None:
+    """One live round on a contradicted load-bearing belief: producer → rule →
+    adjudicate-contradiction skill → OpenInvestigationEffect → gateway. The plan
+    step needs no LLM, so this proves the deep wiring without mocking the model."""
+    from datetime import UTC, datetime
+
+    from mesh_agents.skills.adjudicate_contradiction import AdjudicateContradictionSkill
+    from mesh_db.beliefs import create_belief
+    from mesh_db.claims import create_claim
+    from mesh_db.entities import create_entity
+    from mesh_db.investigations import list_investigations
+    from mesh_models.claim import Claim
+    from mesh_models.entity import Entity, EntityType
+    from mesh_models.investigation import InvestigationOrigin
+
+    # The autouse _clean_registry cleared the registry and load_builtin_skills is a
+    # no-op once modules are imported (decorators don't re-run), so register the one
+    # real skill this round needs directly. The plan step uses no LLM.
+    register_skill(AdjudicateContradictionSkill)
+    ent = create_entity(tmp_db, Entity(canonical_name="LB", type=EntityType.model))
+    src = _unread_source(tmp_db, "adj-src")
+    supports = [
+        create_claim(
+            tmp_db,
+            Claim(
+                predicate="achieves_score",
+                subject_entity_id=ent.id,
+                object={"score": 90 - i, "benchmark": "MMLU"},
+                source_id=src.id,
+                extracted_at=datetime(2026, 6, 13, tzinfo=UTC),
+                extracted_by_agent="claim_extractor",
+                raw_excerpt="…",
+            ),
+        ).id
+        for i in range(2)
+    ]
+    against = create_claim(
+        tmp_db,
+        Claim(
+            predicate="critiques",
+            subject_entity_id=ent.id,
+            object={"note": "fails to reproduce"},
+            source_id=src.id,
+            extracted_at=datetime(2026, 6, 13, tzinfo=UTC),
+            extracted_by_agent="skeptic",
+            raw_excerpt="…",
+        ),
+    )
+    create_belief(
+        tmp_db,
+        Belief(
+            topic="lb-sota",
+            statement="LB is SOTA",
+            supporting_claim_ids=supports,
+            contradicting_claim_ids=[against.id],
+            confidence=0.85,
+            is_currently_held=True,
+        ),
+    )
+
+    asyncio.run(run_controller(_FIELD, shadow=False, max_rounds=1, conn=tmp_db))
+
+    opened = list_investigations(
+        tmp_db, origin=InvestigationOrigin.adjudication, field_id=tmp_db_field_id(tmp_db)
+    )
+    assert len(opened) == 1
+    assert opened[0].opened_by_belief_id is not None

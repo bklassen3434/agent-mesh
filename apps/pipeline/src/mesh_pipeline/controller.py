@@ -84,6 +84,19 @@ def _get_step_cap() -> int:
     return int(os.environ.get("MESH_CONTROLLER_STEP_CAP", "8"))
 
 
+def _swarm_quorum_enabled() -> bool:
+    """Swarm reconcile mode. Off (default): union the K copies' effects (today's
+    behaviour — good when the copies diverge and you want every distinct finding).
+    On: keep an effect only if a *majority* of the instances that ran produced it
+    — a quorum vote that suppresses a single copy's hallucination."""
+    return os.environ.get("MESH_CONTROLLER_SWARM_QUORUM", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 class RoundReport(BaseModel):
     """What one controller round saw, planned, and did."""
 
@@ -258,6 +271,19 @@ async def _dispatch_round(
         effects.extend(act_effects)
         dispatched_count += 1
         dispatched.add(act.tension.id)
+        # One structured line per dispatch — surfaces the reasoning tier and fanout
+        # (simple / swarm-of-K / deep) so logs + Langfuse show how much reasoning
+        # each tension drew, not just that a skill ran.
+        log.info(
+            "controller_dispatch",
+            skill_id=act.skill_id,
+            tension=act.tension.id,
+            kind=act.tension.kind.value,
+            tier=act.tension.tier.value,
+            fanout=act.fanout,
+            outcome=outcome.value,
+            effects=len(act_effects),
+        )
         if not shadow:
             record_dispatch(
                 conn, field_id, act.tension.id, outcome, len(act_effects), now
@@ -298,17 +324,24 @@ async def _dispatch_one(
     if not ran:
         return [], DispatchOutcome.error
 
-    # Union effects across swarm instances, deduped by content (identical
-    # rule-based skills produce the same effect K times; keep one).
-    effects: list[Any] = []
-    seen: set[str] = set()
+    # Reconcile effects across the instances that ran. Count how many *distinct*
+    # instances produced each effect (by content). Quorum-off → keep any (union,
+    # threshold 1); quorum-on → keep only effects a majority of instances agree on
+    # (ceil(n/2)), so one copy's hallucination can't slip through. fanout=1 is a
+    # no-op either way (threshold collapses to 1).
+    counts: dict[str, int] = {}
+    first: dict[str, Any] = {}
     for batch in ran:
+        for key in {
+            (eff.model_dump_json() if hasattr(eff, "model_dump_json") else repr(eff))
+            for eff in batch
+        }:
+            counts[key] = counts.get(key, 0) + 1
         for eff in batch:
             key = eff.model_dump_json() if hasattr(eff, "model_dump_json") else repr(eff)
-            if key in seen:
-                continue
-            seen.add(key)
-            effects.append(eff)
+            first.setdefault(key, eff)
+    threshold = (len(ran) + 1) // 2 if _swarm_quorum_enabled() else 1
+    effects: list[Any] = [eff for key, eff in first.items() if counts[key] >= threshold]
     outcome = DispatchOutcome.effects if effects else DispatchOutcome.no_effects
     return effects, outcome
 

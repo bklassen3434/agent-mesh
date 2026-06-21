@@ -50,6 +50,26 @@ class TensionKind(StrEnum):
     # condition is a stored-timestamp state condition), not board-state driven.
     aging_belief = "aging_belief"  # the held corpus is due for decay + archival
     consolidatable_memory = "consolidatable_memory"  # episodic history due to distil
+    # A load-bearing held belief contradicted by fresh evidence — the flagship
+    # deep-reasoning case: gather corroboration, weigh both sides, then decide.
+    contradicted_belief = "contradicted_belief"
+
+
+class ReasoningTier(StrEnum):
+    """How much reasoning a tension is *born* needing — the intrinsic-per-kind
+    knob the rule engine reads to decide how a skill is dispatched.
+
+    simple — bounded, one-shot: the answer is already in front of the skill.
+    swarm  — one answer, noisy path: run K parallel copies and union/quorum them.
+    deep   — the answer needs evidence the board doesn't have yet: a
+             plan → gather → reason → decide loop that unfolds *across controller
+             rounds* (the skill advances a state machine on the board; the
+             controller's re-sense is the loop), not an in-skill while-loop.
+    """
+
+    simple = "simple"
+    swarm = "swarm"
+    deep = "deep"
 
 
 class Tension(BaseModel):
@@ -70,6 +90,7 @@ class Tension(BaseModel):
     value: float = Field(ge=0.0)
     est_cost_usd: float = Field(gt=0.0)
     handler_skill: str  # the skill that would claim this (board → skill mapping)
+    tier: ReasoningTier = ReasoningTier.simple  # how much reasoning this is born needing
     target_ref: dict[str, str] = Field(default_factory=dict)  # {entity_id|belief_id|source_id}
     signals: dict[str, Any] = Field(default_factory=dict)  # the triggering measurements
 

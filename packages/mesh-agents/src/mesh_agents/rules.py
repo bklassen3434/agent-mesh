@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from mesh_db.controller_state import TensionState
-from mesh_models.tension import Tension, TensionKind
+from mesh_models.tension import ReasoningTier, Tension, TensionKind
 from pydantic import BaseModel
 
 
@@ -87,6 +87,7 @@ def maintenance_cooldown_seconds() -> float:
 P_ESCALATE = 0  # a stalled tension pre-empts its own normal handler
 P_EXTRACT = 10  # read what we already have (cheap, foundational)
 P_RESOLVE = 20  # de-duplicate entities before synthesising on top of them
+P_ADJUDICATE = 22  # adjudicate a contradicted load-bearing belief before building on it
 P_CONSOLIDATE = 25  # de-duplicate beliefs (the "very similar beliefs" rule)
 P_SYNTHESIZE = 30  # turn claims into beliefs
 P_DISPATCH_INV = 35  # gather evidence for open investigations
@@ -160,15 +161,23 @@ def _handler_rule(
     name: str, kinds: tuple[TensionKind, ...], priority: int, why: str
 ) -> Rule:
     def evaluate(state: ControllerState) -> list[Activation]:
-        return [
-            Activation(
-                tension=t,
-                skill_id=t.handler_skill,
-                priority=priority,
-                reason=why,
+        out: list[Activation] = []
+        for t in state.tensions_of(*kinds):
+            # A swarm-tier tension runs K parallel copies from the first dispatch
+            # (one answer, noisy path — union/quorum them); simple and deep run a
+            # single instance (deep gets its depth from the across-rounds loop, not
+            # parallel clones).
+            fanout = swarm_size() if t.tier is ReasoningTier.swarm else 1
+            out.append(
+                Activation(
+                    tension=t,
+                    skill_id=t.handler_skill,
+                    priority=priority,
+                    fanout=fanout,
+                    reason=why,
+                )
             )
-            for t in state.tensions_of(*kinds)
-        ]
+        return out
 
     return Rule(name=name, evaluate=evaluate)
 
@@ -184,6 +193,11 @@ def _escalate_stalled(state: ControllerState) -> list[Activation]:
     for t in state.tensions:
         if t.kind is TensionKind.unscouted_connector or t.kind in _MAINTENANCE_KINDS:
             continue  # cheap + idempotent housekeeping; never worth a swarm
+        # Deep tensions progress across rounds via their own state machine (the
+        # gather investigation widens or abandons on its own budget); cloning a
+        # stateful skill K times would just race, not deepen.
+        if t.tier is ReasoningTier.deep:
+            continue
         st = state.state_for(t.id)
         if st is None or st.attempts < threshold or not st.stalled:
             continue
@@ -290,6 +304,12 @@ RULES: tuple[Rule, ...] = (
         (TensionKind.merge_candidate,),
         P_RESOLVE,
         "entities look like duplicates — adjudicate a merge",
+    ),
+    _handler_rule(
+        "adjudicate-contradicted-beliefs",
+        (TensionKind.contradicted_belief,),
+        P_ADJUDICATE,
+        "load-bearing belief contradicted by fresh evidence — gather + adjudicate",
     ),
     _handler_rule(
         "consolidate-redundant-beliefs",

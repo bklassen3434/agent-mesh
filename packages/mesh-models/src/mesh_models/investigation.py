@@ -29,12 +29,15 @@ class InvestigationOrigin(StrEnum):
     skeptic   — opened during a falsification sweep.
     discovery — the proactive, whole-field discovery sweep (Phase 22).
     manual    — opened by a human.
+    adjudication — opened by the deep adjudicate-contradiction skill to gather
+                   corroboration before weighing a contradicted load-bearing belief.
     """
 
     curator = "curator"
     skeptic = "skeptic"
     discovery = "discovery"
     manual = "manual"
+    adjudication = "adjudication"
 
 
 class Investigation(BaseModel):

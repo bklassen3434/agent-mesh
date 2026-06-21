@@ -8,20 +8,48 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from mesh_agents.agenda import compute_agenda
+from mesh_agents.agenda import _KIND_TIER, compute_agenda, resolve_tier
 from mesh_db.beliefs import create_belief
 from mesh_db.claims import create_claim
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity, set_entity_embedding
+from mesh_db.investigations import create_investigation
 from mesh_db.sources import create_source
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim
 from mesh_models.entity import Entity, EntityType
+from mesh_models.investigation import Investigation, InvestigationOrigin, InvestigationStatus
 from mesh_models.source import Source, SourceType
-from mesh_models.tension import TensionKind
+from mesh_models.tension import ReasoningTier, TensionKind
 
 _NOW = datetime(2026, 6, 13, tzinfo=UTC)
 _FIELD = "ai-robotics"
+
+
+# ── reasoning tiers (pure — no DB) ───────────────────────────────────────────
+
+
+def test_every_kind_has_a_default_tier() -> None:
+    assert set(_KIND_TIER) == set(TensionKind)
+    # The deep family — the cases that need evidence the board doesn't have yet.
+    assert _KIND_TIER[TensionKind.under_evidenced_entity] is ReasoningTier.deep
+    assert _KIND_TIER[TensionKind.thin_belief] is ReasoningTier.deep
+    assert _KIND_TIER[TensionKind.open_investigation] is ReasoningTier.deep
+    assert _KIND_TIER[TensionKind.contradicted_belief] is ReasoningTier.deep
+    # Swarm: one answer, noisy path.
+    assert _KIND_TIER[TensionKind.contested_claim] is ReasoningTier.swarm
+    # Simple: the answer is already on the board.
+    assert _KIND_TIER[TensionKind.unextracted_source] is ReasoningTier.simple
+
+
+def test_gray_band_similarity_upgrades_a_merge_to_swarm() -> None:
+    # Below auto-merge (0.93) but above auto-reject (0.80) → ambiguous → swarm.
+    assert resolve_tier(TensionKind.merge_candidate, {"similarity": 0.85}) is ReasoningTier.swarm
+    # At/above the high band → deterministic auto-merge → stays simple.
+    assert resolve_tier(TensionKind.merge_candidate, {"similarity": 0.95}) is ReasoningTier.simple
+    # Beliefs use their own (tighter) bands.
+    assert resolve_tier(TensionKind.redundant_beliefs, {"similarity": 0.90}) is ReasoningTier.swarm
+    assert resolve_tier(TensionKind.redundant_beliefs, {"similarity": 0.97}) is ReasoningTier.simple
 
 
 def _source(conn: MeshConnection, tag: str) -> Source:
@@ -249,3 +277,99 @@ def test_claim_in_a_belief_is_not_unsynthesized(tmp_db: MeshConnection) -> None:
         and t.target_ref.get("entity_id") == ent.id
         for t in agenda.tensions
     )
+
+
+# ── deep adjudication: contradicted load-bearing beliefs ─────────────────────
+
+
+def _seed_contradicted(conn: MeshConnection, *, confidence: float, supports: int) -> str:
+    """A held belief with ``supports`` supporting claims, ``confidence``, and one
+    fresh contradicting claim. Returns the belief id."""
+    ent = create_entity(conn, Entity(canonical_name="LoadBearer", type=EntityType.model))
+    src = _source(conn, f"lb-{confidence}-{supports}")
+    support_ids = []
+    for i in range(supports):
+        c = create_claim(
+            conn,
+            Claim(
+                predicate="achieves_score",
+                subject_entity_id=ent.id,
+                object={"score": 90 - i, "benchmark": "MMLU"},
+                source_id=src.id,
+                extracted_at=_NOW,
+                extracted_by_agent="claim_extractor",
+                raw_excerpt="…",
+            ),
+        )
+        support_ids.append(c.id)
+    against = create_claim(
+        conn,
+        Claim(
+            predicate="critiques",
+            subject_entity_id=ent.id,
+            object={"note": "fails to reproduce"},
+            source_id=src.id,
+            extracted_at=_NOW,
+            extracted_by_agent="skeptic",
+            raw_excerpt="…",
+        ),
+    )
+    belief = create_belief(
+        conn,
+        Belief(
+            topic="loadbearer-sota",
+            statement="LoadBearer is SOTA on MMLU",
+            supporting_claim_ids=support_ids,
+            contradicting_claim_ids=[against.id],
+            confidence=confidence,
+            is_currently_held=True,
+        ),
+    )
+    return belief.id
+
+
+def test_contradicted_load_bearing_belief_becomes_a_deep_tension(tmp_db: MeshConnection) -> None:
+    belief_id = _seed_contradicted(tmp_db, confidence=0.85, supports=2)
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+
+    deep = [t for t in agenda.tensions if t.kind == TensionKind.contradicted_belief]
+    assert len(deep) == 1
+    assert deep[0].handler_skill == "adjudicate-contradiction"
+    assert deep[0].tier is ReasoningTier.deep
+    assert deep[0].target_ref["belief_id"] == belief_id
+    # ...and it pre-empts the routine swarm-tier challenge for the same belief.
+    contested = [
+        t
+        for t in agenda.tensions
+        if t.kind == TensionKind.contested_claim
+        and t.target_ref.get("belief_id") == belief_id
+    ]
+    assert contested == []
+
+
+def test_low_confidence_or_thin_belief_stays_a_contested_claim(tmp_db: MeshConnection) -> None:
+    # Confident but not load-bearing (1 supporting claim) → not deep-adjudicated.
+    thin = _seed_contradicted(tmp_db, confidence=0.85, supports=1)
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    assert not any(t.kind == TensionKind.contradicted_belief for t in agenda.tensions)
+    assert any(
+        t.kind == TensionKind.contested_claim and t.target_ref.get("belief_id") == thin
+        for t in agenda.tensions
+    )
+
+
+def test_adjudication_in_flight_suppresses_the_contradicted_tension(tmp_db: MeshConnection) -> None:
+    belief_id = _seed_contradicted(tmp_db, confidence=0.85, supports=2)
+    # A gather investigation is already open for this belief → withhold the tension.
+    create_investigation(
+        tmp_db,
+        Investigation(
+            question="gather",
+            opened_by_belief_id=belief_id,
+            origin=InvestigationOrigin.adjudication,
+            status=InvestigationStatus.in_progress,
+        ),
+        field_id=_FIELD,
+    )
+    agenda = compute_agenda(tmp_db, _FIELD, field_slug=_FIELD)
+    assert not any(t.kind == TensionKind.contradicted_belief for t in agenda.tensions)

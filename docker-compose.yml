@@ -501,10 +501,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.coordinator
-    # The deterministic controller is the sole orchestrator. It dispatches skills
-    # in-process (no A2A), so it needs only Postgres + an LLM key — not the agent
-    # stack. One-shot: runs one field to quiescence and exits.
-    entrypoint: ["uv", "run", "mesh-controller", "--apply"]
+    # The deterministic controller is the sole orchestrator AND its own driver:
+    # `--forever` makes it self-driving (sense → plan via rules → dispatch agents
+    # → apply, looping; idle backoff between empty passes). No external
+    # scheduler/cron. It dispatches skills in-process (no A2A), so it needs only
+    # Postgres + an LLM key — not the agent stack. Default-on, always restarts.
+    entrypoint: ["uv", "run", "mesh-controller", "--apply", "--forever"]
     environment:
       # Phase 12: owner DSN applies the schema + roles on startup; the
       # controller's knowledge writes go through the writer role.
@@ -518,15 +520,19 @@ services:
     depends_on:
       mesh-postgres:
         condition: service_healthy
-    profiles:
-      - controller
+    # Default-on (no profile) — it is the always-on orchestrator. Restarts on
+    # crash/reboot. The `scheduler` service below is now legacy: with `--forever`
+    # nothing needs to fire the controller on a timer.
+    restart: unless-stopped
 
   scheduler:
     build:
       context: .
       dockerfile: Dockerfile.coordinator
-    # Reuse the coordinator image — the scheduler shells out to `mesh-controller`
-    # (in-process; no agent stack) so it needs the same workspace install + DB env.
+    # LEGACY (profile-gated, off by default): the controller now self-drives via
+    # `--forever`, so nothing needs a timer to fire it. Kept only for the API's
+    # /pipelines status surface; do NOT enable it alongside the controller daemon
+    # or the field gets two orchestrators. Reuses the coordinator image.
     entrypoint: ["uv", "run", "mesh-scheduler"]
     environment:
       # The scheduler shells out to mesh-controller, which inherits this env —

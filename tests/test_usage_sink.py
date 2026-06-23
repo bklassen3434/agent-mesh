@@ -66,7 +66,7 @@ def test_concurrent_dispatches_have_isolated_sinks() -> None:
         return [e.name for e in sink]
 
     async def go() -> list[list[str]]:
-        return await asyncio.gather(dispatch("x"), dispatch("y"), dispatch("z"))
+        return list(await asyncio.gather(dispatch("x"), dispatch("y"), dispatch("z")))
 
     results = asyncio.run(go())
     # Each dispatch sees only its own event — no cross-contamination.

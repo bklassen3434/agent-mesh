@@ -9,6 +9,7 @@ Usage: python3 monitoring/analyze.py [path/to/snapshots.jsonl] [--last N]
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from collections.abc import Callable
@@ -23,10 +24,8 @@ def load(path: str) -> list[dict[str, Any]]:
             line = line.strip()
             if not line:
                 continue
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
     return rows
 
 
@@ -79,12 +78,12 @@ def trend_table(rows: list[dict[str, Any]]) -> None:
     for r in rows:
         row = [fmt(acc(r)) for _, acc in COLS]
         cells.append(row)
-        widths = [max(w, len(c)) for w, c in zip(widths, row)]
-    line = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
+        widths = [max(w, len(c)) for w, c in zip(widths, row, strict=False)]
+    line = "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=False))
     print(line)
     print("  ".join("-" * w for w in widths))
     for row in cells:
-        print("  ".join(c.ljust(w) for c, w in zip(row, widths)))
+        print("  ".join(c.ljust(w) for c, w in zip(row, widths, strict=False)))
 
 
 def flags(latest: dict[str, Any]) -> list[str]:
@@ -96,14 +95,15 @@ def flags(latest: dict[str, Any]) -> list[str]:
         out.append(f"⚠ controller idle {inv_age:.1f}h — scheduler may not be firing")
     errs = g(latest, "controller", "errors_24h", default=0) or 0
     if errs:
-        out.append(f"⚠ {errs} skill errors in last 24h: {g(latest, 'controller', 'errors_by_type_24h', default={})}")
+        by_type = g(latest, "controller", "errors_by_type_24h", default={})
+        out.append(f"⚠ {errs} skill errors in last 24h: {by_type}")
     claims = g(latest, "kb", "claims_total", default=0) or 0
     held = g(latest, "kb", "beliefs_held", default=0) or 0
     if claims >= 20 and held == 0:
-        out.append(f"⚠ {claims} claims but 0 held beliefs — synthesis not producing beliefs")
+        out.append(f"⚠ {claims} claims but 0 held beliefs — synthesis stuck")
     conf = g(latest, "quality", "belief_conf_avg")
     if conf is not None and conf < 0.4:
-        out.append(f"⚠ mean belief confidence low ({conf}) — check confidence weights / evidence depth")
+        out.append(f"⚠ mean belief confidence low ({conf}) — check evidence depth")
     if not out:
         out.append("✓ no flags")
     return out

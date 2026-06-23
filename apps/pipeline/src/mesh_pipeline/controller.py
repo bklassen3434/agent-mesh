@@ -91,6 +91,14 @@ def _get_max_rounds() -> int:
     return int(os.environ.get("MESH_CONTROLLER_MAX_ROUNDS", "25"))
 
 
+def _get_idle_sleep() -> float:
+    """Seconds the self-driving loop waits after a pass that did nothing, before
+    re-sensing. The only timing in continuous mode beyond the rules' own
+    cooldowns — kept short (the world changes: scout cooldowns expire, new
+    sources arrive) but not a busy-wait. Sensing is read-only, so this is cheap."""
+    return float(os.environ.get("MESH_CONTROLLER_IDLE_SLEEP_SEC", "60"))
+
+
 def _get_step_cap() -> int:
     """Max activations dispatched per round (the deterministic replacement for the
     market's per-round budget). A large default — the loop runs to quiescence."""
@@ -244,7 +252,10 @@ async def run_controller(
                 result.quiescent = True
                 break
 
-        if not shadow:
+        # Only ledger a run that actually did something — the self-driving loop
+        # calls this every idle tick, and empty passes would otherwise flood
+        # pipeline_runs with all-zero rows.
+        if not shadow and any(r.dispatched for r in result.rounds):
             _record_run(conn, result, field_id)
     finally:
         if owns_conn:
@@ -257,6 +268,42 @@ async def run_controller(
         quiescent=result.quiescent,
     )
     return result
+
+
+async def run_controller_forever(
+    field: str = DEFAULT_FIELD_SLUG,
+    *,
+    step_cap: int | None = None,
+    idle_sleep_sec: float | None = None,
+) -> None:
+    """Self-driving mode: the controller IS the orchestrator — no external
+    scheduler or cron.
+
+    It holds one connection and repeats the full deterministic pass
+    (sense → plan via the rule engine → dispatch agents → apply effects, looping
+    to quiescence). When a pass does real work it immediately loops again (more
+    may now be ready); when a pass finds nothing to do it idles briefly, then
+    re-senses. All cadence comes from the rules themselves — scout cooldowns,
+    maintenance cooldowns, new sources arriving — plus a short idle backoff
+    between empty passes. Runs until the process is stopped."""
+    idle = idle_sleep_sec if idle_sleep_sec is not None else _get_idle_sleep()
+    conn = get_connection()
+    init_pg()  # idempotent; done once for the process, not per pass
+    log.info("controller_forever_starting", field=field, idle_sleep_sec=idle)
+    try:
+        while True:
+            try:
+                result = await run_controller(
+                    field, shadow=False, step_cap=step_cap, conn=conn
+                )
+                did_work = any(r.dispatched for r in result.rounds)
+            except Exception as exc:  # a bad pass must never kill the daemon
+                log.warning("controller_pass_failed", field=field, error=str(exc))
+                did_work = False
+            if not did_work:
+                await asyncio.sleep(idle)
+    finally:
+        conn.close()
 
 
 async def _dispatch_round(
@@ -499,8 +546,18 @@ def _record_run(conn: Any, result: ControllerResult, field_id: str) -> None:
     help="Let the controller ACT (write through the gateway + loop to quiescence). "
     "Default is shadow mode: preview one round's plan, write nothing.",
 )
-def main(field: str, step_cap: int | None, apply_: bool) -> None:
-    """Console entry point: `uv run mesh-controller` (shadow) / `--apply` (live)."""
+@click.option(
+    "--forever",
+    "forever",
+    is_flag=True,
+    default=False,
+    help="Run continuously as the self-driving orchestrator: sense → dispatch → "
+    "apply on repeat, idling between empty passes. No external scheduler/cron. "
+    "Implies --apply.",
+)
+def main(field: str, step_cap: int | None, apply_: bool, forever: bool) -> None:
+    """Console entry point: `uv run mesh-controller` (shadow) / `--apply` (one live
+    pass) / `--apply --forever` (self-driving daemon)."""
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -508,6 +565,10 @@ def main(field: str, step_cap: int | None, apply_: bool) -> None:
             structlog.dev.ConsoleRenderer(),
         ]
     )
+    if forever:
+        # Self-driving: never returns until the process is stopped.
+        asyncio.run(run_controller_forever(field, step_cap=step_cap))
+        return
     result = asyncio.run(
         run_controller(field, shadow=not apply_, step_cap=step_cap)
     )

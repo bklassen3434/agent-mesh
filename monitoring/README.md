@@ -36,8 +36,11 @@ python3 monitoring/analyze.py .context/snapshots.jsonl --last 50
 `analyze.py` prints a trend table, the latest full snapshot, and automatic flags
 (controller idle, skill errors, claims-but-no-beliefs, low confidence).
 
-## Baseline (2026-06-22, pre-redeploy)
+## Fresh start (2026-06-23 01:43Z)
 
-Old telegram-branch code: 6 entities, 18 claims, **0 beliefs**, last controller
-activity 2026-06-14 (stalled). Post-redeploy to controller-only orchestration we
-expect invocations every 6h and beliefs > 0.
+Redeployed Pi to `main` (controller-only orchestration), then **wiped all
+knowledge + run history** (kept config: the `ai-robotics` field, connector
+catalog, controller schedule). Backup of the old data:
+`pi:/home/pi/mesh-backups/pre-deploy-20260622-2130.dump`. Baseline snapshot is
+all-zero. The scheduler fires `controller` every 6h on its own; we expect
+claims/entities then held beliefs > 0 to appear over the first cycles.

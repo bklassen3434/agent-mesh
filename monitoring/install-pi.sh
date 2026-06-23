@@ -18,36 +18,21 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "→ ensuring /home/pi/mesh-monitoring on $HOST"
 $SSH "$HOST" 'mkdir -p /home/pi/mesh-monitoring && touch /home/pi/mesh-monitoring/snapshots.jsonl'
 
-echo "→ copying snapshot.sql"
-$SCP "$HERE/snapshot.sql" "$HOST:/home/pi/mesh-monitoring/snapshot.sql"
+echo "→ copying snapshot.sql + run-snapshot.sh"
+$SCP "$HERE/snapshot.sql"     "$HOST:/home/pi/mesh-monitoring/snapshot.sql"
+$SCP "$HERE/run-snapshot.sh"  "$HOST:/home/pi/mesh-monitoring/run-snapshot.sh"
 
-echo "→ writing runner + crontab entry"
-$SSH "$HOST" 'bash -s' <<'REMOTE'
-set -euo pipefail
-cat > /home/pi/mesh-monitoring/run-snapshot.sh <<'RUNNER'
-#!/usr/bin/env bash
-# Append one JSON metrics line to snapshots.jsonl. Driven by cron (hourly).
-set -euo pipefail
-export PATH=/usr/local/bin:/usr/bin:/bin
-cd /home/pi/agent-mesh   # so `docker compose` finds .env / the running stack
-OUT=/home/pi/mesh-monitoring/snapshots.jsonl
-LINE=$(docker compose exec -T mesh-postgres psql -U langgraph -d langgraph -tAX \
-         < /home/pi/mesh-monitoring/snapshot.sql || true)
-# Only append a line that parses as JSON (skips transient DB-down errors).
-if printf '%s' "$LINE" | python3 -c 'import sys,json; json.loads(sys.stdin.read())' 2>/dev/null; then
-  printf '%s\n' "$LINE" >> "$OUT"
-fi
-RUNNER
-chmod +x /home/pi/mesh-monitoring/run-snapshot.sh
-
-# Install/refresh the hourly cron line (idempotent).
-LINE='7 * * * * /home/pi/mesh-monitoring/run-snapshot.sh >> /home/pi/mesh-monitoring/snapshot.log 2>&1'
-( crontab -l 2>/dev/null | grep -v 'mesh-monitoring/run-snapshot.sh' ; echo "$LINE" ) | crontab -
-echo "crontab now:"; crontab -l | grep mesh-monitoring
-
-# Baseline snapshot right now.
-/home/pi/mesh-monitoring/run-snapshot.sh
-echo "snapshots so far: $(wc -l < /home/pi/mesh-monitoring/snapshots.jsonl)"
-REMOTE
+echo "→ installing crontab entry + baseline snapshot"
+# Single flat command (no nested heredoc — that bailed early under set -e). The
+# crontab line uses `;` so the grep-no-match exit code can't trip the pipeline.
+$SSH "$HOST" '
+  set -uo pipefail
+  chmod +x /home/pi/mesh-monitoring/run-snapshot.sh
+  LINE="7 * * * * /home/pi/mesh-monitoring/run-snapshot.sh >> /home/pi/mesh-monitoring/snapshot.log 2>&1"
+  ( crontab -l 2>/dev/null | grep -v "mesh-monitoring/run-snapshot.sh"; echo "$LINE" ) | crontab -
+  echo "crontab now:"; crontab -l | grep mesh-monitoring
+  /home/pi/mesh-monitoring/run-snapshot.sh
+  echo "snapshots so far: $(wc -l < /home/pi/mesh-monitoring/snapshots.jsonl)"
+'
 
 echo "✓ installed. Pull + report with: monitoring/pull-and-report.sh"

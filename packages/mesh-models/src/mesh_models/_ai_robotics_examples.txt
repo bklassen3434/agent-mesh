@@ -391,7 +391,7 @@ Output:
     {
       "predicate": "reproduces",
       "subject_name": "DeepSeek-V3",
-      "object": {"target": "88.5% on MMLU", "outcome": "confirmed"},
+      "object": {},
       "raw_excerpt": "I re-ran DeepSeek-V3 on MMLU with the official harness and got 88.4%, which lines up with the 88.5% in the paper",
       "confidence": 0.8
     }
@@ -408,7 +408,7 @@ Output:
     {
       "predicate": "critiques",
       "subject_name": "OpenChat",
-      "object": {"target": "beats GPT-4 on MT-bench", "issue": "non-standard judge prompt and only 20 questions; not apples-to-apples"},
+      "object": {},
       "raw_excerpt": "used a non-standard judge prompt and only 20 questions. The comparison is not apples-to-apples",
       "confidence": 0.8
     }
@@ -425,7 +425,7 @@ Output:
     {
       "predicate": "reproduces",
       "subject_name": "RT-2",
-      "object": {"target": "emergent generalization / zero-shot transfer to novel objects", "outcome": "failed"},
+      "object": {},
       "raw_excerpt": "saw far weaker transfer than reported — basically no zero-shot success on novel objects",
       "confidence": 0.75
     }
@@ -442,7 +442,7 @@ Output:
     {
       "predicate": "speculates",
       "subject_name": "Llama",
-      "object": {"about": "agentic-reasoning gap with frontier closed models", "prediction": "open-weight models close most of the gap by end of 2026"},
+      "object": {},
       "raw_excerpt": "open-weight models like Llama will close most of the agentic-reasoning gap with frontier closed models",
       "confidence": 0.5
     }

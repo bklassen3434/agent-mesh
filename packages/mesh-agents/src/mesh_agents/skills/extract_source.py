@@ -200,7 +200,7 @@ class ExtractSourceSkill:
             claim = Claim(
                 predicate=ec.predicate,
                 subject_entity_id=entity_id,
-                object=ec.object,
+                object=ec.object.model_dump(exclude_defaults=True),
                 source_id=source.id,
                 extracted_by_agent="claim_extractor",
                 raw_excerpt=ec.raw_excerpt,

@@ -21,6 +21,7 @@ from mesh_llm.batch import BatchItemResult, BatchRequestItem
 from mesh_llm.client import LLMProviderNotReadyError, LLMResponseError
 from mesh_llm.pricing import estimate_cost, is_priced
 from mesh_llm.usage import LLMUsage
+from mesh_llm.usage_sink import UsageEvent, record_usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -256,6 +257,21 @@ class AnthropicClient:
             cost_usd=cost.total_cost if is_priced(self.model) else None,
             agent_name=self.agent_name,
             metadata=route_meta if isinstance(route_meta, dict) else None,
+        )
+        # Attribute this call's usage to the open dispatch sink, if any (no-op
+        # for direct/library callers). The controller drains it to write the
+        # llm_usage ledger + the per-invocation cost. _complete is the single
+        # chokepoint for complete / complete_with_latency / complete_with_usage.
+        record_usage(
+            UsageEvent(
+                name=name,
+                model=self.model,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_creation_tokens=usage.cache_creation_tokens,
+                cost_usd=cost.total_cost if is_priced(self.model) else 0.0,
+            )
         )
 
         if response_model is not None:

@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 
-def load(path: str) -> list[dict]:
-    rows = []
+def load(path: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -28,15 +30,16 @@ def load(path: str) -> list[dict]:
     return rows
 
 
-def g(d: dict, *keys, default=None):
+def g(d: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    cur: Any = d
     for k in keys:
-        if not isinstance(d, dict):
+        if not isinstance(cur, dict):
             return default
-        d = d.get(k, {})
-    return d if d != {} else default
+        cur = cur.get(k, {})
+    return cur if cur != {} else default
 
 
-def fmt(v) -> str:
+def fmt(v: Any) -> str:
     if v is None:
         return "-"
     if isinstance(v, float):
@@ -48,14 +51,14 @@ def age_hours(iso: str | None) -> float | None:
     if not iso:
         return None
     try:
-        t = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - t).total_seconds() / 3600
+        t = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        return (datetime.now(UTC) - t).total_seconds() / 3600
     except ValueError:
         return None
 
 
 # The columns worth watching over time, each (label, accessor).
-COLS = [
+COLS: list[tuple[str, Callable[[dict[str, Any]], Any]]] = [
     ("time(UTC)", lambda r: g(r, "ts", default="?")[5:16]),
     ("claims", lambda r: g(r, "kb", "claims_total", default=0)),
     ("ents", lambda r: g(r, "kb", "entities", default=0)),
@@ -69,10 +72,10 @@ COLS = [
 ]
 
 
-def trend_table(rows: list[dict]) -> None:
+def trend_table(rows: list[dict[str, Any]]) -> None:
     headers = [c[0] for c in COLS]
     widths = [len(h) for h in headers]
-    cells = []
+    cells: list[list[str]] = []
     for r in rows:
         row = [fmt(acc(r)) for _, acc in COLS]
         cells.append(row)
@@ -84,8 +87,8 @@ def trend_table(rows: list[dict]) -> None:
         print("  ".join(c.ljust(w) for c, w in zip(row, widths)))
 
 
-def flags(latest: dict) -> list[str]:
-    out = []
+def flags(latest: dict[str, Any]) -> list[str]:
+    out: list[str] = []
     inv_age = age_hours(g(latest, "controller", "last_invocation_at"))
     if inv_age is None:
         out.append("⚠ controller has NEVER run (no agent_invocations)")

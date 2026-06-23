@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -45,13 +46,17 @@ from mesh_agents.agenda import (
 from mesh_agents.confidence import BeliefSignals, ConfidenceWeights, compute_confidence
 from mesh_agents.rules import Activation, ControllerState, plan
 from mesh_agents.skill import all_skills, get_skill, load_builtin_skills
+from mesh_db.agent_invocations import create_agent_invocation
 from mesh_db.beliefs import get_belief_signals
 from mesh_db.connection import MeshConnection, get_connection
 from mesh_db.controller_state import DispatchOutcome, get_tension_states, record_dispatch
 from mesh_db.effects import ApplyReport, apply_effects
 from mesh_db.fields import get_field_by_slug
+from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
 from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run, pipeline_run_exists
+from mesh_llm.usage_sink import UsageEvent, open_sink
+from mesh_models.agent_invocation import AgentInvocation
 from mesh_models.field import DEFAULT_FIELD_ID, DEFAULT_FIELD_SLUG
 from mesh_models.tension import Tension
 from pydantic import BaseModel, Field
@@ -76,6 +81,14 @@ def _make_confidence_fn() -> Any:
 
 def _get_concurrency() -> int:
     return int(os.environ.get("MESH_PIPELINE_CONCURRENCY", "3"))
+
+
+def _get_max_rounds() -> int:
+    """Max sense→plan→dispatch rounds before one run gives up reaching quiescence.
+    A cold start with a large board (e.g. the first ingest of a field) can need
+    many rounds to drain; raise this so a run finishes the work instead of
+    stopping mid-drain and leaving the rest for the next wake-up."""
+    return int(os.environ.get("MESH_CONTROLLER_MAX_ROUNDS", "25"))
 
 
 def _get_step_cap() -> int:
@@ -136,7 +149,7 @@ async def run_controller(
     field: str = DEFAULT_FIELD_SLUG,
     *,
     shadow: bool = True,
-    max_rounds: int = 25,
+    max_rounds: int | None = None,
     step_cap: int | None = None,
     now: datetime | None = None,
     conn: Any | None = None,
@@ -156,6 +169,7 @@ async def run_controller(
     field_row = get_field_by_slug(conn, field)
     field_id = field_row.id if field_row is not None else DEFAULT_FIELD_ID
     cap = step_cap if step_cap is not None else _get_step_cap()
+    rounds_cap = max_rounds if max_rounds is not None else _get_max_rounds()
     clock = now or datetime.now(UTC)
 
     result = ControllerResult(
@@ -172,7 +186,7 @@ async def run_controller(
     dispatched: set[str] = set()
 
     try:
-        for round_no in range(1, max_rounds + 1):
+        for round_no in range(1, rounds_cap + 1):
             # 1-2. sense the board + load stored counters → read-only state.
             tensions = _sense(conn, field_id, field)
             states = get_tension_states(conn, field_id)
@@ -194,7 +208,8 @@ async def run_controller(
 
             # 4-5. dispatch (bounded), record outcomes, apply effects.
             effects, dispatched_count, skipped = await _dispatch_round(
-                conn, selected, semaphore, shadow, clock, field_id, dispatched
+                conn, selected, semaphore, shadow, clock, field_id, dispatched,
+                result.run_id,
             )
             apply_report: ApplyReport | None = None
             if not shadow and effects:
@@ -252,12 +267,14 @@ async def _dispatch_round(
     now: datetime,
     field_id: str,
     dispatched: set[str],
+    run_id: str,
 ) -> tuple[list[Any], int, int]:
     """Dispatch the selected activations concurrently. Returns
     ``(effects, dispatched_count, skipped_no_skill)``. Records each dispatch's
-    outcome to the persistent counters (live only) so escalation/cooldown stay
-    deterministic. An activation whose skill isn't registered is counted as
-    skipped and never marked dispatched."""
+    outcome to the persistent counters AND its observability rows (live only) so
+    escalation/cooldown stay deterministic and the agent/cost ledgers stay
+    populated. An activation whose skill isn't registered is counted as skipped
+    and never marked dispatched."""
     runnable = [a for a in selected if get_skill(a.skill_id) is not None]
     skipped = len(selected) - len(runnable)
 
@@ -267,7 +284,9 @@ async def _dispatch_round(
 
     effects: list[Any] = []
     dispatched_count = 0
-    for act, (act_effects, outcome) in zip(runnable, results, strict=True):
+    for act, (act_effects, outcome, usage_events, latency_ms) in zip(
+        runnable, results, strict=True
+    ):
         effects.extend(act_effects)
         dispatched_count += 1
         dispatched.add(act.tension.id)
@@ -288,21 +307,33 @@ async def _dispatch_round(
             record_dispatch(
                 conn, field_id, act.tension.id, outcome, len(act_effects), now
             )
+            _record_observability(
+                conn, run_id, field_id, act, outcome,
+                len(act_effects), usage_events, latency_ms, now,
+            )
     return effects, dispatched_count, skipped
 
 
 async def _dispatch_one(
     conn: Any, act: Activation, semaphore: asyncio.Semaphore
-) -> tuple[list[Any], DispatchOutcome]:
+) -> tuple[list[Any], DispatchOutcome, list[UsageEvent], int]:
     """Run one activation's skill — ``fanout`` instances in parallel (a swarm on
-    escalation) — and union their effects (deduped). Returns the effects and the
-    dispatch outcome (effects / no_effects / error) used to update the counters.
+    escalation) — and union their effects (deduped). Returns the effects, the
+    dispatch outcome (effects / no_effects / error), the LLM usage this dispatch
+    incurred, and its wall-clock latency (ms) — the last two feed the
+    observability ledgers.
 
     A skill that raises contributes no effects and never aborts the round (the
     coordinator's one-bad-item philosophy). The outcome is ``error`` only when
     *every* instance raised, ``no_effects`` when they ran but produced nothing."""
     skill = get_skill(act.skill_id)
     assert skill is not None  # filtered by caller
+
+    # Open a usage sink in THIS task's context before spawning the fanout tasks,
+    # so every LLM call the skill makes (even across asyncio.to_thread) lands here
+    # and nowhere else. Drained after the fanout completes.
+    usage_sink = open_sink()
+    start = time.monotonic()
 
     async def run_once() -> list[Any] | None:
         async with semaphore:
@@ -320,9 +351,10 @@ async def _dispatch_one(
                 return None
 
     batches = await asyncio.gather(*(run_once() for _ in range(act.fanout)))
+    latency_ms = int((time.monotonic() - start) * 1000)
     ran = [b for b in batches if b is not None]
     if not ran:
-        return [], DispatchOutcome.error
+        return [], DispatchOutcome.error, list(usage_sink), latency_ms
 
     # Reconcile effects across the instances that ran. Count how many *distinct*
     # instances produced each effect (by content). Quorum-off → keep any (union,
@@ -343,7 +375,79 @@ async def _dispatch_one(
     threshold = (len(ran) + 1) // 2 if _swarm_quorum_enabled() else 1
     effects: list[Any] = [eff for key, eff in first.items() if counts[key] >= threshold]
     outcome = DispatchOutcome.effects if effects else DispatchOutcome.no_effects
-    return effects, outcome
+    return effects, outcome, list(usage_sink), latency_ms
+
+
+def _record_observability(
+    conn: Any,
+    run_id: str,
+    field_id: str,
+    act: Activation,
+    outcome: DispatchOutcome,
+    n_effects: int,
+    usage_events: list[UsageEvent],
+    latency_ms: int,
+    now: datetime,
+) -> None:
+    """Persist one ``agent_invocations`` row per dispatch + one ``llm_usage`` row
+    per LLM call it made. Best-effort: a ledger write must never abort the run
+    (mirrors ``_record_run``). This is the only place the controller writes
+    observability — the writers had no call sites after the LangGraph jobs were
+    removed, which is why both tables sat empty."""
+    try:
+        in_tok = sum(
+            u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
+            for u in usage_events
+        )
+        out_tok = sum(u.output_tokens for u in usage_events)
+        cost = sum(u.cost_usd for u in usage_events)
+        # The realized model (a RoutedLLMClient may have escalated cheap→strong);
+        # take the last call's model as representative for the invocation row.
+        model = next((u.model for u in reversed(usage_events) if u.model), None)
+        status = "error" if outcome == DispatchOutcome.error else "ok"
+        create_agent_invocation(
+            conn,
+            AgentInvocation(
+                run_id=run_id,
+                field_id=field_id,
+                agent=act.skill_id,
+                skill=act.skill_id,
+                status=status,
+                model=model,
+                latency_ms=latency_ms,
+                input_tokens=in_tok or None,
+                output_tokens=out_tok or None,
+                cost_usd=round(cost, 6) if cost else None,
+                output_summary={
+                    "outcome": outcome.value,
+                    "effects": n_effects,
+                    "kind": act.tension.kind.value,
+                    "tier": act.tension.tier.value,
+                    "fanout": act.fanout,
+                },
+                created_at=now,
+            ),
+        )
+        for u in usage_events:
+            create_llm_usage(
+                conn,
+                LLMUsageRecord(
+                    run_id=run_id,
+                    skill_id=act.skill_id,
+                    agent_name=act.skill_id,
+                    model=u.model or None,
+                    input_tokens=u.input_tokens,
+                    output_tokens=u.output_tokens,
+                    cache_read_tokens=u.cache_read_tokens,
+                    cache_creation_tokens=u.cache_creation_tokens,
+                    estimated_cost_usd=u.cost_usd,
+                    created_at=now,
+                ),
+            )
+    except Exception as exc:  # pragma: no cover - defensive ledger guard
+        log.warning(
+            "observability_record_failed", skill_id=act.skill_id, error=str(exc)
+        )
 
 
 def _record_run(conn: Any, result: ControllerResult, field_id: str) -> None:

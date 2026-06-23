@@ -16,6 +16,7 @@ from tenacity import (
 )
 
 from mesh_llm.usage import LLMUsage
+from mesh_llm.usage_sink import UsageEvent, record_usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -199,6 +200,19 @@ class OllamaClient:
             cost_usd=None,
             agent_name=self.agent_name,
             metadata=route_meta if isinstance(route_meta, dict) else None,
+        )
+        # Attribute usage to the open dispatch sink, if any (no-op otherwise).
+        # Local Ollama models are unpriced, so cost is 0.0.
+        record_usage(
+            UsageEvent(
+                name=name,
+                model=self.model,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_creation_tokens=usage.cache_creation_tokens,
+                cost_usd=0.0,
+            )
         )
 
         if response_model is None:

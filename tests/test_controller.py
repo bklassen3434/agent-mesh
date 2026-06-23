@@ -243,7 +243,9 @@ def test_swarm_union_keeps_every_distinct_effect(monkeypatch: Any, tmp_db: MeshC
     monkeypatch.delenv("MESH_CONTROLLER_SWARM_QUORUM", raising=False)  # default: union
     a, b, c = _belief_effect("A"), _belief_effect("B"), _belief_effect("C")
     act = _swarm_activation([[a, b], [a], [a, c]])
-    effects, _outcome = asyncio.run(_dispatch_one(tmp_db, act, asyncio.Semaphore(3)))
+    effects, _outcome, _usage, _latency = asyncio.run(
+        _dispatch_one(tmp_db, act, asyncio.Semaphore(3))
+    )
     topics = sorted(e.belief.topic for e in effects)
     assert topics == ["A", "B", "C"]  # union of all instances
 
@@ -257,7 +259,9 @@ def test_swarm_quorum_keeps_only_majority_effects(
     a, b, c = _belief_effect("A"), _belief_effect("B"), _belief_effect("C")
     # A in 3/3 instances (≥ ceil(3/2)=2 → kept); B and C in 1/3 each → dropped.
     act = _swarm_activation([[a, b], [a], [a, c]])
-    effects, _outcome = asyncio.run(_dispatch_one(tmp_db, act, asyncio.Semaphore(3)))
+    effects, _outcome, _usage, _latency = asyncio.run(
+        _dispatch_one(tmp_db, act, asyncio.Semaphore(3))
+    )
     assert [e.belief.topic for e in effects] == ["A"]
 
 

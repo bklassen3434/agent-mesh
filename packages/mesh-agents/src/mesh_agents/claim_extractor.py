@@ -25,6 +25,43 @@ from mesh_agents.profiles import load_profile
 logger = logging.getLogger(__name__)
 
 
+class ClaimObject(BaseModel):
+    """The structured payload of an extracted claim — the keys belief synthesis
+    reads (benchmark/score → SOTA beliefs, capability → capability beliefs,
+    compared_to/lab/parent → graph edges).
+
+    Which keys are filled depends on the predicate (see the extraction prompt).
+    **Declaring them explicitly is load-bearing.** The field used to be an
+    untyped ``dict[str, Any]``; under Anthropic's strict structured output that
+    exposes NO properties to the schema, so the model could only ever return
+    ``{}`` — every claim persisted with an empty object and belief synthesis
+    produced nothing. Naming the keys lets the model fill them.
+
+    Scope: only the keys belief synthesis reads. Fields are typed with empty
+    defaults rather than ``X | None`` (each ``| None`` adds an ``anyOf[type,
+    null]`` branch), and the set is kept small — Anthropic's parse schema rejects
+    overly large/complex models ("schema is too complex"), and the
+    reproduces/critiques/speculates predicates aren't synthesized into beliefs,
+    so their old object keys (target/outcome/issue/about/prediction) are dropped;
+    their evidence lives in the claim's ``raw_excerpt``. Unset keys come back as
+    their default and are stripped via ``model_dump(exclude_defaults=True)``, so
+    consumers still see a tight dict with only the populated keys."""
+
+    # achieves_score: {"score": <number>, "benchmark": "<name>", "metric": "<opt>"}
+    score: float = 0.0
+    benchmark: str = ""
+    metric: str = ""
+    # outperforms: {"compared_to": "<entity>", "on": "<task/benchmark>"}
+    compared_to: str = ""
+    on: str = ""
+    # developed_by: {"lab": "<lab name>"}
+    lab: str = ""
+    # based_on: {"parent": "<entity it builds on>"}
+    parent: str = ""
+    # has_capability: {"capability": "<short phrase, no number>"}
+    capability: str = ""
+
+
 class ExtractedClaim(BaseModel):
     predicate: Literal[
         # legacy four
@@ -40,7 +77,7 @@ class ExtractedClaim(BaseModel):
         "speculates",
     ]
     subject_name: str
-    object: dict[str, Any]
+    object: ClaimObject = Field(default_factory=ClaimObject)
     raw_excerpt: str
     confidence: float = Field(default=0.85, ge=0.0, le=1.0)
 

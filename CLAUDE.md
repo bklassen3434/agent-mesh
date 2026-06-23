@@ -190,6 +190,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_MARKET_SCOUT_MAX` | `20` | Per-connector fetch cap for one `scout-source` poll |
 | `MESH_MARKET_INVESTIGATE_MAX` | `10` | Per-investigation fetch cap for one `dispatch-investigation` run |
 | `MESH_CONTROLLER_STEP_CAP` | `8` | Max activations the controller dispatches per round (replaces the market budget) |
+| `MESH_CONTROLLER_MAX_ROUNDS` | `25` | Max sense→plan→dispatch rounds before one run stops short of quiescence (raise so a cold-start ingest drains in one run instead of spilling to the next wake-up) |
 | `MESH_CONTROLLER_ESCALATE_AFTER` | `3` | Stalled-dispatch count past which a tension escalates to a swarm |
 | `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances a swarm-tier dispatch (or an escalation) fans out to |
 | `MESH_CONTROLLER_SWARM_QUORUM` | `false` | Swarm reconcile: off = union the K copies' effects; on = keep only effects a majority (`⌈K/2⌉`) agree on |

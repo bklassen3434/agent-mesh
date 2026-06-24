@@ -163,6 +163,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_CONFIDENCE_ATTACK_WEIGHT` | `0.5` | Weight on the attack term (skeptic counter-claims + severe failure modes) |
 | `MESH_CONFIDENCE_SOURCE_DIVERSITY_CAP` | `4.0` | Source-type-diversity saturation cap |
 | `MESH_CONFIDENCE_REPRODUCTION_CAP` | `3.0` | Reproduction-count saturation cap |
+| `MESH_CONFIDENCE_CLAIM_COUNT_CAP` | `8.0` | Supporting-claim-count (evidence-depth) saturation cap — the third support term, so a well-backed belief outranks a one-off even in a single-source-type field |
 | `MESH_CONFIDENCE_SKEPTIC_CAP` | `4.0` | Skeptic-counter-claim-count saturation cap |
 | `MESH_CONFIDENCE_SEVERE_CAP` | `3.0` | Severe-failure-mode-count saturation cap |
 | `MESH_ROUTE_ENABLED` | `false` | Global tiered-routing switch (Phase 20) |
@@ -187,6 +188,8 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC` | `86400` | Min seconds between periodic LLM-free maintenance passes (belief aging, memory consolidation) |
 | `MESH_LLM_MODEL_DISCOVERY` | (routing/provider default) | Per-agent model pin for the discovery hypothesis-drafting LLM |
 | `MESH_OBS_CAPTURE_MAX_CHARS` | `2000` | Cap on each stored agent-invocation input/output summary; raw content stays in Langfuse (Phase 23) |
+| `MESH_ARXIV_DELAY_SECONDS` | `3.0` | Min spacing between arxiv API requests (shared rate-limited client; arxiv 429s under bursts) |
+| `MESH_ARXIV_NUM_RETRIES` | `5` | arxiv client retries on a failed page request (429/500) |
 | `MESH_MARKET_SCOUT_MAX` | `20` | Per-connector fetch cap for one `scout-source` poll |
 | `MESH_MARKET_INVESTIGATE_MAX` | `10` | Per-investigation fetch cap for one `dispatch-investigation` run |
 | `MESH_CONTROLLER_STEP_CAP` | `8` | Max activations the controller dispatches per round (replaces the market budget) |

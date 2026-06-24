@@ -57,13 +57,29 @@ def test_severe_critique_scores_lower() -> None:
     assert critiqued < clean
 
 
+def test_evidence_depth_scores_higher() -> None:
+    """Same (single) source type, more supporting claims → higher confidence.
+    This is the single-connector case that used to pin every belief at 0.646."""
+    shallow = compute_confidence(
+        BeliefSignals(source_type_diversity=1, supporting_claim_count=1)
+    )
+    deep = compute_confidence(
+        BeliefSignals(source_type_diversity=1, supporting_claim_count=20)
+    )
+    assert deep > shallow > 0.5
+
+
 def test_confidence_is_clamped() -> None:
     crushed = compute_confidence(
         BeliefSignals(skeptic_counter_claim_count=99, severe_failure_mode_count=99)
     )
     assert crushed == 0.0
     maxed = compute_confidence(
-        BeliefSignals(source_type_diversity=99, reproduction_count=99)
+        BeliefSignals(
+            source_type_diversity=99,
+            reproduction_count=99,
+            supporting_claim_count=99,
+        )
     )
     assert maxed == pytest.approx(1.0)
 
@@ -132,6 +148,33 @@ def test_multi_source_belief_outscores_single_source(tmp_db: MeshConnection) -> 
     c_single = compute_confidence(BeliefSignals.from_row(get_belief_signals(tmp_db, single.id)))
     c_multi = compute_confidence(BeliefSignals.from_row(get_belief_signals(tmp_db, multi.id)))
     assert c_multi > c_single
+
+
+def test_more_claims_same_source_type_outscores_fewer(tmp_db: MeshConnection) -> None:
+    """Single-connector field (all arxiv): a belief with many supporting claims
+    must outrank one with a single claim — the regression the live run exposed,
+    where every belief pinned at the same confidence regardless of evidence."""
+    eid = create_entity(tmp_db, Entity(canonical_name="Z", type=EntityType.model)).id
+    shallow = create_belief(
+        tmp_db,
+        Belief(topic="shallow", statement="s", supporting_claim_ids=[
+            _claim(tmp_db, eid, _source(tmp_db, SourceType.arxiv, "z1"))
+        ]),
+    )
+    deep = create_belief(
+        tmp_db,
+        Belief(topic="deep", statement="s", supporting_claim_ids=[
+            _claim(tmp_db, eid, _source(tmp_db, SourceType.arxiv, f"z{i}"))
+            for i in range(2, 8)
+        ]),
+    )
+    c_shallow = compute_confidence(
+        BeliefSignals.from_row(get_belief_signals(tmp_db, shallow.id))
+    )
+    c_deep = compute_confidence(
+        BeliefSignals.from_row(get_belief_signals(tmp_db, deep.id))
+    )
+    assert c_deep > c_shallow
 
 
 def test_severe_skeptic_critique_lowers_confidence(tmp_db: MeshConnection) -> None:

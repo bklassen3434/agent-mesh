@@ -207,12 +207,20 @@ def get_belief_signals(conn: MeshConnection, belief_id: str) -> dict[str, int]:
     Returns all-zero signals for a belief the view doesn't cover (e.g. not
     currently held). The view recomputes on read, so it reflects a belief's
     claim links as soon as they're written."""
+    # Drive from the belief row (so evidence depth is available even for beliefs
+    # the view doesn't cover) and LEFT JOIN the recomputing signals view.
+    # supporting_claim_count = how many claims back the belief — the evidence
+    # depth that lets confidence differentiate beliefs in a single-source-type
+    # field (where source diversity / reproduction are pinned at 1).
     row = conn.execute(
         """
-        SELECT source_type_diversity, reproduction_count,
-               skeptic_counter_claim_count, severe_failure_mode_count,
-               claims_last_30d
-        FROM belief_signals WHERE belief_id = %s
+        SELECT s.source_type_diversity, s.reproduction_count,
+               s.skeptic_counter_claim_count, s.severe_failure_mode_count,
+               s.claims_last_30d,
+               COALESCE(cardinality(b.supporting_claim_ids), 0)
+        FROM beliefs b
+        LEFT JOIN belief_signals s ON s.belief_id = b.id
+        WHERE b.id = %s
         """,
         [belief_id],
     ).fetchone()
@@ -220,16 +228,18 @@ def get_belief_signals(conn: MeshConnection, belief_id: str) -> dict[str, int]:
         return {
             "source_type_diversity": 0,
             "reproduction_count": 0,
+            "supporting_claim_count": 0,
             "skeptic_counter_claim_count": 0,
             "severe_failure_mode_count": 0,
             "claims_last_30d": 0,
         }
     return {
-        "source_type_diversity": int(row[0]),
-        "reproduction_count": int(row[1]),
-        "skeptic_counter_claim_count": int(row[2]),
-        "severe_failure_mode_count": int(row[3]),
-        "claims_last_30d": int(row[4]),
+        "source_type_diversity": int(row[0] or 0),
+        "reproduction_count": int(row[1] or 0),
+        "skeptic_counter_claim_count": int(row[2] or 0),
+        "severe_failure_mode_count": int(row[3] or 0),
+        "claims_last_30d": int(row[4] or 0),
+        "supporting_claim_count": int(row[5] or 0),
     }
 
 

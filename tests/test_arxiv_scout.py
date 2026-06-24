@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import mesh_agents.arxiv_scout as arxiv_scout
+import pytest
 from mesh_agents.arxiv_scout import (
     ArxivScoutAgent,
     ArxivScoutInput,
@@ -11,6 +14,15 @@ from mesh_agents.arxiv_scout import (
     _make_hash,
     _query_from_hypothesis,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_arxiv_client() -> Iterator[None]:
+    """The shared arxiv client is cached in a module global; reset it so each
+    test rebuilds it under its own patched ``arxiv.Client`` mock."""
+    arxiv_scout._arxiv_client = None
+    yield
+    arxiv_scout._arxiv_client = None
 
 
 class TestQueryFromHypothesis:
@@ -77,6 +89,20 @@ class TestArxivScoutAgent:
         h2 = _make_hash(abstract)
         assert h1 == h2
         assert len(h1) == 64  # sha256 hex
+
+    def test_shared_client_reused_across_fetches(self) -> None:
+        """Both fetch paths must reuse ONE arxiv client so its per-client 3s
+        rate-limit spans calls (the 429-storm fix)."""
+        from mesh_agents.arxiv_scout import _fetch_papers, _fetch_papers_by_query
+
+        with patch("mesh_agents.arxiv_scout.arxiv.Client") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.results.return_value = iter([])
+            mock_cls.return_value = mock_client
+            _fetch_papers(["cs.AI"], 5, None)
+            mock_client.results.return_value = iter([])
+            _fetch_papers_by_query("foo", 5)
+            assert mock_cls.call_count == 1  # one shared client, not per-call
 
     def test_source_url_is_arxiv_abstract(self) -> None:
         papers = self._run(

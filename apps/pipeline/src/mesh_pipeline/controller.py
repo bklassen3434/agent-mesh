@@ -331,7 +331,7 @@ async def _dispatch_round(
 
     effects: list[Any] = []
     dispatched_count = 0
-    for act, (act_effects, outcome, usage_events, latency_ms) in zip(
+    for act, (act_effects, outcome, usage_events, latency_ms, error) in zip(
         runnable, results, strict=True
     ):
         effects.extend(act_effects)
@@ -356,14 +356,14 @@ async def _dispatch_round(
             )
             _record_observability(
                 conn, run_id, field_id, act, outcome,
-                len(act_effects), usage_events, latency_ms, now,
+                len(act_effects), usage_events, latency_ms, now, error,
             )
     return effects, dispatched_count, skipped
 
 
 async def _dispatch_one(
     conn: Any, act: Activation, semaphore: asyncio.Semaphore
-) -> tuple[list[Any], DispatchOutcome, list[UsageEvent], int]:
+) -> tuple[list[Any], DispatchOutcome, list[UsageEvent], int, tuple[str, str] | None]:
     """Run one activation's skill — ``fanout`` instances in parallel (a swarm on
     escalation) — and union their effects (deduped). Returns the effects, the
     dispatch outcome (effects / no_effects / error), the LLM usage this dispatch
@@ -381,6 +381,7 @@ async def _dispatch_one(
     # and nowhere else. Drained after the fanout completes.
     usage_sink = open_sink()
     start = time.monotonic()
+    errors: list[Exception] = []
 
     async def run_once() -> list[Any] | None:
         async with semaphore:
@@ -395,13 +396,18 @@ async def _dispatch_one(
                     tension=act.tension.id,
                     error=str(exc),
                 )
+                errors.append(exc)
                 return None
 
     batches = await asyncio.gather(*(run_once() for _ in range(act.fanout)))
     latency_ms = int((time.monotonic() - start) * 1000)
     ran = [b for b in batches if b is not None]
     if not ran:
-        return [], DispatchOutcome.error, list(usage_sink), latency_ms
+        # Surface the failure cause so the invocation ledger records WHY (the
+        # error_type/error_message columns), not just status=error.
+        err = errors[0] if errors else None
+        err_info = (type(err).__name__, str(err)[:1000]) if err is not None else None
+        return [], DispatchOutcome.error, list(usage_sink), latency_ms, err_info
 
     # Reconcile effects across the instances that ran. Count how many *distinct*
     # instances produced each effect (by content). Quorum-off → keep any (union,
@@ -422,7 +428,7 @@ async def _dispatch_one(
     threshold = (len(ran) + 1) // 2 if _swarm_quorum_enabled() else 1
     effects: list[Any] = [eff for key, eff in first.items() if counts[key] >= threshold]
     outcome = DispatchOutcome.effects if effects else DispatchOutcome.no_effects
-    return effects, outcome, list(usage_sink), latency_ms
+    return effects, outcome, list(usage_sink), latency_ms, None
 
 
 def _record_observability(
@@ -435,12 +441,15 @@ def _record_observability(
     usage_events: list[UsageEvent],
     latency_ms: int,
     now: datetime,
+    error: tuple[str, str] | None = None,
 ) -> None:
     """Persist one ``agent_invocations`` row per dispatch + one ``llm_usage`` row
     per LLM call it made. Best-effort: a ledger write must never abort the run
     (mirrors ``_record_run``). This is the only place the controller writes
     observability — the writers had no call sites after the LangGraph jobs were
-    removed, which is why both tables sat empty."""
+    removed, which is why both tables sat empty. ``error`` (type, message) is
+    recorded on the invocation row when the dispatch failed, so the ledger says
+    WHY, not just that it errored."""
     try:
         in_tok = sum(
             u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
@@ -460,6 +469,8 @@ def _record_observability(
                 agent=act.skill_id,
                 skill=act.skill_id,
                 status=status,
+                error_type=error[0] if error else None,
+                error_message=error[1] if error else None,
                 model=model,
                 latency_ms=latency_ms,
                 input_tokens=in_tok or None,

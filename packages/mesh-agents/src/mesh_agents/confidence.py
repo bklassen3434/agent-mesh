@@ -25,6 +25,7 @@ class BeliefSignals:
 
     source_type_diversity: int = 0
     reproduction_count: int = 0
+    supporting_claim_count: int = 0
     skeptic_counter_claim_count: int = 0
     severe_failure_mode_count: int = 0
 
@@ -33,6 +34,7 @@ class BeliefSignals:
         return cls(
             source_type_diversity=int(row.get("source_type_diversity", 0)),
             reproduction_count=int(row.get("reproduction_count", 0)),
+            supporting_claim_count=int(row.get("supporting_claim_count", 0)),
             skeptic_counter_claim_count=int(row.get("skeptic_counter_claim_count", 0)),
             severe_failure_mode_count=int(row.get("severe_failure_mode_count", 0)),
         )
@@ -58,6 +60,7 @@ class ConfidenceWeights:
     attack_weight: float = 0.5
     source_diversity_cap: float = 4.0
     reproduction_cap: float = 3.0
+    claim_count_cap: float = 8.0
     skeptic_cap: float = 4.0
     severe_cap: float = 3.0
 
@@ -69,6 +72,7 @@ class ConfidenceWeights:
             attack_weight=_env_float("MESH_CONFIDENCE_ATTACK_WEIGHT", 0.5),
             source_diversity_cap=_env_float("MESH_CONFIDENCE_SOURCE_DIVERSITY_CAP", 4.0),
             reproduction_cap=_env_float("MESH_CONFIDENCE_REPRODUCTION_CAP", 3.0),
+            claim_count_cap=_env_float("MESH_CONFIDENCE_CLAIM_COUNT_CAP", 8.0),
             skeptic_cap=_env_float("MESH_CONFIDENCE_SKEPTIC_CAP", 4.0),
             severe_cap=_env_float("MESH_CONFIDENCE_SEVERE_CAP", 3.0),
         )
@@ -85,15 +89,23 @@ def compute_confidence(
 ) -> float:
     """Map evidence signals to a confidence in [0, 1].
 
-    Support (source diversity + reproduction) lifts confidence above the base;
-    attacks (skeptic counter-claims + severe failure modes) pull it down. Each
-    term saturates at its cap so a single very-noisy signal can't dominate.
+    Support (source diversity + reproduction + evidence depth) lifts confidence
+    above the base; attacks (skeptic counter-claims + severe failure modes) pull
+    it down. Each term saturates at its cap so a single very-noisy signal can't
+    dominate.
+
+    ``supporting_claim_count`` (evidence depth) is the third support term: without
+    it, a single-connector field (one source type) pins diversity and
+    reproduction at 1, so every belief lands on the same confidence regardless of
+    how much evidence backs it. Counting claims lets a well-supported belief
+    outrank a one-off even when all evidence shares a source type.
     """
     w = weights or ConfidenceWeights()
     support = (
         _saturate(signals.source_type_diversity, w.source_diversity_cap)
         + _saturate(signals.reproduction_count, w.reproduction_cap)
-    ) / 2.0
+        + _saturate(signals.supporting_claim_count, w.claim_count_cap)
+    ) / 3.0
     attack = (
         _saturate(signals.skeptic_counter_claim_count, w.skeptic_cap)
         + _saturate(signals.severe_failure_mode_count, w.severe_cap)

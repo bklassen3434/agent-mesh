@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import re
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +28,31 @@ class ScoutedPaper(BaseModel):
     title: str
     abstract: str
     arxiv_id: str
+
+
+# ── shared arxiv client (rate limiting) ───────────────────────────────────────
+# arxiv's API rate-limits hard (HTTP 429) and asks for ~1 request / 3s. The
+# `arxiv` package enforces that spacing PER CLIENT via its own `_last_request_dt`
+# — but only if we reuse one client. We used to build a fresh `arxiv.Client()`
+# per fetch, so the spacing never spanned calls, and the controller dispatches
+# several arxiv-touching skills (scout-source, dispatch-investigation)
+# concurrently → bursts of unspaced requests → 429 storms (in one run,
+# dispatch-investigation errored 65%). Fix: one process-wide client, and a lock
+# so the concurrent `asyncio.to_thread` workers issue requests (and take the
+# client's rate-limit sleep) one at a time instead of overlapping.
+_ARXIV_LOCK = threading.Lock()
+_arxiv_client: arxiv.Client | None = None
+
+
+def _get_arxiv_client() -> arxiv.Client:
+    global _arxiv_client
+    if _arxiv_client is None:
+        _arxiv_client = arxiv.Client(
+            page_size=100,
+            delay_seconds=float(os.environ.get("MESH_ARXIV_DELAY_SECONDS", "3.0")),
+            num_retries=int(os.environ.get("MESH_ARXIV_NUM_RETRIES", "5")),
+        )
+    return _arxiv_client
 
 
 class ArxivScoutInput(BaseModel):
@@ -87,38 +114,45 @@ def _fetch_papers(
         sort_by=arxiv.SortCriterion.SubmittedDate,
         sort_order=arxiv.SortOrder.Descending,
     )
-    client = arxiv.Client()
     cutoff = _utc(since)
 
     papers: list[ScoutedPaper] = []
-    for result in client.results(search):
-        last_submitted = _utc(result.updated)
-        if cutoff is not None and last_submitted is not None and last_submitted < cutoff:
-            break
+    # Serialize the whole paginated fetch through the shared rate-limited client
+    # (one arxiv request stream at a time, process-wide) to avoid 429 storms.
+    with _ARXIV_LOCK:
+        client = _get_arxiv_client()
+        for result in client.results(search):
+            last_submitted = _utc(result.updated)
+            if (
+                cutoff is not None
+                and last_submitted is not None
+                and last_submitted < cutoff
+            ):
+                break
 
-        arxiv_id = result.entry_id.split("/")[-1]
-        url = f"https://arxiv.org/abs/{arxiv_id}"
-        abstract = result.summary.replace("\n", " ")
-        author = result.authors[0].name if result.authors else None
+            arxiv_id = result.entry_id.split("/")[-1]
+            url = f"https://arxiv.org/abs/{arxiv_id}"
+            abstract = result.summary.replace("\n", " ")
+            author = result.authors[0].name if result.authors else None
 
-        source = Source(
-            type=SourceType.arxiv,
-            url=url,
-            author=author,
-            published_at=result.published or datetime.now(UTC),
-            raw_content_hash=_make_hash(abstract),
-        )
-        papers.append(
-            ScoutedPaper(
-                source=source,
-                title=result.title,
-                abstract=abstract,
-                arxiv_id=arxiv_id,
+            source = Source(
+                type=SourceType.arxiv,
+                url=url,
+                author=author,
+                published_at=result.published or datetime.now(UTC),
+                raw_content_hash=_make_hash(abstract),
             )
-        )
+            papers.append(
+                ScoutedPaper(
+                    source=source,
+                    title=result.title,
+                    abstract=abstract,
+                    arxiv_id=arxiv_id,
+                )
+            )
 
-        if len(papers) >= max_results:
-            break
+            if len(papers) >= max_results:
+                break
 
     return papers
 
@@ -170,30 +204,31 @@ def _fetch_papers_by_query(query: str, max_results: int) -> list[ScoutedPaper]:
         sort_by=arxiv.SortCriterion.Relevance,
         sort_order=arxiv.SortOrder.Descending,
     )
-    client = arxiv.Client()
     papers: list[ScoutedPaper] = []
-    for result in client.results(search):
-        arxiv_id = result.entry_id.split("/")[-1]
-        url = f"https://arxiv.org/abs/{arxiv_id}"
-        abstract = result.summary.replace("\n", " ")
-        author = result.authors[0].name if result.authors else None
-        source = Source(
-            type=SourceType.arxiv,
-            url=url,
-            author=author,
-            published_at=result.published or datetime.now(UTC),
-            raw_content_hash=_make_hash(abstract),
-        )
-        papers.append(
-            ScoutedPaper(
-                source=source,
-                title=result.title,
-                abstract=abstract,
-                arxiv_id=arxiv_id,
+    with _ARXIV_LOCK:
+        client = _get_arxiv_client()
+        for result in client.results(search):
+            arxiv_id = result.entry_id.split("/")[-1]
+            url = f"https://arxiv.org/abs/{arxiv_id}"
+            abstract = result.summary.replace("\n", " ")
+            author = result.authors[0].name if result.authors else None
+            source = Source(
+                type=SourceType.arxiv,
+                url=url,
+                author=author,
+                published_at=result.published or datetime.now(UTC),
+                raw_content_hash=_make_hash(abstract),
             )
-        )
-        if len(papers) >= max_results:
-            break
+            papers.append(
+                ScoutedPaper(
+                    source=source,
+                    title=result.title,
+                    abstract=abstract,
+                    arxiv_id=arxiv_id,
+                )
+            )
+            if len(papers) >= max_results:
+                break
     return papers
 
 

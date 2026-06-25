@@ -173,22 +173,66 @@ async def _handle_scout_arxiv(payload: dict[str, Any]) -> dict[str, Any]:
 # Phase 7a investigation -------------------------------------------------
 
 
-def _query_from_hypothesis(hypothesis: str) -> str:
-    """Reduce a Curator hypothesis to arxiv keyword terms.
+# Query words that carry no search signal for arxiv. Two groups: generic English
+# stop/question words, and the boilerplate verbs/nouns that LLM-drafted discovery
+# hypotheses are riddled with ("describe its architecture, search for papers…").
+_QUERY_STOPWORDS = frozenset(
+    "a an the of to in on for and or but with without within into onto from by as at "  # noqa: SIM905
 
-    The Curator phrases hypotheses for humans, e.g. ``Is the belief
-    '<statement>' (topic: <topic>) still supported by recent evidence?``.
-    Searching arxiv with that whole sentence buries the signal under
-    stop-words ("is the belief still supported by recent evidence"), so pull
-    out the belief statement and topic and use those as the free-text query.
-    Falls back to the raw hypothesis if the expected structure isn't present.
-    """
+    "is are was were be been being do does did has have had can could should would will "
+    "what which who whom whose where when why how that this these those it its their there "
+    "about across over under between among versus vs compared compare comparison relative "
+    "still supported evidence recent latest specific documented established standard "
+    "search find describe define definition discuss discussion paper papers arxiv github "
+    "repository repositories hackernews news result results benchmark benchmarks evaluation "
+    "evaluations methodology methodologies performance performances capability capabilities "
+    "limitation limitations application applications system systems approach approaches "
+    "model models task tasks used use using e.g i.e etc such other others belief topic".split()
+)
+
+
+def _keywords(text: str, limit: int = 6) -> str:
+    """Reduce free text to a short arxiv keyword query.
+
+    arxiv's ``all:`` field ANDs the terms and rejects long natural-language
+    questions (HTTP 500/503), so an LLM hypothesis like *"What are the specific
+    capability improvements and limitations of GPT-4 compared to GPT-3.5 on
+    benchmarks (MMLU, GSM8K, etc.)?"* must be distilled to its content words.
+
+    Strips punctuation, drops stop/boilerplate words and 1-char tokens, dedupes,
+    and keeps the most distinctive terms first — entity-like tokens (containing an
+    uppercase letter or a digit, e.g. GPT-4, MMLU, GSM8K) rank ahead of plain
+    words — capped at ``limit`` so the AND query still matches papers."""
+    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#-]*", text)
+    seen: set[str] = set()
+    distinctive: list[str] = []
+    plain: list[str] = []
+    for tok in tokens:
+        low = tok.lower()
+        if len(tok) < 2 or low in _QUERY_STOPWORDS or low in seen:
+            continue
+        seen.add(low)
+        if any(c.isupper() for c in tok) or any(c.isdigit() for c in tok):
+            distinctive.append(tok)
+        else:
+            plain.append(tok)
+    return " ".join((distinctive + plain)[:limit])
+
+
+def _query_from_hypothesis(hypothesis: str) -> str:
+    """Reduce an investigation hypothesis to arxiv keyword terms.
+
+    Curator hypotheses follow ``… '<statement>' (topic: <topic>) …``; pull those
+    out when present. Discovery hypotheses are free-form LLM questions with no such
+    structure — for those (and as a final pass over the curator parts) run the text
+    through :func:`_keywords` so a whole sentence never reaches arxiv verbatim
+    (which 500/503s). Always returns a short keyword query, never a raw question."""
     statement_match = re.search(r"'([^']+)'", hypothesis)
     topic_match = re.search(r"\(topic:\s*([^)]+)\)", hypothesis)
     statement = statement_match.group(1).strip() if statement_match else ""
     topic = topic_match.group(1).strip() if topic_match else ""
     terms = " ".join(t for t in (topic, statement) if t)
-    return terms or hypothesis
+    return _keywords(terms or hypothesis)
 
 
 def _fetch_papers_by_query(query: str, max_results: int) -> list[ScoutedPaper]:

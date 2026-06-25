@@ -1535,6 +1535,91 @@ def consolidate_beliefs_cmd(
         )
 
 
+@cli.command("recompute-confidence")
+@click.option(
+    "--field", default="ai-robotics", show_default=True,
+    help="Field slug to scope to (never crosses fields).",
+)
+@click.option(
+    "--apply", "apply_changes", is_flag=True,
+    help="Write the recomputed confidences (default: dry-run — compute + report).",
+)
+def recompute_confidence_cmd(field: str, apply_changes: bool) -> None:
+    """Recompute every held belief's confidence from current evidence (one-time backfill).
+
+    A belief keeps its stored confidence until something revises it, so after an
+    evidence-signal/weight change the existing corpus stays on the old formula.
+    This recomputes all held beliefs in one pass via the same evidence signals the
+    controller uses. Strictly append-only: each changed belief gets a revision row.
+    Dry-run by default — pass --apply to write. Idempotent.
+    """
+    from mesh_agents.confidence import (
+        BeliefSignals,
+        ConfidenceWeights,
+        compute_confidence,
+    )
+    from mesh_db.beliefs import get_belief_signals
+    from mesh_db.effects import apply_effects
+    from mesh_db.fields import get_field_by_slug
+    from mesh_models.effect import ReviseBeliefEffect
+
+    conn = get_connection()  # writer
+    init_pg()
+    try:
+        fld = get_field_by_slug(conn, field)
+        field_id = fld.id if fld is not None else field
+        weights = ConfidenceWeights.from_env()
+
+        def confidence_fn(c: Any, belief_id: str) -> float:
+            return compute_confidence(
+                BeliefSignals.from_row(get_belief_signals(c, belief_id)), weights
+            )
+
+        held: list[Belief] = []
+        offset = 0
+        while True:
+            batch = list_beliefs(
+                conn, currently_held=True, field_id=field_id, limit=500, offset=offset
+            )
+            if not batch:
+                break
+            held.extend(batch)
+            offset += len(batch)
+            if len(batch) < 500:
+                break
+
+        effects: list[Any] = []
+        changed: list[tuple[Belief, float]] = []
+        for b in held:
+            new_c = confidence_fn(conn, b.id)
+            if abs(new_c - b.confidence) > 0.005:
+                changed.append((b, new_c))
+                effects.append(
+                    ReviseBeliefEffect(
+                        belief_id=b.id,
+                        new_statement=b.statement,
+                        new_confidence=new_c,
+                        revised_by_agent="confidence-backfill",
+                        rationale="Recompute confidence from current evidence signals.",
+                        recompute_confidence=True,
+                    )
+                )
+
+        mode = "APPLY" if apply_changes else "dry-run"
+        console.print(
+            f"[cyan]{mode}[/cyan] field={field}  held={len(held)}  would change={len(changed)}"
+        )
+        for b, nc in changed[:12]:
+            console.print(f"  {b.confidence:.3f} → {nc:.3f}  {b.statement[:68]}")
+        if not apply_changes:
+            console.print("[yellow]Dry run — re-run with --apply to write.[/yellow]")
+            return
+        report = apply_effects(conn, effects, confidence_fn=confidence_fn)
+        console.print(f"[green]Applied: {report.beliefs_revised} beliefs revised.[/green]")
+    finally:
+        conn.close()
+
+
 @cli.group("beliefs")
 def beliefs() -> None:
     """Phase 19 belief-consolidation inspection."""

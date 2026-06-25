@@ -408,6 +408,16 @@ def discover_gap_limit() -> int:
     return int(os.environ.get("MESH_DISCOVER_GAP_LIMIT", "20"))
 
 
+def discover_max_open() -> int:
+    """Cap on open + in-progress investigations before ``investigate-gap`` stops
+    opening new ones. Bounds the discovery backlog — and the rate-limited arxiv
+    fetch load that ``dispatch-investigation`` runs for each open investigation —
+    so discovery pauses opening new gaps until existing ones resolve, instead of
+    piling up hundreds (a 21h run opened 869). Resumes automatically as the
+    backlog drains."""
+    return int(os.environ.get("MESH_DISCOVER_MAX_OPEN", "25"))
+
+
 def open_investigations(conn: Any, *, field_id: str = DEFAULT_FIELD_ID) -> list[Investigation]:
     """The open + in-progress investigations for a field (the dedup baseline)."""
     return list_investigations(

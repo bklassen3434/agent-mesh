@@ -29,19 +29,34 @@ class TestQueryFromHypothesis:
     """investigate_arxiv must search on keyword terms, not the Curator's
     natural-language question (regression guard for the question-as-query bug)."""
 
-    def test_extracts_statement_and_topic(self) -> None:
+    def test_extracts_statement_and_topic_as_keywords(self) -> None:
         hypothesis = (
             "Is the belief 'GR00T N1 achieves 78% on RoboArena' "
             "(topic: robot policy) still supported by recent evidence?"
         )
         query = _query_from_hypothesis(hypothesis)
-        assert "GR00T N1 achieves 78% on RoboArena" in query
-        assert "robot policy" in query
-        # The English scaffolding must be gone.
+        # Entity/benchmark terms survive; English scaffolding + punctuation gone.
+        assert "RoboArena" in query
+        assert "GR00T" in query
         assert "still supported" not in query
         assert "Is the belief" not in query
+        assert "'" not in query and "?" not in query
+        assert len(query.split()) <= 6
 
-    def test_falls_back_to_raw_when_unstructured(self) -> None:
+    def test_reduces_natural_language_question(self) -> None:
+        # Discovery hypotheses are free-form questions; arxiv 500/503s on these
+        # verbatim. They must become a short keyword query.
+        q = _query_from_hypothesis(
+            "What are the specific capability improvements and limitations of "
+            "GPT-4 compared to GPT-3.5 on benchmarks (MMLU, GSM8K, HumanEval, etc.)?"
+        )
+        assert "GPT-4" in q and "MMLU" in q
+        assert "?" not in q and "(" not in q and "/" not in q
+        assert len(q.split()) <= 6
+        for stop in ("what", "are", "the", "compared", "benchmarks"):
+            assert stop not in q.lower().split()
+
+    def test_falls_back_to_keywords_when_unstructured(self) -> None:
         assert _query_from_hypothesis("plain keywords") == "plain keywords"
 
 

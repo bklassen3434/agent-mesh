@@ -38,7 +38,9 @@ from mesh_agents.discovery import (
     GapKind,
     GapSignal,
     build_discovery_investigations,
+    discover_max_open,
     draft_hypotheses,
+    open_investigations,
 )
 from mesh_agents.profiles import load_profile
 from mesh_agents.skill import register_skill
@@ -152,6 +154,11 @@ class InvestigateGapSkill:
     ) -> list[OpenInvestigationEffect]:
         gap = _gap_from_tension(tension)
         if gap is None:
+            return []
+        # Throttle: don't keep opening investigations once the open backlog is
+        # full — each one drives rate-limited arxiv fetches downstream. Pauses
+        # discovery until existing investigations resolve, then resumes.
+        if len(open_investigations(conn, field_id=tension.field_id)) >= discover_max_open():
             return []
         llm = self._make_llm()
         investigation = await asyncio.to_thread(

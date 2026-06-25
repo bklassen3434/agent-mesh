@@ -29,6 +29,9 @@ Rules:
    - based_on: {"parent": "<entity name it builds on>"}
    - reproduces / critiques / speculates: leave all object keys empty — capture
      the detail in raw_excerpt instead.
+   Only emit a predicate when you can fill its key(s): a developed_by needs a named
+   lab, an achieves_score needs a number AND benchmark, a based_on needs the parent.
+   If the key isn't in the text, drop that claim rather than emitting an empty object.
 4. subject_name should be the canonical entity name as it appears in the source text (e.g. "GPT-4", "RoboAgent", "MMLU").
 5. If no claims fit these predicates, return an empty claims list.
 6. Do NOT invent claims not in the source text.

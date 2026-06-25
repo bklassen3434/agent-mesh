@@ -189,10 +189,18 @@ def unsynthesized_claim_counts_by_entity(
     field_id: str = DEFAULT_FIELD_ID,
     limit: int = 20,
 ) -> list[tuple[str, int]]:
-    """Entities that have active claims no held belief reflects yet (agentic-
-    migration tension: ``unsynthesized_claims``). Returns ``(subject_entity_id,
-    count)`` for active claims whose id appears in no held belief's
-    supporting/contradicting arrays, busiest entity first. Field-scoped."""
+    """Entities with active, synthesizable claims that nothing reflects yet
+    (agentic-migration tension: ``unsynthesized_claims``). Returns
+    ``(subject_entity_id, count)``, busiest entity first. Field-scoped.
+
+    A claim counts as *handled* once its id is in a held belief's
+    supporting/contradicting arrays **or** in a relationship's evidence — the
+    latter matters because edge-forming claims (outperforms / developed_by /
+    based_on / evaluated_on) become graph edges, never belief members, so without
+    it they would re-trigger this tension forever (synthesize-belief re-runs and
+    returns no effects — ~45% of its dispatches were this churn). Claim types that
+    synthesize into nothing (critique / reproduction / speculative) are excluded
+    for the same reason — they feed the skeptic/contradiction path, not synthesis."""
     rows = conn.execute(
         """
         WITH used AS (
@@ -201,17 +209,21 @@ def unsynthesized_claim_counts_by_entity(
             UNION
             SELECT unnest(contradicting_claim_ids) AS claim_id
             FROM beliefs WHERE is_currently_held = TRUE AND field_id = %s
+            UNION
+            SELECT unnest(evidence_claim_ids) AS claim_id
+            FROM relationships WHERE field_id = %s
         )
         SELECT c.subject_entity_id, COUNT(*) AS cnt
         FROM claims c
         WHERE c.field_id = %s
           AND c.status = 'active'
+          AND c.claim_type NOT IN ('critique', 'reproduction', 'speculative')
           AND c.id NOT IN (SELECT claim_id FROM used)
         GROUP BY c.subject_entity_id
         ORDER BY cnt DESC
         LIMIT %s
         """,
-        [field_id, field_id, field_id, max(int(limit), 0)],
+        [field_id, field_id, field_id, field_id, max(int(limit), 0)],
     ).fetchall()
     return [(str(r[0]), int(r[1])) for r in rows]
 

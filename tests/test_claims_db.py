@@ -164,3 +164,40 @@ def test_fk_constraint_missing_entity(tmp_db: MeshConnection) -> None:
     )
     with pytest.raises(psycopg.errors.Error):
         create_claim(tmp_db, c)
+
+
+def test_unsynthesized_excludes_edge_and_nonsynthesizable_claims(
+    tmp_db: MeshConnection,
+) -> None:
+    """unsynthesized_claim_counts_by_entity must skip claims already turned into a
+    relationship edge, and claim types that never synthesize (critique /
+    reproduction / speculative) — so edge-only / non-synthesizable entities stop
+    re-triggering the synthesize-belief tension forever."""
+    from mesh_db.claims import unsynthesized_claim_counts_by_entity
+    from mesh_db.relationships import create_relationship
+    from mesh_models.relationship import Relationship
+
+    eid, sid = _setup(tmp_db)
+    e2 = Entity(canonical_name="GPT-3.5", type=EntityType.model)
+    create_entity(tmp_db, e2)
+
+    # belief-forming → SHOULD count as unsynthesized
+    create_claim(
+        tmp_db,
+        _make_claim(eid, sid, predicate="achieves_score",
+                    object={"score": 90.0, "benchmark": "MMLU"}),
+    )
+    # non-synthesizable type → excluded by claim_type
+    create_claim(tmp_db, _make_claim(eid, sid, predicate="critiques", object={}))
+    # edge-forming claim already backing a relationship → excluded via evidence
+    cmp_ = _make_claim(eid, sid, predicate="outperforms",
+                       object={"compared_to": "GPT-3.5", "on": "MMLU"})
+    create_claim(tmp_db, cmp_)
+    create_relationship(
+        tmp_db,
+        Relationship(from_entity_id=eid, to_entity_id=e2.id, type="outperforms",
+                     evidence_claim_ids=[cmp_.id]),
+    )
+
+    counts = dict(unsynthesized_claim_counts_by_entity(tmp_db))
+    assert counts.get(eid) == 1  # only the score claim remains unsynthesized

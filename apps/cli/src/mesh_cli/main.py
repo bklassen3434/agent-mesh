@@ -1575,6 +1575,9 @@ def recompute_confidence_cmd(field: str, apply_changes: bool) -> None:
                 BeliefSignals.from_row(get_belief_signals(c, belief_id)), weights
             )
 
+        # Page until a batch comes back empty. list_beliefs caps `limit` at
+        # MAX_LIMIT internally, so advance the offset by the ACTUAL batch size and
+        # don't early-break on a short page (else we stop after MAX_LIMIT rows).
         held: list[Belief] = []
         offset = 0
         while True:
@@ -1585,8 +1588,6 @@ def recompute_confidence_cmd(field: str, apply_changes: bool) -> None:
                 break
             held.extend(batch)
             offset += len(batch)
-            if len(batch) < 500:
-                break
 
         effects: list[Any] = []
         changed: list[tuple[Belief, float]] = []

@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from mesh_db.fields import create_field, get_field_by_slug, list_fields, update_field
 from mesh_models.field import Field, FieldProfile
 from pydantic import BaseModel
 from pydantic import Field as PField
 
 from mesh_api.deps import ConnDep, WriterConnDep
+from mesh_api.security import require_internal_admin
 
 router = APIRouter(prefix="/api/v1/fields", tags=["fields"])
 
@@ -84,6 +85,7 @@ def get_field_endpoint(slug: str, conn: ConnDep) -> Field:
         "into the immutable id/slug. A field starts with no connectors enabled — "
         "enable sources for it via the connectors endpoints."
     ),
+    dependencies=[Depends(require_internal_admin)],
 )
 def create_field_endpoint(body: FieldCreate, conn: WriterConnDep) -> Field:
     name = body.name.strip()
@@ -124,6 +126,7 @@ def create_field_endpoint(body: FieldCreate, conn: WriterConnDep) -> Field:
         "Patch a field's name, profile fields, and/or active flag. slug/id are "
         "immutable. Profile edits take effect on the next pipeline run."
     ),
+    dependencies=[Depends(require_internal_admin)],
 )
 def patch_field_endpoint(slug: str, body: FieldPatch, conn: WriterConnDep) -> Field:
     existing = get_field_by_slug(conn, slug)

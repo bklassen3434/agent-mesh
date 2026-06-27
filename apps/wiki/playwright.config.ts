@@ -50,6 +50,8 @@ export default defineConfig({
         PORT: WIKI_PORT,
         NEXT_PUBLIC_API_URL: MOCK_API_URL,
         INTERNAL_API_URL: MOCK_API_URL,
+        // Exercise the admin surface (knowledge/agents/pipelines pages) in E2E.
+        MESH_ADMIN_MODE: 'true',
       },
     },
   ],

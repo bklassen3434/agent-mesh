@@ -435,6 +435,19 @@ app.post('/api/v1/ask', (req: Request, res: Response) => {
   });
 });
 
+// Topics (fields) — the global topic dropdown lists these.
+app.get('/api/v1/fields', (_req, res) =>
+  res.json([
+    { id: 'ai-robotics', slug: 'ai-robotics', name: 'AI & Robotics', is_active: true },
+    { id: 'hockey', slug: 'hockey', name: 'Hockey', is_active: true },
+  ]),
+);
+
+// Beta chatbot quota — admins are unlimited; betas see remaining here.
+app.get('/api/v1/ask/quota', (_req, res) =>
+  res.json({ limit: 3, used: 0, remaining: 3 }),
+);
+
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[mock-api] listening on http://localhost:${PORT}`);

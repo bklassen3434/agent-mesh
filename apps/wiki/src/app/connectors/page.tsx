@@ -1,5 +1,6 @@
 import { ConnectorsPanel } from '@/components/connectors-panel';
 import { api, type Connector, type FieldConnector } from '@/lib/api';
+import { getField, getRole } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,11 @@ function pick(sp: SP, key: string): string | undefined {
 
 export default async function ConnectorsPage(props: { searchParams: Promise<SP> }) {
   const sp = await props.searchParams;
-  const field = pick(sp, 'field') ?? 'ai-robotics';
+  // The global topic dropdown (field cookie) drives the scope; an explicit
+  // ?field= still wins for deep links.
+  const [role, cookieField] = await Promise.all([getRole(), getField()]);
+  const field = pick(sp, 'field') ?? cookieField;
+  const readOnly = role !== 'admin';
 
   // Each source degrades on its own: a missing catalog or per-field row must not
   // blank the page.
@@ -26,12 +31,26 @@ export default async function ConnectorsPage(props: { searchParams: Promise<SP> 
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Connectors</h1>
         <p className="text-sm text-muted-foreground">
-          Choose which sources the <span className="font-medium">{field}</span> field
-          ingests from, and configure each one. Changes apply on the next pipeline
-          run. Config is validated against each connector&apos;s schema on save.
+          {readOnly ? (
+            <>
+              The sources the <span className="font-medium">{field}</span> topic ingests
+              from. Sign in as admin to change them.
+            </>
+          ) : (
+            <>
+              Choose which sources the <span className="font-medium">{field}</span> topic
+              ingests from, and configure each one. Changes apply on the next pipeline run.
+              Config is validated against each connector&apos;s schema on save.
+            </>
+          )}
         </p>
       </header>
-      <ConnectorsPanel field={field} catalog={catalog} initialEnablement={enablement} />
+      <ConnectorsPanel
+        field={field}
+        catalog={catalog}
+        initialEnablement={enablement}
+        readOnly={readOnly}
+      />
     </main>
   );
 }

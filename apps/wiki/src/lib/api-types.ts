@@ -321,6 +321,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ask/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Remaining daily chatbot quota for a beta browser
+         * @description How many grounded questions the identified beta browser has left today. Admins are unlimited and need not call this. Returns the full limit when no beta id is supplied.
+         */
+        get: operations["ask_quota_api_v1_ask_quota_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -1498,6 +1518,18 @@ export interface components {
             /** Errors */
             errors?: components["schemas"]["PipelineError"][];
         };
+        /**
+         * QuotaStatus
+         * @description A beta browser's remaining daily chatbot questions.
+         */
+        QuotaStatus: {
+            /** Limit */
+            limit: number;
+            /** Used */
+            used: number;
+            /** Remaining */
+            remaining: number;
+        };
         /** Relationship */
         Relationship: {
             /** Id */
@@ -2134,7 +2166,11 @@ export interface operations {
                 /** @description Field slug to scope the answer to */
                 field?: string;
             };
-            header?: never;
+            header?: {
+                "x-mesh-role"?: string | null;
+                "x-mesh-beta-id"?: string | null;
+                "x-mesh-internal-token"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2151,6 +2187,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Answer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_quota_api_v1_ask_quota_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-mesh-beta-id"?: string | null;
+                "x-mesh-internal-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaStatus"];
                 };
             };
             /** @description Validation Error */
@@ -2284,7 +2352,10 @@ export interface operations {
     create_field_endpoint_api_v1_fields_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-mesh-internal-token"?: string | null;
+                "x-mesh-role"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2348,7 +2419,10 @@ export interface operations {
     patch_field_endpoint_api_v1_fields__slug__patch: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-mesh-internal-token"?: string | null;
+                "x-mesh-role"?: string | null;
+            };
             path: {
                 slug: string;
             };
@@ -2434,7 +2508,10 @@ export interface operations {
     put_field_connector_api_v1_fields__slug__connectors__connector_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-mesh-internal-token"?: string | null;
+                "x-mesh-role"?: string | null;
+            };
             path: {
                 slug: string;
                 connector_id: string;

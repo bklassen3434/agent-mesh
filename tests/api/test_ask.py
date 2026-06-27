@@ -79,3 +79,73 @@ def test_ask_timeout_is_504(empty_client: TestClient) -> None:
     with patch("mesh_api.routers.ask.MeshA2AClient", return_value=fake):
         resp = empty_client.post("/api/v1/ask", json={"question": "anything?"})
     assert resp.status_code == 504
+
+
+# --- Beta quota (user-control phase) ---------------------------------------
+
+
+def test_beta_quota_blocks_after_limit(
+    empty_client: TestClient, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("MESH_BETA_DAILY_QUERY_LIMIT", "2")
+    fake = _fake_client({"research_qa": "http://fake-qa"}, _fake_answer())
+    headers = {"X-Mesh-Beta-Id": "beta-abc"}
+    with patch("mesh_api.routers.ask.MeshA2AClient", return_value=fake):
+        # First two questions succeed and consume the quota...
+        for _ in range(2):
+            resp = empty_client.post(
+                "/api/v1/ask", json={"question": "q?"}, headers=headers
+            )
+            assert resp.status_code == 200
+        # ...the third is locked out for the day.
+        resp = empty_client.post(
+            "/api/v1/ask", json={"question": "q?"}, headers=headers
+        )
+    assert resp.status_code == 429
+    assert "limit" in resp.json()["detail"].lower()
+
+
+def test_admin_role_bypasses_quota(
+    empty_client: TestClient, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("MESH_BETA_DAILY_QUERY_LIMIT", "1")
+    fake = _fake_client({"research_qa": "http://fake-qa"}, _fake_answer())
+    headers = {"X-Mesh-Beta-Id": "beta-admin", "X-Mesh-Role": "admin"}
+    with patch("mesh_api.routers.ask.MeshA2AClient", return_value=fake):
+        for _ in range(3):
+            resp = empty_client.post(
+                "/api/v1/ask", json={"question": "q?"}, headers=headers
+            )
+            assert resp.status_code == 200
+
+
+def test_unavailable_agent_does_not_consume_quota(
+    empty_client: TestClient, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("MESH_BETA_DAILY_QUERY_LIMIT", "1")
+    headers = {"X-Mesh-Beta-Id": "beta-unavail"}
+    # Agent down → uncovered answer, quota untouched...
+    down = _fake_client({}, _fake_answer())
+    with patch("mesh_api.routers.ask.MeshA2AClient", return_value=down):
+        resp = empty_client.post("/api/v1/ask", json={"question": "q?"}, headers=headers)
+        assert resp.status_code == 200
+    # ...so the one real question afterward still goes through.
+    up = _fake_client({"research_qa": "http://fake-qa"}, _fake_answer())
+    with patch("mesh_api.routers.ask.MeshA2AClient", return_value=up):
+        resp = empty_client.post("/api/v1/ask", json={"question": "q?"}, headers=headers)
+    assert resp.status_code == 200
+
+
+def test_quota_endpoint_reports_remaining(
+    empty_client: TestClient, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("MESH_BETA_DAILY_QUERY_LIMIT", "3")
+    headers = {"X-Mesh-Beta-Id": "beta-q"}
+    resp = empty_client.get("/api/v1/ask/quota", headers=headers)
+    assert resp.json() == {"limit": 3, "used": 0, "remaining": 3}
+    # Consume one and re-check.
+    fake = _fake_client({"research_qa": "http://fake-qa"}, _fake_answer())
+    with patch("mesh_api.routers.ask.MeshA2AClient", return_value=fake):
+        empty_client.post("/api/v1/ask", json={"question": "q?"}, headers=headers)
+    resp = empty_client.get("/api/v1/ask/quota", headers=headers)
+    assert resp.json() == {"limit": 3, "used": 1, "remaining": 2}

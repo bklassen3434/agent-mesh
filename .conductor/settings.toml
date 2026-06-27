@@ -1,0 +1,21 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# Copy gitignored .env files into each new workspace so agents inherit API keys.
+file_include_globs = ".env*\n"
+
+[scripts]
+# Install the Python uv workspace + the wiki's npm deps, and keep the root
+# checkout current. `|| true` keeps setup from failing when the root branch
+# can't fast-forward.
+setup = "git -C \"$CONDUCTOR_ROOT_PATH\" fetch --prune origin && git -C \"$CONDUCTOR_ROOT_PATH\" pull --ff-only || true; uv sync && (cd apps/wiki && npm install)"
+
+# Bring up the full Docker Compose stack (API :8000, wiki :3000, Postgres, agents).
+run = "make up"
+
+# Fixed host ports + one shared Postgres mean only one workspace can run the
+# stack at a time.
+run_mode = "nonconcurrent"
+
+[environment_variables]
+# testcontainers errors on container port-mapping without this in this repo.
+TESTCONTAINERS_RYUK_DISABLED = "true"

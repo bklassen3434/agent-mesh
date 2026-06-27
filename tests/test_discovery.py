@@ -6,7 +6,7 @@ so no network/keys are needed.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mesh_agents.discovery import (
@@ -32,7 +32,11 @@ from mesh_models.field import AI_ROBOTICS_PROFILE
 from mesh_models.investigation import Investigation, InvestigationOrigin
 from mesh_models.source import Source, SourceType
 
-_NOW = datetime(2026, 6, 13, tzinfo=UTC)
+# Anchor the fixture to "recently" relative to the run, not a fixed calendar
+# date: rising-topic detection counts claims within a 14-day window of now, so a
+# hard-coded date silently ages out of that window and the test fails by the
+# calendar. One day ago keeps the fixture comfortably inside every window.
+_NOW = datetime.now(UTC) - timedelta(days=1)
 
 
 class _MockLLM:

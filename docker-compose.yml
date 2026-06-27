@@ -91,6 +91,10 @@ services:
       # Where to reach the ResearchQA agent for POST /api/v1/ask. Degrades to a
       # clean "unavailable" answer if it's down.
       MESH_ASK_AGENT_URLS: "http://research-qa:8016"
+      # User control: shared token gating privileged writes + /ask to the wiki
+      # only (unset = guard off); beta chatbot quota/day.
+      MESH_INTERNAL_TOKEN: ${MESH_INTERNAL_TOKEN:-}
+      MESH_BETA_DAILY_QUERY_LIMIT: ${MESH_BETA_DAILY_QUERY_LIMIT:-3}
     env_file:
       - .env
     ports:
@@ -117,6 +121,13 @@ services:
       # HOSTNAME is the Next.js standalone bind address; default 0.0.0.0 in the
       # Dockerfile. Override with MESH_BIND_INTERFACE for Tailscale-only access.
       HOSTNAME: ${MESH_BIND_INTERFACE:-0.0.0.0}
+      # User control: MESH_ADMIN_MODE grants admin on THIS instance (server-side
+      # flag, never client-supplied). Leave OFF on any publicly reachable
+      # instance — it is then beta-only with no path to admin. Set true only on a
+      # local / non-exposed instance. MESH_INTERNAL_TOKEN must match the api's so
+      # the wiki can proxy privileged writes.
+      MESH_ADMIN_MODE: ${MESH_ADMIN_MODE:-}
+      MESH_INTERNAL_TOKEN: ${MESH_INTERNAL_TOKEN:-}
     depends_on:
       api:
         condition: service_healthy

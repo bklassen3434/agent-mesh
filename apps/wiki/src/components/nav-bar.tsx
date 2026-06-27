@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, ChevronDown, LogOut, Menu, Plus } from 'lucide-react';
+import { Check, ChevronDown, Eye, LogOut, Menu, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTransition } from 'react';
@@ -19,7 +19,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import { FIELD_COOKIE, type Role } from '@/lib/auth';
+import { FIELD_COOKIE, PREVIEW_COOKIE, type Role } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 type Topic = { slug: string; name: string };
@@ -48,21 +48,28 @@ const ADMIN_LINKS = [
   { href: '/fields', label: 'Topics' },
 ];
 
+// --- cookie helpers (preview is not security-sensitive: it only downgrades) ---
+function setCookie(name: string, value: string, maxAge: number) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; samesite=lax`;
+}
+
 export function NavBar({
   statusHref,
-  role,
+  effectiveRole,
+  realRole,
+  isPreviewing,
   field,
   topics,
-  loginConfigured,
 }: {
   statusHref: string;
-  role: Role;
+  effectiveRole: Role;
+  realRole: Role;
+  isPreviewing: boolean;
   field: string;
   topics: Topic[];
-  loginConfigured: boolean;
 }) {
   const pathname = usePathname();
-  const isAdmin = role === 'admin';
+  const isAdmin = effectiveRole === 'admin';
   const links = isAdmin ? ADMIN_LINKS : BETA_LINKS;
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
@@ -74,46 +81,105 @@ export function NavBar({
     );
 
   return (
-    <nav className="border-b border-border bg-card">
-      <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
-        <Link href="/" className="font-semibold tracking-tight">
-          Agent Mesh
-        </Link>
+    <>
+      {isPreviewing && <PreviewBanner />}
+      <nav className="border-b border-border bg-card">
+        <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
+          <Link href="/" className="font-semibold tracking-tight">
+            Agent Mesh
+          </Link>
 
-        {/* desktop nav */}
-        <div className="hidden flex-1 items-center gap-5 text-sm md:flex">
-          {links.map((l) => (
-            <span key={l.href} className="contents">
-              <Link href={l.href} className={linkCls(isActive(l.href))}>
-                {l.label}
-              </Link>
-              {/* admins get the knowledge-base dropdown right after Daily Brief */}
-              {isAdmin && l.href === '/briefing' && (
-                <KnowledgeMenu active={knowledgeActive} linkCls={linkCls} />
-              )}
-            </span>
-          ))}
+          {/* desktop nav */}
+          <div className="hidden flex-1 items-center gap-5 text-sm md:flex">
+            {links.map((l) => (
+              <span key={l.href} className="contents">
+                <Link href={l.href} className={linkCls(isActive(l.href))}>
+                  {l.label}
+                </Link>
+                {/* admins get the knowledge-base dropdown right after Daily Brief */}
+                {isAdmin && l.href === '/briefing' && (
+                  <KnowledgeMenu active={knowledgeActive} linkCls={linkCls} />
+                )}
+              </span>
+            ))}
 
-          <div className="ml-auto flex items-center gap-3">
-            <TopicSwitcher field={field} topics={topics} isAdmin={isAdmin} />
-            <AuthControl isAdmin={isAdmin} loginConfigured={loginConfigured} />
+            <div className="ml-auto flex items-center gap-3">
+              <TopicSwitcher field={field} topics={topics} isAdmin={isAdmin} />
+              {/* Mode control only for a real admin who isn't already previewing. */}
+              {realRole === 'admin' && !isPreviewing && <ModeMenu />}
+            </div>
+          </div>
+
+          {/* mobile drawer */}
+          <div className="flex flex-1 justify-end md:hidden">
+            <MobileMenu
+              links={links}
+              isAdmin={isAdmin}
+              realRole={realRole}
+              isActive={isActive}
+              statusHref={statusHref}
+              field={field}
+              topics={topics}
+            />
           </div>
         </div>
+      </nav>
+    </>
+  );
+}
 
-        {/* mobile drawer */}
-        <div className="flex flex-1 justify-end md:hidden">
-          <MobileMenu
-            links={links}
-            isAdmin={isAdmin}
-            isActive={isActive}
-            statusHref={statusHref}
-            field={field}
-            topics={topics}
-            loginConfigured={loginConfigured}
-          />
-        </div>
+function PreviewBanner() {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const exit = () => {
+    setCookie(PREVIEW_COOKIE, '', 0);
+    startTransition(() => router.refresh());
+  };
+  return (
+    <div className="bg-amber-500/15 text-amber-900 dark:text-amber-200">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-1.5 text-xs">
+        <span className="flex items-center gap-1.5">
+          <Eye className="h-3.5 w-3.5" />
+          You&apos;re previewing what beta visitors see.
+        </span>
+        <button type="button" onClick={exit} className="font-semibold underline-offset-2 hover:underline">
+          Back to admin
+        </button>
       </div>
-    </nav>
+    </div>
+  );
+}
+
+function ModeMenu() {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const previewBeta = () => {
+    setCookie(PREVIEW_COOKIE, 'beta', 60 * 60 * 24);
+    startTransition(() => router.refresh());
+  };
+  const exitAdmin = async () => {
+    await fetch('/api/admin/lock', { method: 'POST' });
+    router.replace('/');
+    router.refresh();
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium outline-none hover:bg-accent">
+        Admin
+        <ChevronDown className="h-3.5 w-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={previewBeta}>
+          <Eye className="mr-2 h-3.5 w-3.5" />
+          View as beta
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={exitAdmin}>
+          <LogOut className="mr-2 h-3.5 w-3.5" />
+          Exit admin
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -147,9 +213,7 @@ function useSelectTopic() {
   const router = useRouter();
   const [, startTransition] = useTransition();
   return (slug: string) => {
-    document.cookie = `${FIELD_COOKIE}=${encodeURIComponent(slug)}; path=/; max-age=${
-      60 * 60 * 24 * 365
-    }; samesite=lax`;
+    setCookie(FIELD_COOKIE, slug, 60 * 60 * 24 * 365);
     startTransition(() => router.refresh());
   };
 }
@@ -200,57 +264,22 @@ function TopicSwitcher({
   );
 }
 
-function AuthControl({
-  isAdmin,
-  loginConfigured,
-}: {
-  isAdmin: boolean;
-  loginConfigured: boolean;
-}) {
-  const router = useRouter();
-  if (isAdmin) {
-    return (
-      <button
-        type="button"
-        onClick={async () => {
-          await fetch('/api/auth/logout', { method: 'POST' });
-          router.replace('/');
-          router.refresh();
-        }}
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <LogOut className="h-3.5 w-3.5" />
-        Log out
-      </button>
-    );
-  }
-  if (!loginConfigured) return null;
-  return (
-    <Link
-      href="/login"
-      className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-    >
-      Log in
-    </Link>
-  );
-}
-
 function MobileMenu({
   links,
   isAdmin,
+  realRole,
   isActive,
   statusHref,
   field,
   topics,
-  loginConfigured,
 }: {
   links: { href: string; label: string }[];
   isAdmin: boolean;
+  realRole: Role;
   isActive: (href: string) => boolean;
   statusHref: string;
   field: string;
   topics: Topic[];
-  loginConfigured: boolean;
 }) {
   const select = useSelectTopic();
   const router = useRouter();
@@ -309,23 +338,35 @@ function MobileMenu({
             </SheetClose>
           ))}
 
-          <div className="mt-3" />
-          {isAdmin ? (
-            <SheetClose asChild>
-              <button
-                type="button"
-                onClick={async () => {
-                  await fetch('/api/auth/logout', { method: 'POST' });
-                  router.replace('/');
-                  router.refresh();
-                }}
-                className="rounded px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent"
-              >
-                Log out
-              </button>
-            </SheetClose>
-          ) : (
-            loginConfigured && <DrawerLink href="/login" label="Log in" active={isActive('/login')} />
+          {realRole === 'admin' && (
+            <>
+              <div className="mt-3" />
+              <SheetClose asChild>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCookie(PREVIEW_COOKIE, isAdmin ? 'beta' : '', isAdmin ? 60 * 60 * 24 : 0);
+                    router.refresh();
+                  }}
+                  className="rounded px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent"
+                >
+                  {isAdmin ? 'View as beta' : 'Back to admin'}
+                </button>
+              </SheetClose>
+              <SheetClose asChild>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await fetch('/api/admin/lock', { method: 'POST' });
+                    router.replace('/');
+                    router.refresh();
+                  }}
+                  className="rounded px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent"
+                >
+                  Exit admin
+                </button>
+              </SheetClose>
+            </>
           )}
           <a
             href={statusHref}

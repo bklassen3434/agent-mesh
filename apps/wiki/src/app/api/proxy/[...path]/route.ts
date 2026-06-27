@@ -6,12 +6,17 @@
 // reaches the API.
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { ROLE_COOKIE, resolveRole } from '@/lib/auth';
+import { PREVIEW_COOKIE, ROLE_COOKIE, resolveView } from '@/lib/auth';
 import { internalApiBase, internalToken } from '@/lib/proxy';
 
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
-  const role = await resolveRole(req.cookies.get(ROLE_COOKIE)?.value);
-  if (role !== 'admin') {
+  // Effective role: a real admin who is previewing as beta is denied writes too,
+  // so the preview faithfully reflects what a beta can do.
+  const { effectiveRole } = await resolveView(
+    req.cookies.get(ROLE_COOKIE)?.value,
+    req.cookies.get(PREVIEW_COOKIE)?.value,
+  );
+  if (effectiveRole !== 'admin') {
     return NextResponse.json({ detail: 'Admin access required.' }, { status: 403 });
   }
 

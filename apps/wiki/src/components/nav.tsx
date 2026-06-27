@@ -1,6 +1,6 @@
 import { NavBar } from '@/components/nav-bar';
 import { api } from '@/lib/api';
-import { adminLoginConfigured, getField, getRole } from '@/lib/auth-server';
+import { getField, getView } from '@/lib/auth-server';
 
 // Status lives on the API service, not the wiki — link out so it visually
 // reads as an admin surface, not another wiki tab.
@@ -8,7 +8,7 @@ const statusHref =
   (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000') + '/status';
 
 export async function Nav() {
-  const [role, field] = await Promise.all([getRole(), getField()]);
+  const [view, field] = await Promise.all([getView(), getField()]);
 
   // Topics = fields. Both roles see the list (to switch); only admins create.
   let topics: { slug: string; name: string }[] = [];
@@ -22,10 +22,11 @@ export async function Nav() {
   return (
     <NavBar
       statusHref={statusHref}
-      role={role}
+      effectiveRole={view.effectiveRole}
+      realRole={view.realRole}
+      isPreviewing={view.isPreviewing}
       field={field}
       topics={topics}
-      loginConfigured={adminLoginConfigured()}
     />
   );
 }

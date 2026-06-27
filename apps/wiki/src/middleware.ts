@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { adminLoginConfigured, ROLE_COOKIE, verifyRoleCookie } from '@/lib/auth';
+import { adminAuthConfigured, PREVIEW_COOKIE, ROLE_COOKIE, resolveView } from '@/lib/auth';
 
-// Pages only an admin may see. Beta visitors get the chat, graph, and
-// (view-only) connectors; everything that exposes the inner workings — the
-// knowledge base, agent observability, pipelines, and topic management — is
-// gated here and redirects to /login.
+// Pages only an admin may see. Beta visitors (and admins previewing as beta) get
+// the chat, graph, and (view-only) connectors; everything that exposes the inner
+// workings — the knowledge base, agent observability, pipelines, and topic
+// management — is gated here and silently redirects home (no hint admin exists).
 const ADMIN_PREFIXES = [
   '/knowledge',
   '/agents',
@@ -16,10 +16,8 @@ const ADMIN_PREFIXES = [
 ];
 
 export async function middleware(req: NextRequest) {
-  // Open mode: no admin password configured → the role gate is off and the wiki
-  // behaves like the pre-auth, fully-visible wiki. Set MESH_ADMIN_PASSWORD to
-  // turn beta gating on.
-  if (!adminLoginConfigured()) return NextResponse.next();
+  // Open mode: no admin token configured → the gate is off (local/dev).
+  if (!adminAuthConfigured()) return NextResponse.next();
 
   const { pathname } = req.nextUrl;
   const needsAdmin = ADMIN_PREFIXES.some(
@@ -27,12 +25,16 @@ export async function middleware(req: NextRequest) {
   );
   if (!needsAdmin) return NextResponse.next();
 
-  const role = await verifyRoleCookie(req.cookies.get(ROLE_COOKIE)?.value);
-  if (role === 'admin') return NextResponse.next();
+  // Gate on the *effective* role so previewing-as-beta faithfully loses access.
+  const { effectiveRole } = await resolveView(
+    req.cookies.get(ROLE_COOKIE)?.value,
+    req.cookies.get(PREVIEW_COOKIE)?.value,
+  );
+  if (effectiveRole === 'admin') return NextResponse.next();
 
   const url = req.nextUrl.clone();
-  url.pathname = '/login';
-  url.searchParams.set('next', pathname);
+  url.pathname = '/';
+  url.search = '';
   return NextResponse.redirect(url);
 }
 

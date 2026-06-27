@@ -202,13 +202,7 @@ function LockedNotice({ quota }: { quota: QuotaStatus | null }) {
   return (
     <div className="rounded-xl border border-border bg-muted/40 px-4 py-4 text-sm">
       <p className="font-medium">You&apos;ve used today&apos;s {quota?.limit ?? ''} questions.</p>
-      <p className="mt-1 text-muted-foreground">
-        The limit resets tomorrow.{' '}
-        <Link href="/login" className="font-medium text-foreground hover:underline">
-          Sign in as admin
-        </Link>{' '}
-        for unlimited questions.
-      </p>
+      <p className="mt-1 text-muted-foreground">The limit resets tomorrow.</p>
     </div>
   );
 }

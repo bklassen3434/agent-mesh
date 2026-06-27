@@ -29,8 +29,8 @@ ConnDep = Annotated[MeshConnection, Depends(get_conn)]
 def get_writer_conn() -> Iterator[MeshConnection]:
     """Per-request writer connection (mesh_writer role).
 
-    Used by the handful of operational-config write endpoints (schedules,
-    connector enablement, field onboarding). The API stays read-only for
+    Used by the handful of operational-config write endpoints (connector
+    enablement, field onboarding). The API stays read-only for
     knowledge content; only config rows are writable from the wiki. The caller
     owns the transaction (commit on success, rollback on validation failure).
     """

@@ -14,7 +14,6 @@ dependencies = [
     "mesh-llm",
     "mesh-agents",
     "mesh-a2a",
-    "mesh-scheduler",
     "mesh-pipeline",
 ]
 
@@ -24,7 +23,6 @@ mesh-db = { workspace = true }
 mesh-llm = { workspace = true }
 mesh-agents = { workspace = true }
 mesh-a2a = { workspace = true }
-mesh-scheduler = { workspace = true }
 mesh-pipeline = { workspace = true }
 
 [project.scripts]

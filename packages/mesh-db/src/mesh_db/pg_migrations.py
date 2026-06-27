@@ -105,39 +105,6 @@ def apply_pg_migrations(conn: psycopg.Connection) -> list[str]:
     return newly
 
 
-def remap_schedule_job_ids(conn: psycopg.Connection) -> None:
-    """Remap legacy job_ids in the ``public.schedules`` table (Phase 24).
-
-    The pipeline jobs were renamed (``pipeline`` → ``ingest``, ``skeptic_sweep``
-    → ``skeptic``, ``consolidation`` → ``memory_consolidation``). The schedules
-    table is created lazily by ``mesh_a2a.schedules`` — not by the numbered
-    migrations — so it may not exist yet (fresh installs / tests); guard on
-    ``to_regclass`` and skip when absent. Idempotent: the WHERE clauses only
-    match the legacy ids, and a colliding already-renamed row wins (the stale
-    legacy row is dropped) to respect the ``(job_id, field_id)`` primary key.
-    """
-    found = conn.execute("SELECT to_regclass('public.schedules')").fetchone()
-    if not found or found[0] is None:
-        return
-    remaps = (
-        ("pipeline", "ingest"),
-        ("skeptic_sweep", "skeptic"),
-        ("consolidation", "memory_consolidation"),
-        # The agentic market became the deterministic controller (auction → rules).
-        ("market", "controller"),
-    )
-    with conn.transaction():
-        for old, new in remaps:
-            conn.execute(
-                "UPDATE public.schedules s SET job_id = %s "
-                "WHERE s.job_id = %s AND NOT EXISTS ("
-                "  SELECT 1 FROM public.schedules t "
-                "  WHERE t.job_id = %s AND t.field_id = s.field_id)",
-                (new, old, new),
-            )
-            conn.execute("DELETE FROM public.schedules WHERE job_id = %s", (old,))
-
-
 def init_pg(url: str | None = None) -> list[str]:
     """Stand up the knowledge schema on a clean (or existing) Postgres.
 
@@ -156,7 +123,6 @@ def init_pg(url: str | None = None) -> list[str]:
         # migrations only create empty tables). Idempotent upserts.
         seed_default_field(conn)
         seed_connectors(conn)
-        remap_schedule_job_ids(conn)
         return applied
 
 

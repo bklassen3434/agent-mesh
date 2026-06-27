@@ -12,7 +12,7 @@ export class NavPage {
   readonly dailyBrief: Locator;
   readonly knowledgeTrigger: Locator;
   readonly graph: Locator;
-  readonly pipelines: Locator;
+  readonly connectors: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -21,7 +21,7 @@ export class NavPage {
     this.dailyBrief = page.getByRole('link', { name: 'Daily Brief' });
     this.knowledgeTrigger = page.getByRole('button', { name: 'Knowledge' });
     this.graph = page.getByRole('link', { name: 'Graph', exact: true });
-    this.pipelines = page.getByRole('link', { name: 'Pipelines', exact: true });
+    this.connectors = page.getByRole('link', { name: 'Connectors', exact: true });
   }
 
   async goto(path = '/knowledge/beliefs') {

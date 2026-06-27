@@ -20,8 +20,6 @@ from mesh_api.routers import (
     graph,
     health,
     pipeline_runs,
-    pipelines,
-    schedules,
     skeptic,
     sources,
     stats,
@@ -44,23 +42,8 @@ def _ensure_schema() -> None:
         init_pg()
 
 
-def _ensure_schedules() -> None:
-    """Create the Postgres schedules table at startup when configured.
-
-    Best-effort: a missing/unreachable Postgres (local/in-memory runs) must
-    not block API startup. The schedule endpoints re-ensure idempotently.
-    """
-    try:
-        from mesh_a2a.schedules import ensure_schedules_table
-
-        ensure_schedules_table()
-    except Exception:
-        pass
-
-
 def create_app() -> FastAPI:
     _ensure_schema()
-    _ensure_schedules()
 
     app = FastAPI(
         title="Agent Mesh Read API",
@@ -77,10 +60,9 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[o.strip() for o in allowed if o.strip()],
         allow_credentials=False,
-        # Phase 9 adds the only writes in the API: the Pipelines page PATCHes
-        # schedules and POSTs manual triggers from the browser, so the wiki
-        # origin needs more than GET. Phase 18 adds the Connectors page, which
-        # PUTs per-field connector enablement.
+        # The wiki issues a few non-GET writes from the browser: the Ask page
+        # POSTs questions, and the Fields/Connectors pages PATCH/PUT per-field
+        # config, so the wiki origin needs more than GET.
         allow_methods=["GET", "POST", "PATCH", "PUT"],
         allow_headers=["*"],
     )
@@ -99,8 +81,6 @@ def create_app() -> FastAPI:
     app.include_router(graph.router)
     app.include_router(fields.router)
     app.include_router(connectors.router)
-    app.include_router(schedules.router)
-    app.include_router(pipelines.router)
     app.include_router(agents.router)
     return app
 

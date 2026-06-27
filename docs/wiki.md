@@ -103,7 +103,7 @@ the system's primary UI without abandoning the API-in-front-of-Postgres model.
 
 Next.js 15 App Router, mostly **server components** (they fetch via
 `INTERNAL_API_URL` and render typed data). Interactive bits — the nav
-dropdown/drawer, the Pipelines schedule controls, the Ask chat, the graph — are
+dropdown/drawer, the Ask chat, the graph — are
 **client components** built on Radix-based **shadcn primitives** in
 `apps/wiki/src/components/ui/` (`button`, `card`, `table`, `badge`,
 `dropdown-menu`, `sheet`, `select`, `slider`, `switch`). Types still live in
@@ -115,7 +115,7 @@ dropdown/drawer, the Pipelines schedule controls, the Ask chat, the graph — ar
 The nav is now:
 
 ```
-Agent Mesh   Daily Brief · Ask · Knowledge ▾ · Graph · Agents · Pipelines      mesh status →
+Agent Mesh   Daily Brief · Ask · Knowledge ▾ · Graph · Agents · Fields · Connectors      mesh status →
 ```
 
 `Knowledge ▾` is a dropdown over **Beliefs · Entities · Claims · Sources**,
@@ -134,7 +134,6 @@ redirect to `/knowledge/*` via `next.config.js`, so old links keep working.
 | `/knowledge/beliefs` `/entities` `/claims` `/sources` | 3 | The original knowledge tables + detail/timeline views |
 | `/graph` | 9 | Force-directed Cytoscape view, fed by the pre-aggregated `/api/v1/graph/data` endpoint (top-200 nodes by belief count) |
 | `/agents` | 23 | Agent observability — agent roster, the coordinator-star interaction graph, and per-agent drill-down (current memory + recent invocations → one invocation's inputs/outputs/context + Langfuse deep-link) |
-| `/pipelines` | 9 | Schedule control — view/edit schedule config and manually trigger runs |
 | `/skeptic` | — | Skeptic sweep view |
 
 ### Reads are field-scoped
@@ -149,22 +148,17 @@ The Phase 3 invariant — Next.js never holds write-capable DB credentials —
 **still holds**. The knowledge store remains read-only from the wiki: the API
 serves it as the `mesh_reader` role.
 
-The one nuance: Phase 9 added a small set of **non-knowledge** writes for the
-Pipelines page. `GET/PATCH /api/v1/schedules` edits the `schedules` config
-table, and `POST /api/v1/pipelines/{job_id}/trigger` fires a manual run. These
-do not touch the knowledge store — schedule config lives in `public`, and the
-trigger is **proxied over HTTP to the scheduler** (`SCHEDULER_URL`), which is
-the thing that actually shells out to a pipeline. So the wiki controls
-scheduling and triggers runs, but knowledge still flows only through the
-coordinator's `mesh_writer` role.
+The one nuance: a small set of **non-knowledge** writes — the Ask `POST` and the
+Fields/Connectors `PATCH`/`PUT` for per-field operational config. These do not
+touch the knowledge store; knowledge still flows only through the controller's
+`mesh_writer` role.
 
 ## Original Phase 3 boundary (historical)
 
 > The following were the locked Phase-3-only exclusions. Much of this has since
 > been built (vector search underpins entity/belief resolution and `/ask`;
-> schedule write paths and manual triggers ship in Phase 9; the graph view in
-> Phase 9; agent observability in Phase 23). Kept here as a record of the
-> original scope decision.
+> the graph view in Phase 9; agent observability in Phase 23). Kept here as a
+> record of the original scope decision.
 
 Auth, write paths, full-text/vector search, SSE/live updates, charts beyond
 the revision timeline, markdown rendering of excerpts, dark-mode toggle,

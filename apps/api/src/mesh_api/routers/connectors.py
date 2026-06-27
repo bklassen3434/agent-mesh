@@ -3,8 +3,8 @@
 The read endpoints expose the global connector catalog (each connector's
 ``config_schema``) and one field's enablement + config so the wiki can render a
 connector-configuration page. The write endpoint (``PUT``) is the per-field
-enable/disable/reconfigure path — the second operational write in the otherwise
-read-only API (the first being schedules). Config is validated against the
+enable/disable/reconfigure path — one of the few operational writes in the
+otherwise read-only API. Config is validated against the
 connector's ``config_schema`` at write time by ``enable_connector`` (a bad
 config is a 422, never a mid-run failure). Connector content lives in the
 Python registry; this router only toggles + parameterizes it per field.

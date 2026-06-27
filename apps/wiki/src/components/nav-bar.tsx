@@ -78,9 +78,6 @@ export function NavBar({ statusHref }: { statusHref: string }) {
           <Link href="/connectors" className={linkCls(isActive('/connectors'))}>
             Connectors
           </Link>
-          <Link href="/pipelines" className={linkCls(isActive('/pipelines'))}>
-            Pipelines
-          </Link>
         </div>
 
         {/* mobile drawer */}
@@ -108,7 +105,6 @@ export function NavBar({ statusHref }: { statusHref: string }) {
                 <DrawerLink href="/agents" label="Agents" active={isActive('/agents')} />
                 <DrawerLink href="/fields" label="Fields" active={isActive('/fields')} />
                 <DrawerLink href="/connectors" label="Connectors" active={isActive('/connectors')} />
-                <DrawerLink href="/pipelines" label="Pipelines" active={isActive('/pipelines')} />
                 <a
                   href={statusHref}
                   className="mt-3 rounded px-2 py-1.5 font-mono text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"

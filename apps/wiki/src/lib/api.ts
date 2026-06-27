@@ -24,10 +24,6 @@ export type GraphEdge = Schemas['GraphEdge'];
 export type GraphData = Schemas['GraphData'];
 export type GraphDataNode = Schemas['GraphDataNode'];
 export type GraphDataEdge = Schemas['GraphDataEdge'];
-export type Schedule = Schemas['Schedule'];
-export type ScheduleUpdate = Schemas['ScheduleUpdate'];
-export type TriggerResult = Schemas['TriggerResult'];
-export type SchedulerJobStatus = Schemas['SchedulerJobStatus'];
 export type BeliefSignalSummary = Schemas['BeliefSignalSummary'];
 export type RevisionWithTriggers = Schemas['RevisionWithTriggers'];
 export type SkepticActivityItem = Schemas['SkepticActivityItem'];
@@ -195,14 +191,6 @@ export const api = {
     apiGet<AgentMemory>(`/api/v1/agents/${encodeURIComponent(agent)}/memory`, {
       query: { field },
     }),
-
-  // Pipelines page (Phase 9) ------------------------------------------------
-  schedules: () => apiGet<Schedule[]>('/api/v1/schedules'),
-  schedulerStatus: () => apiGet<SchedulerJobStatus[]>('/api/v1/scheduler/status'),
-  updateSchedule: (jobId: string, body: ScheduleUpdate) =>
-    apiSend<Schedule>('PATCH', `/api/v1/schedules/${encodeURIComponent(jobId)}`, body),
-  triggerPipeline: (jobId: string) =>
-    apiSend<TriggerResult>('POST', `/api/v1/pipelines/${encodeURIComponent(jobId)}/trigger`),
 
   // Ask page (Phase 21) -----------------------------------------------------
   ask: (question: string, field?: string) =>

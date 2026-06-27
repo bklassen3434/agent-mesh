@@ -4,7 +4,7 @@ A **Field** is the first-class scope that partitions all knowledge. These
 endpoints let an operator create and manage fields (each carrying a stored
 ``FieldProfile`` that drives the extractor/skeptic/personalizer prompts) from
 the wiki, instead of hand-writing rows. Reads are reader-role; create/patch are
-the writer-role operational writes (like schedules + connectors). ``slug``/``id``
+the writer-role operational writes (like connector enablement). ``slug``/``id``
 are immutable once created — they key every field-scoped row; a field is
 deactivated, never deleted (no DELETE grant on ``knowledge.fields``).
 """

@@ -1,6 +1,6 @@
 """Telegram bridge to the Agent Mesh read API.
 
-A small always-on service (modelled on ``mesh-scheduler``) that lets you talk
+A small always-on service that lets you talk
 to the mesh from the Telegram app:
 
 * **Chat** — any text you send is forwarded to ``POST /api/v1/ask`` (the same

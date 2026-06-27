@@ -137,17 +137,6 @@ const pipelineRuns = [
   },
 ];
 
-// Mutable so PATCH /schedules/:job_id is reflected by a follow-up GET.
-// A /__test__/reset endpoint restores these defaults between mutation specs.
-const defaultSchedules = () => [
-  { job_id: 'controller', interval_hours: 6, enabled: true, updated_at: daysAgo(3) },
-];
-let schedules = defaultSchedules();
-
-const schedulerStatus = [
-  { job_id: 'controller', next_run_at: hoursFromNow(4), last_run_at: daysAgo(0), state: 'idle' },
-];
-
 // Exactly NODE_CAP (200) nodes; total_entities above the cap so the wiki shows
 // its "showing top N of M" notice. At least 10 edges between surviving nodes.
 const GRAPH_NODE_COUNT = 200;
@@ -329,7 +318,6 @@ app.get('/healthz', (_req, res) => {
 
 // Test-only: restore mutable fixture state so mutation specs are isolated.
 app.post('/__test__/reset', (_req, res) => {
-  schedules = defaultSchedules();
   res.sendStatus(204);
 });
 
@@ -365,33 +353,6 @@ app.get('/api/v1/graph/data', (_req, res) => {
     edges: graphEdges,
     total_entities: GRAPH_TOTAL_ENTITIES,
   });
-});
-
-app.get('/api/v1/schedules', (_req, res) => res.json(schedules));
-
-app.patch('/api/v1/schedules/:jobId', (req: Request, res: Response) => {
-  const sched = schedules.find((s) => s.job_id === req.params.jobId);
-  if (!sched) {
-    res.status(404).json({ detail: `Unknown job ${req.params.jobId}` });
-    return;
-  }
-  const { interval_hours, enabled } = req.body ?? {};
-  if (typeof interval_hours === 'number') sched.interval_hours = interval_hours;
-  if (typeof enabled === 'boolean') sched.enabled = enabled;
-  sched.updated_at = iso(new Date());
-  res.json(sched);
-});
-
-app.get('/api/v1/scheduler/status', (_req, res) => res.json(schedulerStatus));
-
-app.post('/api/v1/pipelines/:jobId/trigger', (req: Request, res: Response) => {
-  // The controller is the only job; it returns 200. The "already in progress"
-  // (409) path is exercised by a per-test route override in the e2e spec.
-  if (req.params.jobId !== 'controller') {
-    res.status(404).json({ detail: `Unknown job ${req.params.jobId}` });
-    return;
-  }
-  res.json({ run_id: `triggered-${Date.now()}`, triggered_at: iso(new Date()) });
 });
 
 app.get('/api/v1/briefing', (_req, res) => {

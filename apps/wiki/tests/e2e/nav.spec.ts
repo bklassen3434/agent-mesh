@@ -11,7 +11,7 @@ test.describe('top navigation', () => {
     await expect(nav.dailyBrief).toBeVisible();
     await expect(nav.knowledgeTrigger).toBeVisible();
     await expect(nav.graph).toBeVisible();
-    await expect(nav.pipelines).toBeVisible();
+    await expect(nav.connectors).toBeVisible();
   });
 
   test('Knowledge dropdown opens and shows all four sub-links', async ({ page }) => {
@@ -57,10 +57,10 @@ test.describe('top navigation', () => {
 
     await nav.goto('/graph');
     await nav.expectActive(nav.graph);
-    await nav.expectInactive(nav.pipelines);
+    await nav.expectInactive(nav.connectors);
 
-    await nav.goto('/pipelines');
-    await nav.expectActive(nav.pipelines);
+    await nav.goto('/connectors');
+    await nav.expectActive(nav.connectors);
     await nav.expectInactive(nav.graph);
 
     await nav.goto('/knowledge/beliefs');

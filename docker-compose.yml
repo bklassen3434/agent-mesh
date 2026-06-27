@@ -22,8 +22,8 @@ name: agent-mesh
 
 services:
   # ── single Postgres for the whole stack: the knowledge store (`knowledge`
-  # schema, pgvector) plus the operational tables (LangGraph checkpoints + the
-  # `schedules` table in `public`). ──────────────────────────────────────────
+  # schema, pgvector) plus the operational tables (LangGraph checkpoints in
+  # `public`). ────────────────────────────────────────────────────────────────
   mesh-postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -85,8 +85,8 @@ services:
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
       API_CORS_ORIGINS: "http://localhost:3000"
-      # LangGraph checkpoints + the `schedules` table live in the same Postgres
-      # (the `public` schema); the status/Pipelines pages read them here.
+      # LangGraph checkpoints live in the same Postgres (the `public` schema);
+      # the status page reads them here.
       LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
       # Where to reach the ResearchQA agent for POST /api/v1/ask. Degrades to a
       # clean "unavailable" answer if it's down.

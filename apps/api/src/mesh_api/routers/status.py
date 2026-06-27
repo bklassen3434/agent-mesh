@@ -58,21 +58,6 @@ def _ago(when: datetime) -> str:
     return f"{secs // 86400}d ago"
 
 
-def _next_runs() -> dict[str, datetime | None]:
-    try:
-        from mesh_scheduler import configured_cron_triggers
-    except ImportError:
-        return {"controller": None}
-    now = datetime.now(UTC)
-    out: dict[str, datetime | None] = {}
-    for job_id, trig in configured_cron_triggers().items():
-        try:
-            out[job_id] = trig.get_next_fire_time(None, now)
-        except Exception:
-            out[job_id] = None
-    return out
-
-
 def _sources_by_type(conn: MeshConnection) -> dict[str, int]:
     rows = conn.execute(
         "SELECT type, COUNT(*) FROM sources GROUP BY type ORDER BY type"
@@ -147,7 +132,6 @@ def _row(k: str, v: str, *, cls: str = "") -> str:
 
 def _section_runs(conn: MeshConnection) -> str:
     run = _last_run(conn, "controller")
-    nexts = _next_runs()
     rows: list[str] = []
     label = "Controller"
     if run is None:
@@ -173,14 +157,6 @@ def _section_runs(conn: MeshConnection) -> str:
                 f"+{run.beliefs_created} / ~{run.beliefs_revised} beliefs",
             )
         )
-    nxt = nexts.get("controller")
-    rows.append(
-        _row(
-            f"{label} — next run",
-            nxt.strftime("%Y-%m-%d %H:%M %Z") if nxt else "—",
-            cls="" if nxt else "muted",
-        )
-    )
     return f"<section><h2>Runs</h2><table>{''.join(rows)}</table></section>"
 
 
@@ -267,8 +243,8 @@ def _section_langfuse() -> str:
     response_class=HTMLResponse,
     summary="Operational status page",
     description=(
-        "Server-rendered HTML with meta-refresh every 60s. Shows last + next "
-        "runs, total row counts, LangGraph checkpoint run state (in-flight / "
+        "Server-rendered HTML with meta-refresh every 60s. Shows the last "
+        "controller run, total row counts, LangGraph checkpoint run state (in-flight / "
         "interrupted), recent run errors, and the Langfuse 24h trace count when "
         "configured."
     ),

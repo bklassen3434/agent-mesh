@@ -13,14 +13,12 @@ dependencies = [
     "mesh-a2a",
     "mesh-db",
     "mesh-models",
-    "mesh-scheduler",
 ]
 
 [tool.uv.sources]
 mesh-a2a = { workspace = true }
 mesh-db = { workspace = true }
 mesh-models = { workspace = true }
-mesh-scheduler = { workspace = true }
 
 [project.scripts]
 mesh-api = "mesh_api.main:main"

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1018,95 +1017,6 @@ def a2a_call(skill_id: str, json_payload: str, agent_urls: str | None) -> None:
     except Exception as exc:
         console.print(f"[red]Skill call failed: {exc}[/red]")
         raise SystemExit(1) from exc
-
-
-@cli.group("schedule")
-def schedule() -> None:
-    """Inspect the APScheduler-managed pipeline + sweep jobs."""
-
-
-@schedule.command("status")
-def schedule_status() -> None:
-    """Show next-run times and the latest run summary for each job.
-
-    Asks each configured CronTrigger directly for its next-fire-time —
-    the real scheduler runs in its own container. The latest-run summary
-    comes from ``pipeline_runs`` so the user sees what actually happened,
-    not just what was planned. The Checkpoint column reflects the latest
-    LangGraph checkpoint state per job (in-flight / interrupted / finalized).
-    """
-    from mesh_a2a.checkpoint import read_run_states
-    from mesh_scheduler import configured_cron_triggers
-
-    now = datetime.now(UTC)
-    triggers = configured_cron_triggers()
-    next_runs: dict[str, datetime | None] = {
-        job_id: trig.get_next_fire_time(None, now)
-        for job_id, trig in triggers.items()
-    }
-
-    conn = _get_conn()
-    try:
-        recent = list_pipeline_runs(conn, limit=1, run_type="controller")
-    finally:
-        conn.close()
-
-    last_by_job = {"controller": recent[0] if recent else None}
-
-    # Latest checkpoint state per run_type (read_run_states is newest-first;
-    # empty when no Postgres checkpoint store is configured).
-    threshold = int(os.environ.get("MESH_TASK_RESUME_THRESHOLD", "600"))
-    latest_checkpoint: dict[str, Any] = {}
-    for state in read_run_states():
-        latest_checkpoint.setdefault(state.run_type, state)
-
-    table = Table(title="Mesh schedule")
-    table.add_column("Job", style="cyan")
-    table.add_column("Next run", style="green")
-    table.add_column("Last run", style="dim")
-    table.add_column("Duration")
-    table.add_column("Triggered by")
-    table.add_column("Counts")
-    table.add_column("Checkpoint")
-    for job_id in ("controller",):
-        next_run = next_runs.get(job_id)
-        last = last_by_job.get(job_id)
-        if last is None:
-            last_str = "—"
-            duration = "—"
-            trig = "—"
-            counts = "—"
-        else:
-            last_str = last.started_at.strftime("%Y-%m-%d %H:%M")
-            if last.finished_at:
-                secs = (last.finished_at - last.started_at).total_seconds()
-                duration = f"{secs:.0f}s"
-            else:
-                duration = "running"
-            trig = last.triggered_by
-            counts = (
-                f"claims +{last.claims_inserted} / "
-                f"beliefs +{last.beliefs_created}/~{last.beliefs_revised}"
-            )
-        cp = latest_checkpoint.get(job_id)
-        if cp is None:
-            checkpoint = "—"
-        elif cp.finalized:
-            checkpoint = "finalized"
-        elif cp.is_interrupted(threshold_seconds=threshold):
-            checkpoint = "interrupted"
-        else:
-            checkpoint = "in flight"
-        table.add_row(
-            job_id,
-            next_run.strftime("%Y-%m-%d %H:%M %Z") if next_run else "—",
-            last_str,
-            duration,
-            trig,
-            counts,
-            checkpoint,
-        )
-    console.print(table)
 
 
 def _print_relationship_detail(r: Any) -> None:

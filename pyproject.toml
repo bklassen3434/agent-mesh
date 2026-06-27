@@ -23,7 +23,6 @@ dev-dependencies = [
     "mesh-a2a",
     "mesh-agent-servers",
     "mesh-api",
-    "mesh-scheduler",
     "mesh-telegram",
 ]
 
@@ -33,7 +32,6 @@ members = [
     "apps/pipeline",
     "apps/agents",
     "apps/api",
-    "apps/scheduler",
     "apps/telegram",
     "packages/mesh-models",
     "packages/mesh-db",
@@ -54,7 +52,6 @@ mesh-pipeline = { workspace = true }
 mesh-a2a = { workspace = true }
 mesh-agent-servers = { workspace = true }
 mesh-api = { workspace = true }
-mesh-scheduler = { workspace = true }
 mesh-telegram = { workspace = true }
 
 [tool.pytest.ini_options]
@@ -69,7 +66,6 @@ pythonpath = [
     "apps/pipeline/src",
     "apps/agents/src",
     "apps/api/src",
-    "apps/scheduler/src",
     "apps/telegram/src",
 ]
 

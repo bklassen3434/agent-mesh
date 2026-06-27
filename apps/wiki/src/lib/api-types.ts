@@ -330,7 +330,7 @@ export interface paths {
         };
         /**
          * Operational status page
-         * @description Server-rendered HTML with meta-refresh every 60s. Shows last + next runs, total row counts, LangGraph checkpoint run state (in-flight / interrupted), recent run errors, and the Langfuse 24h trace count when configured.
+         * @description Server-rendered HTML with meta-refresh every 60s. Shows the last controller run, total row counts, LangGraph checkpoint run state (in-flight / interrupted), recent run errors, and the Langfuse 24h trace count when configured.
          */
         get: operations["status_page_status_get"];
         put?: never;
@@ -479,86 +479,6 @@ export interface paths {
          * @description Upsert one field's enablement + config of a catalog connector. The config is validated against the connector's config_schema; an unknown key, wrong type, or missing required field is a 422. Persisted on the mesh_writer role; the next pipeline run dispatches the field's enabled connectors.
          */
         put: operations["put_field_connector_api_v1_fields__slug__connectors__connector_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/schedules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List pipeline schedules
-         * @description Current interval + enabled state for each pipeline job.
-         */
-        get: operations["list_schedules_endpoint_api_v1_schedules_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/schedules/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update a pipeline schedule
-         * @description Patch the interval and/or enabled flag for a job. Persists to Postgres and signals the scheduler to apply the change without a restart. ``interval_hours`` must be one of [1, 2, 4, 6, 12, 24, 48].
-         */
-        patch: operations["patch_schedule_api_v1_schedules__job_id__patch"];
-        trace?: never;
-    };
-    "/api/v1/pipelines/{job_id}/trigger": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Trigger an immediate pipeline run
-         * @description Starts an out-of-band controller run. Returns 409 if a run for that job is already in progress.
-         */
-        post: operations["trigger_pipeline_api_v1_pipelines__job_id__trigger_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/scheduler/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Live scheduler job state
-         * @description Per-job next-run, last-run, and state (running / idle / disabled) from the running scheduler. Returns an empty list if the scheduler is unreachable so the Pipelines page degrades gracefully.
-         */
-        get: operations["scheduler_status_api_v1_scheduler_status_get"];
-        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1618,60 +1538,6 @@ export interface components {
             trigger_claims: components["schemas"]["Claim"][];
         };
         /**
-         * Schedule
-         * @description One configured pipeline schedule (a ``schedules`` row).
-         */
-        Schedule: {
-            /** Job Id */
-            job_id: string;
-            /**
-             * Field Id
-             * @default ai-robotics
-             */
-            field_id: string;
-            /** Interval Hours */
-            interval_hours: number;
-            /** Enabled */
-            enabled: boolean;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /**
-         * ScheduleUpdate
-         * @description Partial update for a schedule — interval, enabled, or both.
-         */
-        ScheduleUpdate: {
-            /** Interval Hours */
-            interval_hours?: number | null;
-            /** Enabled */
-            enabled?: boolean | null;
-        };
-        /**
-         * SchedulerJobStatus
-         * @description Live APScheduler state for one job.
-         *
-         *     ``state`` is one of ``running`` | ``idle`` | ``disabled``. ``next_run_at``
-         *     is null when the job is paused (disabled) or has no future fire time.
-         */
-        SchedulerJobStatus: {
-            /** Job Id */
-            job_id: string;
-            /**
-             * Field Id
-             * @default ai-robotics
-             */
-            field_id: string;
-            /** Next Run At */
-            next_run_at?: string | null;
-            /** Last Run At */
-            last_run_at?: string | null;
-            /** State */
-            state: string;
-        };
-        /**
          * SkepticActivityItem
          * @description One skeptic-triggered revision joined with its belief and trigger claims.
          *
@@ -1751,19 +1617,6 @@ export interface components {
             last_pipeline_run_at: string | null;
             /** Last Pipeline Run Id */
             last_pipeline_run_id: string | null;
-        };
-        /**
-         * TriggerResult
-         * @description Result of an immediate pipeline trigger.
-         */
-        TriggerResult: {
-            /** Run Id */
-            run_id: string;
-            /**
-             * Triggered At
-             * Format: date-time
-             */
-            triggered_at: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -2610,116 +2463,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_schedules_endpoint_api_v1_schedules_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Schedule"][];
-                };
-            };
-        };
-    };
-    patch_schedule_api_v1_schedules__job_id__patch: {
-        parameters: {
-            query?: {
-                field?: string;
-            };
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScheduleUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Schedule"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    trigger_pipeline_api_v1_pipelines__job_id__trigger_post: {
-        parameters: {
-            query?: {
-                field?: string;
-            };
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TriggerResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    scheduler_status_api_v1_scheduler_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerJobStatus"][];
                 };
             };
         };

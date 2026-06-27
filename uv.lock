@@ -21,7 +21,6 @@ members = [
     "mesh-llm",
     "mesh-models",
     "mesh-pipeline",
-    "mesh-scheduler",
     "mesh-telegram",
     "mesh-tracing",
 ]
@@ -69,7 +68,6 @@ dev = [
     { name = "mesh-llm" },
     { name = "mesh-models" },
     { name = "mesh-pipeline" },
-    { name = "mesh-scheduler" },
     { name = "mesh-telegram" },
     { name = "mesh-tracing" },
     { name = "mypy" },
@@ -93,7 +91,6 @@ dev = [
     { name = "mesh-llm", editable = "packages/mesh-llm" },
     { name = "mesh-models", editable = "packages/mesh-models" },
     { name = "mesh-pipeline", editable = "apps/pipeline" },
-    { name = "mesh-scheduler", editable = "apps/scheduler" },
     { name = "mesh-telegram", editable = "apps/telegram" },
     { name = "mesh-tracing", editable = "packages/mesh-tracing" },
     { name = "mypy", specifier = ">=1.8" },
@@ -1263,7 +1260,6 @@ dependencies = [
     { name = "mesh-a2a" },
     { name = "mesh-db" },
     { name = "mesh-models" },
-    { name = "mesh-scheduler" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1274,7 +1270,6 @@ requires-dist = [
     { name = "mesh-a2a", editable = "packages/mesh-a2a" },
     { name = "mesh-db", editable = "packages/mesh-db" },
     { name = "mesh-models", editable = "packages/mesh-models" },
-    { name = "mesh-scheduler", editable = "apps/scheduler" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
@@ -1290,7 +1285,6 @@ dependencies = [
     { name = "mesh-llm" },
     { name = "mesh-models" },
     { name = "mesh-pipeline" },
-    { name = "mesh-scheduler" },
     { name = "rich" },
 ]
 
@@ -1303,7 +1297,6 @@ requires-dist = [
     { name = "mesh-llm", editable = "packages/mesh-llm" },
     { name = "mesh-models", editable = "packages/mesh-models" },
     { name = "mesh-pipeline", editable = "apps/pipeline" },
-    { name = "mesh-scheduler", editable = "apps/scheduler" },
     { name = "rich", specifier = ">=13.0" },
 ]
 
@@ -1385,33 +1378,6 @@ requires-dist = [
     { name = "mesh-llm", editable = "packages/mesh-llm" },
     { name = "mesh-models", editable = "packages/mesh-models" },
     { name = "structlog", specifier = ">=24.0" },
-]
-
-[[package]]
-name = "mesh-scheduler"
-version = "0.1.0"
-source = { editable = "apps/scheduler" }
-dependencies = [
-    { name = "apscheduler" },
-    { name = "click" },
-    { name = "mesh-a2a" },
-    { name = "mesh-db" },
-    { name = "mesh-models" },
-    { name = "starlette" },
-    { name = "structlog" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "apscheduler", specifier = ">=3.10,<4.0" },
-    { name = "click", specifier = ">=8.0" },
-    { name = "mesh-a2a", editable = "packages/mesh-a2a" },
-    { name = "mesh-db", editable = "packages/mesh-db" },
-    { name = "mesh-models", editable = "packages/mesh-models" },
-    { name = "starlette" },
-    { name = "structlog", specifier = ">=24.0" },
-    { name = "uvicorn" },
 ]
 
 [[package]]

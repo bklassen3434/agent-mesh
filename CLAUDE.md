@@ -199,6 +199,24 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_ADJUDICATE_MIN_DEPENDENTS` | `2` | Min supporting-claim fan-in before a contradiction is treated as load-bearing |
 | `MESH_ADJUDICATE_REFUTE_FLOOR` | `0.2` | Post-adjudication confidence below which a `contradicted` verdict drops the belief from the held set (append-only) |
 | `MESH_CONTROLLER_SCOUT_COOLDOWN_SEC` | `600` | Min seconds between scouts of a connector once the board is idle |
+| `MESH_ADMIN_PASSWORD` | (empty) | **Wiki only.** Admin login password. Unset = "open mode": no gate, everyone is admin (pre-auth behavior). Set it to turn on the beta/admin split. |
+| `AUTH_SECRET` | (insecure dev default) | **Wiki only.** HMAC secret signing the role cookie. Set a long random value in prod. |
+| `MESH_INTERNAL_TOKEN` | (empty) | **Wiki + API (same value).** Lets only the wiki server call privileged API endpoints (create/patch topic, connector toggle, schedule, trigger) and the rate-limited `/ask`. Unset on the API = guard disabled (dev/local). |
+| `MESH_BETA_DAILY_QUERY_LIMIT` | `3` | **API only.** Grounded chatbot questions an anonymous beta browser may ask per day (resets daily). Admins are unlimited. |
+
+## User control (admin / beta)
+
+The wiki is the **auth boundary**. An admin signs in with `MESH_ADMIN_PASSWORD`
+(→ signed httpOnly role cookie); everyone else is an anonymous **beta** visitor.
+The browser never calls the API directly for privileged actions — it hits the
+wiki's own route handlers (`/api/ask`, `/api/proxy/[...path]`), which check the
+role and forward server-to-server with `MESH_INTERNAL_TOKEN`. The API enforces
+the same boundary via `require_internal_admin` (writes) / `require_internal_caller`
+(`/ask`) and counts beta questions in `runtime.beta_query_log`. **Opt-in:** with
+no `MESH_ADMIN_PASSWORD` set the whole wiki runs in open mode (everyone admin),
+so dev/tests/CI are unchanged. Topics = **fields**; beta can switch the global
+topic dropdown but only admins create topics / edit connectors / see the
+knowledge base, agents, and pipelines. The front page (`/`) is the chatbot.
 
 ## Debugging discipline
 

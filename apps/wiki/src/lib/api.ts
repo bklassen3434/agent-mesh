@@ -175,20 +175,24 @@ export const api = {
 
   listEntities: (q: { type?: string; q?: string; limit?: number; offset?: number } = {}) =>
     apiGet<PageEntity>('/api/v1/entities', { query: q }),
-  entity: (id: string) => apiGet<EntityDetail>(`/api/v1/entities/${encodeURIComponent(id)}`),
+  entity: (id: string, field?: string) =>
+    apiGet<EntityDetail>(`/api/v1/entities/${encodeURIComponent(id)}`, { query: { field } }),
 
   listClaims: (
     q: { predicate?: string; source_id?: string; entity_id?: string; status?: string; limit?: number; offset?: number } = {},
   ) => apiGet<PageClaim>('/api/v1/claims', { query: q }),
-  claim: (id: string) => apiGet<ClaimDetail>(`/api/v1/claims/${encodeURIComponent(id)}`),
+  claim: (id: string, field?: string) =>
+    apiGet<ClaimDetail>(`/api/v1/claims/${encodeURIComponent(id)}`, { query: { field } }),
 
   listBeliefs: (q: { topic?: string; currently_held?: boolean; limit?: number; offset?: number } = {}) =>
     apiGet<PageBelief>('/api/v1/beliefs', { query: q }),
-  belief: (id: string) => apiGet<BeliefDetail>(`/api/v1/beliefs/${encodeURIComponent(id)}`),
+  belief: (id: string, field?: string) =>
+    apiGet<BeliefDetail>(`/api/v1/beliefs/${encodeURIComponent(id)}`, { query: { field } }),
 
   listSources: (q: { type?: string; limit?: number; offset?: number } = {}) =>
     apiGet<PageSource>('/api/v1/sources', { query: q }),
-  source: (id: string) => apiGet<SourceDetail>(`/api/v1/sources/${encodeURIComponent(id)}`),
+  source: (id: string, field?: string) =>
+    apiGet<SourceDetail>(`/api/v1/sources/${encodeURIComponent(id)}`, { query: { field } }),
 
   beliefRevisions: (id: string, limit = 100) =>
     apiGet<RevisionWithTriggers[]>(

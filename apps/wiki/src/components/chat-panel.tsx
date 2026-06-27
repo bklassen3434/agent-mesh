@@ -1,58 +1,12 @@
 'use client';
 
-import Link from 'next/link';
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 
-import { Badge } from '@/components/ui/badge';
+import { AnswerView } from '@/components/answer-view';
+import { EvidenceProvider } from '@/components/evidence-dialog';
 import { Button } from '@/components/ui/button';
-import { type Answer, ApiError, type Coverage, type QuotaStatus, api } from '@/lib/api';
+import { type Answer, ApiError, type QuotaStatus, api } from '@/lib/api';
 import type { Role } from '@/lib/auth';
-
-const KIND_SEGMENT: Record<string, string> = {
-  belief: 'beliefs',
-  claim: 'claims',
-  entity: 'entities',
-};
-
-function citationHref(kind: string, id: string): string {
-  const seg = KIND_SEGMENT[kind] ?? 'beliefs';
-  return `/knowledge/${seg}/${encodeURIComponent(id)}`;
-}
-
-const COVERAGE_META: Record<
-  Coverage,
-  { label: string; variant: 'default' | 'secondary' | 'destructive' }
-> = {
-  well_supported: { label: 'Well supported', variant: 'default' },
-  thin: { label: 'Thin evidence', variant: 'secondary' },
-  uncovered: { label: 'Not covered', variant: 'destructive' },
-};
-
-const CITATION_RE = /\[(belief|claim|entity):([^\]]+)\]/g;
-
-function renderWithCitations(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let key = 0;
-  CITATION_RE.lastIndex = 0;
-  while ((m = CITATION_RE.exec(text)) !== null) {
-    if (m.index > last) out.push(<span key={key++}>{text.slice(last, m.index)}</span>);
-    const [, kind, id] = m;
-    out.push(
-      <Link
-        key={key++}
-        href={citationHref(kind, id)}
-        className="mx-0.5 rounded bg-muted px-1 text-xs font-medium text-foreground hover:underline"
-      >
-        [{kind}]
-      </Link>,
-    );
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) out.push(<span key={key++}>{text.slice(last)}</span>);
-  return out;
-}
 
 type Turn =
   | { role: 'user'; text: string }
@@ -117,6 +71,7 @@ export function ChatPanel({ field, role }: { field: string; role: Role }) {
   }
 
   return (
+    <EvidenceProvider field={field} role={role}>
     <div className="mx-auto flex min-h-[70vh] max-w-3xl flex-col">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Ask the mesh</h1>
@@ -195,6 +150,7 @@ export function ChatPanel({ field, role }: { field: string; role: Role }) {
         )}
       </div>
     </div>
+    </EvidenceProvider>
   );
 }
 
@@ -208,58 +164,12 @@ function LockedNotice({ quota }: { quota: QuotaStatus | null }) {
 }
 
 function AssistantTurn({ answer }: { answer: Answer }) {
-  const cov = COVERAGE_META[answer.coverage];
-  const citations = answer.citations ?? [];
-  const caveats = answer.caveats ?? [];
   return (
-    <div data-testid="ask-answer" className="space-y-4 rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Answer
-        </span>
-        <Badge variant={cov.variant} aria-label={`coverage: ${answer.coverage}`}>
-          {cov.label}
-        </Badge>
-      </div>
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {renderWithCitations(answer.answer_markdown)}
-      </div>
-
-      {citations.length > 0 && (
-        <div className="space-y-2">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Citations
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {citations.map((c, i) => (
-              <Link
-                key={`${c.kind}:${c.id}:${i}`}
-                href={citationHref(c.kind, c.id)}
-                title={c.quote}
-                className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs hover:bg-accent"
-              >
-                <span className="font-medium">{c.kind}</span>
-                <span className="text-muted-foreground">
-                  {c.id.length > 10 ? `${c.id.slice(0, 8)}…` : c.id}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {caveats.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Caveats
-          </div>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-            {caveats.map((cav, i) => (
-              <li key={i}>{cav}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+    <div
+      data-testid="ask-answer"
+      className="rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-4"
+    >
+      <AnswerView answer={answer} />
     </div>
   );
 }

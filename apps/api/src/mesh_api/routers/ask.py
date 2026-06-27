@@ -16,8 +16,10 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from mesh_a2a.client import MeshA2AClient, SkillCallError, TaskTimeoutError
+from mesh_db.beta_quota import consume_quota, daily_limit, quota_used
+from mesh_db.connection import get_connection
 from mesh_models.qa import Answer, Coverage
 from pydantic import BaseModel
 
@@ -30,6 +32,24 @@ _TIMEOUT = float(os.environ.get("MESH_ASK_TIMEOUT", "120"))
 
 class AskRequest(BaseModel):
     question: str
+
+
+class QuotaStatus(BaseModel):
+    """A beta browser's remaining daily chatbot questions."""
+
+    limit: int
+    used: int
+    remaining: int
+
+
+def _quota_for(beta_id: str) -> QuotaStatus:
+    limit = daily_limit()
+    conn = get_connection(read_only=True)
+    try:
+        used = quota_used(conn, beta_id)
+    finally:
+        conn.close()
+    return QuotaStatus(limit=limit, used=used, remaining=max(0, limit - used))
 
 
 def _agent_urls() -> list[str]:
@@ -67,10 +87,34 @@ def _unavailable() -> Answer:
 async def ask(
     body: AskRequest,
     field: str = Query("ai-robotics", description="Field slug to scope the answer to"),
+    x_mesh_role: str | None = Header(default=None),
+    x_mesh_beta_id: str | None = Header(default=None),
 ) -> Answer:
     question = body.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
+
+    # Quota: admins are unlimited; an anonymous beta browser (identified by the
+    # wiki via the X-Mesh-Beta-Id header) gets daily_limit() questions/day. We
+    # check before answering but only consume after a real answer, so an
+    # unavailable agent or error never burns a question.
+    role = (x_mesh_role or "beta").strip().lower()
+    beta_id = (x_mesh_beta_id or "").strip()
+    enforce = role != "admin" and bool(beta_id)
+    if enforce:
+        conn = get_connection(read_only=True)
+        try:
+            remaining = max(0, daily_limit() - quota_used(conn, beta_id))
+        finally:
+            conn.close()
+        if remaining <= 0:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Daily question limit reached ({daily_limit()}/day). "
+                    "Sign in as admin for unlimited questions, or try again tomorrow."
+                ),
+            )
 
     payload = {"question": question, "field_id": field}
     async with MeshA2AClient() as client:
@@ -86,4 +130,29 @@ async def ask(
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except SkillCallError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if enforce:
+        conn = get_connection(read_only=False)
+        try:
+            consume_quota(conn, beta_id)
+        finally:
+            conn.close()
     return Answer.model_validate(result)
+
+
+@router.get(
+    "/quota",
+    response_model=QuotaStatus,
+    summary="Remaining daily chatbot quota for a beta browser",
+    description=(
+        "How many grounded questions the identified beta browser has left today. "
+        "Admins are unlimited and need not call this. Returns the full limit when "
+        "no beta id is supplied."
+    ),
+)
+def ask_quota(x_mesh_beta_id: str | None = Header(default=None)) -> QuotaStatus:
+    beta_id = (x_mesh_beta_id or "").strip()
+    if not beta_id:
+        limit = daily_limit()
+        return QuotaStatus(limit=limit, used=0, remaining=limit)
+    return _quota_for(beta_id)

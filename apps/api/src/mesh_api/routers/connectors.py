@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from mesh_db.connection import MeshConnection
 from mesh_db.connectors import (
     enable_connector,
@@ -26,6 +26,7 @@ from mesh_models.connector import Connector, FieldConnector
 from pydantic import BaseModel
 
 from mesh_api.deps import ConnDep, WriterConnDep
+from mesh_api.security import require_internal_admin
 
 router = APIRouter(prefix="/api/v1", tags=["connectors"])
 
@@ -83,6 +84,7 @@ def list_field_connectors_endpoint(slug: str, conn: ConnDep) -> list[FieldConnec
         "mesh_writer role; the next pipeline run dispatches the field's enabled "
         "connectors."
     ),
+    dependencies=[Depends(require_internal_admin)],
 )
 def put_field_connector(
     slug: str,

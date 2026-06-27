@@ -347,6 +347,54 @@ app.get('/api/v1/sources', (_req, res) => res.json(page(sources)));
 // Registered before any /beliefs/:id route would be (mirrors the real API).
 app.get('/api/v1/beliefs/signals', (_req, res) => res.json(beliefSignals));
 
+// Detail endpoints — power the chatbot's in-place evidence popup, which fetches
+// these client-side instead of navigating to the knowledge pages.
+const claimWithContext = (c: (typeof claims)[number]) => ({
+  claim: c,
+  source: sources.find((s) => s.source.id === c.source_id)?.source ?? null,
+  subject_entity: entities.find((e) => e.id === c.subject_entity_id) ?? null,
+});
+
+app.get('/api/v1/beliefs/:id', (req: Request, res: Response) => {
+  const belief = beliefs.find((b) => b.id === req.params.id);
+  if (!belief) return res.status(404).json({ detail: 'not found' });
+  res.json({
+    belief,
+    supporting_claims: belief.supporting_claim_ids
+      .map((id) => claims.find((c) => c.id === id))
+      .filter((c): c is (typeof claims)[number] => Boolean(c))
+      .map(claimWithContext),
+    contradicting_claims: [],
+    revisions: [],
+    signals: null,
+  });
+});
+
+app.get('/api/v1/claims/:id', (req: Request, res: Response) => {
+  const claim = claims.find((c) => c.id === req.params.id);
+  if (!claim) return res.status(404).json({ detail: 'not found' });
+  res.json(claimWithContext(claim));
+});
+
+app.get('/api/v1/sources/:id', (req: Request, res: Response) => {
+  const entry = sources.find((s) => s.source.id === req.params.id);
+  if (!entry) return res.status(404).json({ detail: 'not found' });
+  res.json({
+    source: entry.source,
+    claims: claims.filter((c) => c.source_id === entry.source.id),
+  });
+});
+
+app.get('/api/v1/entities/:id', (req: Request, res: Response) => {
+  const entity = entities.find((e) => e.id === req.params.id);
+  if (!entity) return res.status(404).json({ detail: 'not found' });
+  res.json({
+    entity,
+    claims: claims.filter((c) => c.subject_entity_id === entity.id),
+    relationships: [],
+  });
+});
+
 app.get('/api/v1/graph/data', (_req, res) => {
   res.json({
     nodes: graphNodes,

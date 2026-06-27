@@ -9,6 +9,8 @@ export class AskPage {
   readonly askButton: Locator;
   readonly answer: Locator;
   readonly coverageBadge: Locator;
+  readonly evidenceDialog: Locator;
+  readonly evidenceBody: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -18,6 +20,9 @@ export class AskPage {
     this.askButton = page.getByRole('button', { name: 'Ask' });
     this.answer = page.getByTestId('ask-answer');
     this.coverageBadge = this.answer.locator('[aria-label^="coverage:"]');
+    // The evidence popup is portaled to <body>, so it lives outside `answer`.
+    this.evidenceDialog = page.getByRole('dialog');
+    this.evidenceBody = page.getByTestId('evidence-body');
   }
 
   async goto(path = '/ask') {

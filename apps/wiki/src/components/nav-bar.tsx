@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, ChevronDown, Eye, LogOut, Menu, Plus } from 'lucide-react';
+import { Check, ChevronDown, Eye, Menu, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTransition } from 'react';
@@ -32,7 +32,7 @@ const KNOWLEDGE = [
 ];
 
 // Pages a beta visitor sees; admins additionally get the knowledge base, agents,
-// pipelines, and topic management.
+// and topic management.
 const BETA_LINKS = [
   { href: '/', label: 'Chat' },
   { href: '/graph', label: 'Graph' },
@@ -44,7 +44,6 @@ const ADMIN_LINKS = [
   { href: '/graph', label: 'Graph' },
   { href: '/connectors', label: 'Connectors' },
   { href: '/agents', label: 'Agents' },
-  { href: '/pipelines', label: 'Pipelines' },
   { href: '/fields', label: 'Topics' },
 ];
 
@@ -157,29 +156,15 @@ function ModeMenu() {
     setCookie(PREVIEW_COOKIE, 'beta', 60 * 60 * 24);
     startTransition(() => router.refresh());
   };
-  const exitAdmin = async () => {
-    await fetch('/api/admin/lock', { method: 'POST' });
-    router.replace('/');
-    router.refresh();
-  };
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium outline-none hover:bg-accent">
-        Admin
-        <ChevronDown className="h-3.5 w-3.5" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={previewBeta}>
-          <Eye className="mr-2 h-3.5 w-3.5" />
-          View as beta
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={exitAdmin}>
-          <LogOut className="mr-2 h-3.5 w-3.5" />
-          Exit admin
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <button
+      type="button"
+      onClick={previewBeta}
+      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <Eye className="h-3.5 w-3.5" />
+      View as beta
+    </button>
   );
 }
 
@@ -351,19 +336,6 @@ function MobileMenu({
                   className="rounded px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent"
                 >
                   {isAdmin ? 'View as beta' : 'Back to admin'}
-                </button>
-              </SheetClose>
-              <SheetClose asChild>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await fetch('/api/admin/lock', { method: 'POST' });
-                    router.replace('/');
-                    router.refresh();
-                  }}
-                  className="rounded px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent"
-                >
-                  Exit admin
                 </button>
               </SheetClose>
             </>

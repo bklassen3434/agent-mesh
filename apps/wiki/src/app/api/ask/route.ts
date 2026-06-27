@@ -7,19 +7,15 @@
 //   POST → ask a grounded question (429 when the day's quota is spent)
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { BETA_COOKIE, PREVIEW_COOKIE, ROLE_COOKIE, resolveView } from '@/lib/auth';
+import { BETA_COOKIE, PREVIEW_COOKIE, resolveView } from '@/lib/auth';
 import { internalApiBase, internalToken } from '@/lib/proxy';
 
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
 // Effective role: an admin previewing as beta sees the real beta quota, so the
 // preview shows exactly what other people experience.
-async function roleOf(req: NextRequest): Promise<'admin' | 'beta'> {
-  const { effectiveRole } = await resolveView(
-    req.cookies.get(ROLE_COOKIE)?.value,
-    req.cookies.get(PREVIEW_COOKIE)?.value,
-  );
-  return effectiveRole;
+function roleOf(req: NextRequest): 'admin' | 'beta' {
+  return resolveView(req.cookies.get(PREVIEW_COOKIE)?.value).effectiveRole;
 }
 
 function ensureBetaId(req: NextRequest): { id: string; isNew: boolean } {

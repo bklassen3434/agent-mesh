@@ -1,21 +1,17 @@
 // Admin-only write proxy. Every privileged API write (create/patch topic,
 // connector toggle, schedule patch, pipeline trigger) goes through here so the
-// admin check happens once, server-side, against the first-party role cookie —
-// then forwards to the API with the shared internal token + admin role. A
-// non-admin (or anyone hitting this without the cookie) gets a 403 and never
-// reaches the API.
+// admin check happens once, server-side — then forwards to the API with the
+// shared internal token + admin role. A beta-only instance (or an admin
+// previewing as beta) gets a 403 and never reaches the API.
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { PREVIEW_COOKIE, ROLE_COOKIE, resolveView } from '@/lib/auth';
+import { PREVIEW_COOKIE, resolveView } from '@/lib/auth';
 import { internalApiBase, internalToken } from '@/lib/proxy';
 
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
-  // Effective role: a real admin who is previewing as beta is denied writes too,
-  // so the preview faithfully reflects what a beta can do.
-  const { effectiveRole } = await resolveView(
-    req.cookies.get(ROLE_COOKIE)?.value,
-    req.cookies.get(PREVIEW_COOKIE)?.value,
-  );
+  // Effective role: a beta-only instance (or an admin previewing as beta) is
+  // denied writes, so the boundary holds and the preview is faithful.
+  const { effectiveRole } = resolveView(req.cookies.get(PREVIEW_COOKIE)?.value);
   if (effectiveRole !== 'admin') {
     return NextResponse.json({ detail: 'Admin access required.' }, { status: 403 });
   }

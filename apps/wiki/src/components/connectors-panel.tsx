@@ -63,10 +63,12 @@ export function ConnectorsPanel({
   field,
   catalog,
   initialEnablement,
+  readOnly = false,
 }: {
   field: string;
   catalog: Connector[];
   initialEnablement: FieldConnector[];
+  readOnly?: boolean;
 }) {
   const byId = new Map(initialEnablement.map((fc) => [fc.connector_id, fc]));
 
@@ -85,17 +87,23 @@ export function ConnectorsPanel({
     <div className="space-y-6">
       <Section
         title="Built-in sources"
-        hint="The shipped scouts. Toggle which ones this field ingests from."
+        hint={
+          readOnly
+            ? 'The shipped scouts and whether this topic ingests from each.'
+            : 'The shipped scouts. Toggle which ones this field ingests from.'
+        }
         connectors={builtin}
         byId={byId}
         field={field}
+        readOnly={readOnly}
       />
       <Section
-        title="Add a source"
+        title={readOnly ? 'Other sources' : 'Add a source'}
         hint="Generic connectors — point them at a feed, search, or JSON API and enable."
         connectors={configDriven}
         byId={byId}
         field={field}
+        readOnly={readOnly}
       />
     </div>
   );
@@ -107,12 +115,14 @@ function Section({
   connectors,
   byId,
   field,
+  readOnly,
 }: {
   title: string;
   hint: string;
   connectors: Connector[];
   byId: Map<string, FieldConnector>;
   field: string;
+  readOnly: boolean;
 }) {
   if (connectors.length === 0) return null;
   return (
@@ -123,7 +133,13 @@ function Section({
       </div>
       <div className="space-y-3">
         {connectors.map((c) => (
-          <ConnectorCard key={c.id} connector={c} current={byId.get(c.id)} field={field} />
+          <ConnectorCard
+            key={c.id}
+            connector={c}
+            current={byId.get(c.id)}
+            field={field}
+            readOnly={readOnly}
+          />
         ))}
       </div>
     </section>
@@ -134,10 +150,12 @@ function ConnectorCard({
   connector,
   current,
   field,
+  readOnly,
 }: {
   connector: Connector;
   current: FieldConnector | undefined;
   field: string;
+  readOnly: boolean;
 }) {
   const schema = (connector.config_schema ?? {}) as Record<string, unknown>;
   const keys = Object.keys(schema);
@@ -209,7 +227,7 @@ function ConnectorCard({
         <Switch
           checked={enabled}
           onCheckedChange={(v) => persist(v)}
-          disabled={saving}
+          disabled={saving || readOnly}
           aria-label={`${connector.name} enabled`}
         />
       </CardHeader>
@@ -251,8 +269,9 @@ function ConnectorCard({
                       rows={type === 'list[dict]' ? 5 : 3}
                       value={values[k] ?? ''}
                       onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
+                      readOnly={readOnly}
                       placeholder={type === 'list[str]' ? 'One per line' : '[ { … } ]'}
-                      className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
+                      className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none focus:ring-2 focus:ring-ring read-only:opacity-70"
                     />
                   ) : (
                     <input
@@ -260,18 +279,21 @@ function ConnectorCard({
                       type={type === 'int' ? 'number' : 'text'}
                       value={values[k] ?? ''}
                       onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                      readOnly={readOnly}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring read-only:opacity-70"
                     />
                   )}
                 </div>
               );
             })}
-            <div className="flex items-center gap-3">
-              <Button size="sm" onClick={() => persist(enabled)} disabled={saving}>
-                {saving ? 'Saving…' : 'Save config'}
-              </Button>
-              {saved && <span className="text-xs text-muted-foreground">Saved.</span>}
-            </div>
+            {!readOnly && (
+              <div className="flex items-center gap-3">
+                <Button size="sm" onClick={() => persist(enabled)} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save config'}
+                </Button>
+                {saved && <span className="text-xs text-muted-foreground">Saved.</span>}
+              </div>
+            )}
           </div>
         )}
 

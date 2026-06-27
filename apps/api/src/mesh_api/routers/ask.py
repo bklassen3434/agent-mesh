@@ -16,12 +16,14 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from mesh_a2a.client import MeshA2AClient, SkillCallError, TaskTimeoutError
 from mesh_db.beta_quota import consume_quota, daily_limit, quota_used
 from mesh_db.connection import get_connection
 from mesh_models.qa import Answer, Coverage
 from pydantic import BaseModel
+
+from mesh_api.security import require_internal_caller
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,7 @@ def _unavailable() -> Answer:
         "when the mesh has no relevant evidence. Read-only; nothing is "
         "persisted."
     ),
+    dependencies=[Depends(require_internal_caller)],
 )
 async def ask(
     body: AskRequest,
@@ -149,6 +152,7 @@ async def ask(
         "Admins are unlimited and need not call this. Returns the full limit when "
         "no beta id is supplied."
     ),
+    dependencies=[Depends(require_internal_caller)],
 )
 def ask_quota(x_mesh_beta_id: str | None = Header(default=None)) -> QuotaStatus:
     beta_id = (x_mesh_beta_id or "").strip()

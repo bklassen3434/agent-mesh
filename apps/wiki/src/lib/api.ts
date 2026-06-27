@@ -132,6 +132,41 @@ export class ApiError extends Error {
   }
 }
 
+// Same-origin calls to the wiki's own route handlers (auth boundary). Privileged
+// operations — the rate-limited chat and every admin write — go through these so
+// they pass the wiki's role check + internal token, never the API directly.
+async function localGet<T>(path: string): Promise<T> {
+  const res = await fetch(path, { method: 'GET', headers: { Accept: 'application/json' } });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ApiError(res.status, `GET ${path} → ${res.status} ${res.statusText} ${text}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function localSend<T>(
+  method: 'POST' | 'PATCH' | 'PUT',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ApiError(res.status, `${method} ${path} → ${res.status} ${res.statusText} ${text}`);
+  }
+  return (await res.json()) as T;
+}
+
+export interface QuotaStatus {
+  limit: number;
+  used: number;
+  remaining: number;
+}
+
 // Typed convenience wrappers ------------------------------------------------
 
 export const api = {
@@ -192,30 +227,29 @@ export const api = {
       query: { field },
     }),
 
-  // Ask page (Phase 21) -----------------------------------------------------
+  // Chatbot (rate-limited; routed through the wiki's /api/ask boundary) ------
   ask: (question: string, field?: string) =>
-    apiSend<Answer>(
-      'POST',
-      `/api/v1/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`,
-      { question },
-    ),
+    localSend<Answer>('POST', `/api/ask${field ? `?field=${encodeURIComponent(field)}` : ''}`, {
+      question,
+    }),
+  askQuota: () => localGet<QuotaStatus>('/api/ask'),
 
-  // Fields page (Phase 18) --------------------------------------------------
+  // Fields / topics (reads are public; writes go through /api/proxy) ---------
   listFields: (activeOnly = false) =>
     apiGet<Field[]>('/api/v1/fields', { query: { active_only: activeOnly } }),
   field: (slug: string) => apiGet<Field>(`/api/v1/fields/${encodeURIComponent(slug)}`),
-  createField: (body: FieldCreate) => apiSend<Field>('POST', '/api/v1/fields', body),
+  createField: (body: FieldCreate) => localSend<Field>('POST', '/api/proxy/fields', body),
   updateField: (slug: string, body: FieldPatch) =>
-    apiSend<Field>('PATCH', `/api/v1/fields/${encodeURIComponent(slug)}`, body),
+    localSend<Field>('PATCH', `/api/proxy/fields/${encodeURIComponent(slug)}`, body),
 
-  // Connectors page (Phase 18) ----------------------------------------------
+  // Connectors (reads are public; the enable/disable write goes through proxy)
   connectors: () => apiGet<Connector[]>('/api/v1/connectors'),
   fieldConnectors: (field: string) =>
     apiGet<FieldConnector[]>(`/api/v1/fields/${encodeURIComponent(field)}/connectors`),
   updateFieldConnector: (field: string, connectorId: string, body: FieldConnectorUpdate) =>
-    apiSend<FieldConnector>(
+    localSend<FieldConnector>(
       'PUT',
-      `/api/v1/fields/${encodeURIComponent(field)}/connectors/${encodeURIComponent(connectorId)}`,
+      `/api/proxy/fields/${encodeURIComponent(field)}/connectors/${encodeURIComponent(connectorId)}`,
       body,
     ),
 };

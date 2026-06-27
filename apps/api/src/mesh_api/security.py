@@ -23,6 +23,23 @@ def _expected_token() -> str | None:
     return token or None
 
 
+def require_internal_caller(
+    x_mesh_internal_token: str | None = Header(default=None),
+) -> None:
+    """Reject calls that didn't come from the wiki server.
+
+    Used by the rate-limited ``/ask`` endpoint so a beta visitor can't skip the
+    wiki (and its per-browser quota) by hitting the API directly. No role check —
+    both admins and betas legitimately ask; the quota logic distinguishes them.
+    No-op when no internal token is configured (dev/tests).
+    """
+    expected = _expected_token()
+    if expected is None:
+        return
+    if x_mesh_internal_token != expected:
+        raise HTTPException(status_code=401, detail="missing or invalid internal token")
+
+
 def require_internal_admin(
     x_mesh_internal_token: str | None = Header(default=None),
     x_mesh_role: str | None = Header(default=None),

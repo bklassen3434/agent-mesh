@@ -58,8 +58,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "$DEPLOY_DIR"
-          # COMPOSE_FILE / COMPOSE_PROFILES from the host .env (e.g. the Pi
-          # overlay + scheduler/skeptic profiles) are picked up automatically.
+          # COMPOSE_FILE from the host .env (e.g. the Pi low-RAM/SSD overlay)
+          # is picked up automatically. --remove-orphans clears out containers
+          # from services that no longer exist (the old scout / extractor /
+          # scheduler stack), so a redeploy converges the host onto the current
+          # 7-service stack.
           docker compose up -d --build --remove-orphans
 
       - name: Status

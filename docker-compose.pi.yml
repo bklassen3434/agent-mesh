@@ -7,27 +7,22 @@
 # so every `docker compose` / `make` command picks it up automatically.
 # Your laptop never sets COMPOSE_FILE, so its behaviour is unchanged.
 #
+# The orphaned A2A agent stack and the legacy scheduler are gone from the base
+# file, so this overlay no longer parks anything in profiles. The whole project
+# — controller, api, wiki, research-qa, personalizer, telegram-bot — runs
+# default-on; on a 4 GB Pi back it with an SSD + ~8 GB swap (see docs/raspberry-pi.md).
+#
 # What it does:
-#   * Shrinks the always-on set to fit 4 GB. Only arxiv/github/hn scouts +
-#     claim-extractor + entity-tracker + sota-tracker + api stay default-on.
-#     Unused scouts park in the `extra` profile; wiki + personalizer +
-#     research-qa park in the `ui` profile (start them on demand).
 #   * Tunes Postgres for low RAM.
 #   * Relocates the Postgres data volume to an SSD bind mount (/mnt/ssd).
-#   * Trims the scheduler's advertised agent URLs to the scouts we run, so the
-#     coordinator doesn't waste time probing cards for scouts that are down.
-#   * Lengthens healthcheck start_periods. On the Pi's arm64 CPU an agent
-#     container runs `uv sync` and imports heavy ML deps (fastembed/onnxruntime)
-#     before binding its port — ~3 min cold. The base 15–30s start_period is
-#     fine on a laptop but trips on the Pi, so `docker compose up --build` aborts
-#     on a `depends_on: service_healthy` gate and reports failure even though the
+#   * Lengthens healthcheck start_periods. On the Pi's arm64 CPU a container
+#     runs `uv sync` and imports heavy ML deps (fastembed/onnxruntime) before
+#     binding its port — ~3 min cold. The base 15–30s start_period is fine on a
+#     laptop but trips on the Pi, so `docker compose up --build` aborts on a
+#     `depends_on: service_healthy` gate and reports failure even though the
 #     stack goes healthy a couple minutes later. 180s absorbs the slow first boot.
-#
-# Pair with these in the Pi's .env:
-#   COMPOSE_PROFILES=scheduler,skeptic   # bring up the scheduler + curator/skeptic
-#   MESH_PG_POOL_MAX=3                    # 3 conns/pool instead of 10
 
-# Anchor: every always-on agent service merges this (compose deep-merges the
+# Anchor: every service with a healthcheck merges this (compose deep-merges the
 # healthcheck mapping, so only start_period is overridden — test/interval/
 # timeout/retries are inherited from docker-compose.yml).
 x-pi-slow-start: &pi-slow-start
@@ -35,42 +30,11 @@ x-pi-slow-start: &pi-slow-start
     start_period: 180s
 
 services:
-  # ── scouts we don't run on the Pi → park in the `extra` profile ────────────
-  bluesky-scout:     { profiles: ["extra"] }
-  reddit-scout:      { profiles: ["extra"] }
-  blog-scout:        { profiles: ["extra"] }
-  leaderboard-scout: { profiles: ["extra"] }
-  web-search-scout:  { profiles: ["extra"] }
-  rss-scout:         { profiles: ["extra"] }
-  rest-json-scout:   { profiles: ["extra"] }
-
-  # ── always-on agents: tolerate the slow arm64 cold boot (see header) ───────
-  arxiv-scout:      *pi-slow-start
-  hn-scout:         *pi-slow-start
-  github-scout:     *pi-slow-start
-  claim-extractor:  *pi-slow-start
-  entity-tracker:   *pi-slow-start
-  sota-tracker:     *pi-slow-start
-  curator:          *pi-slow-start
-  skeptic:          *pi-slow-start
-  api:              *pi-slow-start
-  # The Telegram bridge is light (no ML deps), but arm64 still runs `uv sync`
-  # on first boot before it binds the health port — give it the slow-start grace.
-  telegram-bot:     *pi-slow-start
-
-  # ── viewing/aux services → `ui` profile (start only when you need them) ─────
-  # Browse the wiki on demand with:  docker compose up -d wiki   (naming a
-  # profiled service starts it regardless of COMPOSE_PROFILES); stop it with
-  # docker compose stop wiki.  /ask degrades cleanly when research-qa is down.
-  #
-  # NOTE: the telegram-bot's chat answers come from research-qa and its daily
-  # brief from personalizer — both park here. Keep them stopped and the bot
-  # still runs, but chat answers come back "not covered" and briefs are empty.
-  # To make the bot fully useful on the Pi, start them (RAM permitting):
-  #   docker compose up -d research-qa personalizer
-  wiki:         { profiles: ["ui"] }
-  personalizer: { profiles: ["ui"] }
-  research-qa:  { profiles: ["ui"] }
+  api:           *pi-slow-start
+  wiki:          *pi-slow-start
+  research-qa:   *pi-slow-start
+  personalizer:  *pi-slow-start
+  telegram-bot:  *pi-slow-start
 
   # ── Postgres: low-RAM tuning + SSD-backed data dir ─────────────────────────
   mesh-postgres:
@@ -86,14 +50,6 @@ services:
       - work_mem=8MB
       - -c
       - maintenance_work_mem=64MB
-
-  # ── scheduler: only advertise the agents we actually run on the Pi ─────────
-  scheduler:
-    healthcheck:
-      start_period: 180s
-    environment:
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008"
-      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
 
 # Bind the named Postgres volume to a directory on the SSD. Postgres on the
 # microSD card is slow and wears the card out under a 24/7 write workload.

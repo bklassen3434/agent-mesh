@@ -4,262 +4,135 @@
 # running containers.
 name: agent-mesh
 
+# ─────────────────────────────────────────────────────────────────────────────
+# The live stack. The deterministic controller (`mesh-controller --forever`) is
+# the SOLE orchestrator and runs every skill in-process — so the old A2A agent
+# servers (scouts, claim-extractor, entity-tracker, sota-tracker, curator,
+# skeptic) and the legacy `scheduler` are gone; the controller needs only
+# Postgres + an LLM key. What remains:
+#
+#   mesh-postgres   the single Postgres knowledge + operational store (pgvector)
+#   controller      the always-on self-driving orchestrator (no cron/scheduler)
+#   api             the read API on :8000
+#   wiki            the Next.js wiki on :3000
+#   research-qa     backs the wiki Ask box + Telegram chat (POST /api/v1/ask)
+#   personalizer    backs the daily brief
+#   telegram-bot    the Telegram bridge (chat + daily brief)
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
-  arxiv-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.arxiv_scout"]
+  # ── single Postgres for the whole stack: the knowledge store (`knowledge`
+  # schema, pgvector) plus the operational tables (LangGraph checkpoints + the
+  # `schedules` table in `public`). ──────────────────────────────────────────
+  mesh-postgres:
+    image: pgvector/pgvector:pg16
     environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8001"
-      AGENT_PUBLIC_URL: "http://arxiv-scout:8001"
-    env_file:
-      - .env
-    ports:
-      - "8001:8001"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  hn-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.hn_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8005"
-      AGENT_PUBLIC_URL: "http://hn-scout:8005"
-      MESH_HN_KEYWORDS: ${MESH_HN_KEYWORDS:-AI,LLM,GPT,Claude,robotics,RAG,agent}
-    env_file:
-      - .env
-    ports:
-      - "8005:8005"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  github-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.github_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8008"
-      AGENT_PUBLIC_URL: "http://github-scout:8008"
-      MESH_GITHUB_TOPICS: ${MESH_GITHUB_TOPICS:-llm,agents,machine-learning,ai,robotics}
-      MESH_GITHUB_WATCHLIST: ${MESH_GITHUB_WATCHLIST:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    env_file:
-      - .env
-    ports:
-      - "8008:8008"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  bluesky-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.bluesky_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8009"
-      AGENT_PUBLIC_URL: "http://bluesky-scout:8009"
-      MESH_BLUESKY_HASHTAGS: ${MESH_BLUESKY_HASHTAGS:-ai,ml,llm}
-      MESH_BLUESKY_HANDLES: ${MESH_BLUESKY_HANDLES:-}
-    env_file:
-      - .env
-    ports:
-      - "8009:8009"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  reddit-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.reddit_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8010"
-      AGENT_PUBLIC_URL: "http://reddit-scout:8010"
-      MESH_REDDIT_SUBS: ${MESH_REDDIT_SUBS:-MachineLearning,LocalLLaMA,singularity,artificial}
-      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
-      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
-    env_file:
-      - .env
-    ports:
-      - "8010:8010"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  blog-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.blog_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8011"
-      AGENT_PUBLIC_URL: "http://blog-scout:8011"
-      MESH_BLOG_FEEDS: ${MESH_BLOG_FEEDS:-}
-      MESH_BLOG_FEEDS_FILE: ${MESH_BLOG_FEEDS_FILE:-/app/config/blog_feeds.yaml}
-      MESH_BLOG_LOOKBACK_HOURS: ${MESH_BLOG_LOOKBACK_HOURS:-24}
-    env_file:
-      - .env
+      POSTGRES_DB: langgraph
+      POSTGRES_USER: langgraph
+      POSTGRES_PASSWORD: ${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}
     volumes:
-      - ./config:/app/config:ro
-    ports:
-      - "8011:8011"
+      - mesh_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/healthz')"]
+      test: ["CMD-SHELL", "pg_isready -U langgraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── the orchestrator ───────────────────────────────────────────────────────
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    # The deterministic controller is the sole orchestrator AND its own driver:
+    # `--forever` makes it self-driving (sense → plan via rules → dispatch skills
+    # → apply, looping; idle backoff between empty passes). No external
+    # scheduler/cron. It dispatches skills in-process (no A2A), so it needs only
+    # Postgres + an LLM key — not the agent stack. Default-on, always restarts.
+    entrypoint: ["uv", "run", "mesh-controller", "--apply", "--forever"]
+    environment:
+      # Owner DSN applies the schema + roles on startup; the controller's
+      # knowledge writes go through the writer role.
+      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
+      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
+      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+    env_file:
+      - .env
+    depends_on:
+      mesh-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── the read API ─────────────────────────────────────────────────────────--
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      # Owner DSN, used once at startup to apply the schema + roles (best-effort;
+      # CREATE EXTENSION/ROLE need owner privileges). Request handling uses the
+      # read-only role.
+      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
+      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
+      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
+      # MESH_BIND_INTERFACE wins over API_HOST when set. For Tailscale-only
+      # access, set MESH_BIND_INTERFACE in .env to the host's tailnet IP
+      # (100.x.x.x) and run this service in host network mode (docs/deployment.md).
+      MESH_BIND_INTERFACE: ${MESH_BIND_INTERFACE:-}
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+      API_CORS_ORIGINS: "http://localhost:3000"
+      # LangGraph checkpoints + the `schedules` table live in the same Postgres
+      # (the `public` schema); the status/Pipelines pages read them here.
+      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
+      # Where to reach the ResearchQA agent for POST /api/v1/ask. Degrades to a
+      # clean "unavailable" answer if it's down.
+      MESH_ASK_AGENT_URLS: "http://research-qa:8016"
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      mesh-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
     restart: unless-stopped
 
-  leaderboard-scout:
+  # ── the wiki ─────────────────────────────────────────────────────────────--
+  wiki:
     build:
       context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.leaderboard_scout"]
+      dockerfile: Dockerfile.wiki
     environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8012"
-      AGENT_PUBLIC_URL: "http://leaderboard-scout:8012"
-    env_file:
-      - .env
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+      INTERNAL_API_URL: "http://api:8000"
+      # HOSTNAME is the Next.js standalone bind address; default 0.0.0.0 in the
+      # Dockerfile. Override with MESH_BIND_INTERFACE for Tailscale-only access.
+      HOSTNAME: ${MESH_BIND_INTERFACE:-0.0.0.0}
+    depends_on:
+      api:
+        condition: service_healthy
     ports:
-      - "8012:8012"
+      - "3000:3000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8012/healthz')"]
+      # Force IPv4 — Next.js standalone binds IPv4 only and BusyBox wget
+      # would otherwise hit ::1 first via "localhost".
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
-  # ── Config-driven connectors (Phase 18a) ───────────────────────────────────
-  # One service per kind; arbitrarily many instances are field_connectors rows.
-  # Not enabled for ai-robotics — discoverable, dispatched only where enabled.
-  web-search-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.web_search_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8017"
-      AGENT_PUBLIC_URL: "http://web-search-scout:8017"
-      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
-    env_file:
-      - .env
-    ports:
-      - "8017:8017"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8017/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  rss-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.rss_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8014"
-      AGENT_PUBLIC_URL: "http://rss-scout:8014"
-    env_file:
-      - .env
-    ports:
-      - "8014:8014"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8014/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  rest-json-scout:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.rest_json_scout"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8015"
-      AGENT_PUBLIC_URL: "http://rest-json-scout:8015"
-    env_file:
-      - .env
-    ports:
-      - "8015:8015"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8015/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  personalizer:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.personalizer"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8013"
-      AGENT_PUBLIC_URL: "http://personalizer:8013"
-      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
-      # Sonnet is the recommended default for the briefing pass; falls back to
-      # MESH_LLM_MODEL_DEFAULT then provider default if unset.
-      MESH_LLM_MODEL_PERSONALIZER: ${MESH_LLM_MODEL_PERSONALIZER:-claude-sonnet-4-6}
-      MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
-    env_file:
-      - .env
-    ports:
-      - "8013:8013"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
+  # ── grounded Q&A: backs the wiki Ask box + Telegram chat (POST /api/v1/ask) ─
   research-qa:
     build:
       context: .
@@ -299,280 +172,38 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  claim-extractor:
+  # ── personalizer: backs the daily brief ────────────────────────────────────
+  personalizer:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.claim_extractor"]
+    command: ["uv", "run", "python", "-m", "mesh_agent_servers.personalizer"]
     environment:
       AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8002"
-      AGENT_PUBLIC_URL: "http://claim-extractor:8002"
-      # LLM provider — default Anthropic (Haiku 4.5); set to "ollama" to use
-      # the local Ollama path. ANTHROPIC_API_KEY comes from .env.
+      AGENT_PORT: "8013"
+      AGENT_PUBLIC_URL: "http://personalizer:8013"
       MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
-      MESH_LLM_MODEL: ${MESH_LLM_MODEL:-claude-haiku-4-5}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
-      # Phase 16a: read-only access so the skill can recall its own episodic
-      # history (mesh_reader role; never writes — coordinator owns all writes).
-      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
-    env_file:
-      - .env
-    ports:
-      - "8002:8002"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-  entity-tracker:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.entity_tracker"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8003"
-      AGENT_PUBLIC_URL: "http://entity-tracker:8003"
-    env_file:
-      - .env
-    ports:
-      - "8003:8003"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  sota-tracker:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.sota_tracker"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8004"
-      AGENT_PUBLIC_URL: "http://sota-tracker:8004"
-    env_file:
-      - .env
-    ports:
-      - "8004:8004"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    environment:
-      # Phase 12: single Postgres knowledge + operational store (mesh-postgres).
-      # Owner DSN, used once at startup to apply the schema + roles (best-effort;
-      # CREATE EXTENSION/ROLE need owner privileges). Request handling uses the
-      # read-only role.
-      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
-      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
-      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
-      # Phase 6b: MESH_BIND_INTERFACE wins over API_HOST when set. For
-      # Tailscale-only access, set MESH_BIND_INTERFACE in .env to the
-      # host's tailnet IP (100.x.x.x) and run this service in host
-      # network mode (docs/deployment.md).
-      MESH_BIND_INTERFACE: ${MESH_BIND_INTERFACE:-}
-      API_HOST: "0.0.0.0"
-      API_PORT: "8000"
-      API_CORS_ORIGINS: "http://localhost:3000"
-      # LangGraph checkpoints + the `schedules` table live in the same Postgres
-      # (the `public` schema); the status/Pipelines pages read them here.
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      # Phase 9: where to reach the scheduler's HTTP control surface. The API
-      # proxies trigger/status/reload here; degrades gracefully if it's down.
-      SCHEDULER_URL: "http://scheduler:9100"
-      # Phase 21: where to reach the ResearchQA agent for POST /api/v1/ask.
-      # Degrades to a clean "unavailable" answer if it's down.
-      MESH_ASK_AGENT_URLS: "http://research-qa:8016"
-    env_file:
-      - .env
-    ports:
-      - "8000:8000"
-    depends_on:
-      mesh-postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  wiki:
-    build:
-      context: .
-      dockerfile: Dockerfile.wiki
-    environment:
-      NEXT_PUBLIC_API_URL: "http://localhost:8000"
-      INTERNAL_API_URL: "http://api:8000"
-      # Phase 6b: HOSTNAME is the Next.js standalone bind address; default
-      # 0.0.0.0 in the Dockerfile. Override with MESH_BIND_INTERFACE for
-      # Tailscale-only access. See docs/deployment.md.
-      HOSTNAME: ${MESH_BIND_INTERFACE:-0.0.0.0}
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "3000:3000"
-    healthcheck:
-      # Force IPv4 — Next.js standalone binds IPv4 only and BusyBox wget
-      # would otherwise hit ::1 first via "localhost".
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-
-  curator:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.curator"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8007"
-      AGENT_PUBLIC_URL: "http://curator:8007"
-    env_file:
-      - .env
-    ports:
-      - "8007:8007"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    profiles:
-      - skeptic
-    restart: unless-stopped
-
-  skeptic:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    command: ["uv", "run", "python", "-m", "mesh_agent_servers.skeptic"]
-    environment:
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "8006"
-      AGENT_PUBLIC_URL: "http://skeptic:8006"
-      # Skeptic gets its own model knob so users can pair Haiku for extraction
-      # with a stronger model for falsification work. Falls back to
+      # Sonnet is the recommended default for the briefing pass; falls back to
       # MESH_LLM_MODEL_DEFAULT then provider default if unset.
-      MESH_LLM_PROVIDER: ${MESH_LLM_PROVIDER:-anthropic}
-      MESH_LLM_MODEL_SKEPTIC: ${MESH_LLM_MODEL_SKEPTIC:-}
+      MESH_LLM_MODEL_PERSONALIZER: ${MESH_LLM_MODEL_PERSONALIZER:-claude-sonnet-4-6}
       MESH_LLM_MODEL_DEFAULT: ${MESH_LLM_MODEL_DEFAULT:-}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
-      # Phase 16a: read-only access so the skill can recall its own episodic
-      # history (mesh_reader role; never writes — coordinator owns all writes).
-      MESH_PG_READER_URL: "postgresql://mesh_reader:${MESH_READER_PASSWORD:-mesh_reader}@mesh-postgres:5432/langgraph"
     env_file:
       - .env
     ports:
-      - "8006:8006"
+      - "8013:8013"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/healthz')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    profiles:
-      - skeptic
-    restart: unless-stopped
-
-  controller:
-    build:
-      context: .
-      dockerfile: Dockerfile.coordinator
-    # The deterministic controller is the sole orchestrator AND its own driver:
-    # `--forever` makes it self-driving (sense → plan via rules → dispatch agents
-    # → apply, looping; idle backoff between empty passes). No external
-    # scheduler/cron. It dispatches skills in-process (no A2A), so it needs only
-    # Postgres + an LLM key — not the agent stack. Default-on, always restarts.
-    entrypoint: ["uv", "run", "mesh-controller", "--apply", "--forever"]
-    environment:
-      # Phase 12: owner DSN applies the schema + roles on startup; the
-      # controller's knowledge writes go through the writer role.
-      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
-      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
-      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-    env_file:
-      - .env
-    depends_on:
-      mesh-postgres:
-        condition: service_healthy
-    # Default-on (no profile) — it is the always-on orchestrator. Restarts on
-    # crash/reboot. The `scheduler` service below is now legacy: with `--forever`
-    # nothing needs to fire the controller on a timer.
-    restart: unless-stopped
-
-  scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile.coordinator
-    # LEGACY (profile-gated, off by default): the controller now self-drives via
-    # `--forever`, so nothing needs a timer to fire it. Kept only for the API's
-    # /pipelines status surface; do NOT enable it alongside the controller daemon
-    # or the field gets two orchestrators. Reuses the coordinator image.
-    entrypoint: ["uv", "run", "mesh-scheduler"]
-    environment:
-      # The scheduler shells out to mesh-controller, which inherits this env —
-      # owner DSN to apply schema, writer role for the knowledge writes.
-      MESH_PG_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      MESH_PG_WRITER_URL: "postgresql://mesh_writer:${MESH_WRITER_PASSWORD:-mesh_writer}@mesh-postgres:5432/langgraph"
-      MESH_WRITER_PASSWORD: ${MESH_WRITER_PASSWORD:-mesh_writer}
-      MESH_READER_PASSWORD: ${MESH_READER_PASSWORD:-mesh_reader}
-      # Phase 9: schedule config (interval + enabled) is read from the Postgres
-      # `schedules` table, not the legacy crons below.
-      LANGGRAPH_POSTGRES_URL: "postgresql://langgraph:${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}@mesh-postgres:5432/langgraph"
-      # HTTP control surface the API proxies to (status / reload / run).
-      SCHEDULER_HOST: "0.0.0.0"
-      SCHEDULER_PORT: "9100"
-      # Legacy cron consumed by the /status page's next-run estimate; the live
-      # schedule is interval-based and stored in Postgres.
-      MESH_SCHEDULE_CONTROLLER_CRON: ${MESH_SCHEDULE_CONTROLLER_CRON:-0 */6 * * *}
-    env_file:
-      - .env
-    ports:
-      - "9100:9100"
-    depends_on:
-      mesh-postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    profiles:
-      - scheduler
     restart: unless-stopped
 
   # Telegram bridge — chat with the mesh + receive the daily brief from the
   # Telegram app. Long-polling (dials out to Telegram), so no inbound port is
-  # needed; the only exposed port is the local healthcheck. Calls the read API
-  # for /ask + /briefing, so good answers need research-qa (for chat) and
-  # personalizer (for briefs) running — on the Pi overlay both sit in the `ui`
-  # profile, so promote them if you want the bot fully functional there.
+  # needed; the only exposed port is the local healthcheck. Chat answers come
+  # from research-qa and the daily brief from personalizer (both above).
   telegram-bot:
     build:
       context: .
@@ -606,25 +237,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    restart: unless-stopped
-
-  # Phase 12: single Postgres for the whole stack — the knowledge store
-  # (`knowledge` schema, pgvector) plus the operational tables (LangGraph
-  # checkpoints + the `schedules` table in `public`). pgvector replaces the
-  # former embedded DuckDB knowledge store.
-  mesh-postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: langgraph
-      POSTGRES_USER: langgraph
-      POSTGRES_PASSWORD: ${LANGGRAPH_POSTGRES_PASSWORD:-langgraph}
-    volumes:
-      - mesh_pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langgraph"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
 volumes:

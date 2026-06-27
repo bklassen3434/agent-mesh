@@ -21,25 +21,47 @@ This document has two audiences:
 
 ## Why a 4 GB Pi needs accommodation
 
-`make up` (plain `docker compose up -d`) starts ~18 long-running containers:
-10 scout HTTP servers, `personalizer`, `research-qa`, `claim-extractor`,
-`entity-tracker`, `sota-tracker`, `api`, `wiki`, plus `mesh-postgres`. Steady
-state is ~4–4.5 GB — over budget on a 4 GB box, and the Next.js wiki build can
-OOM during `npm run build`.
+The deterministic controller (`mesh-controller --apply --forever`) is now the
+**sole** orchestrator and runs every skill **in-process** — scouting,
+extraction, entity resolution, skeptic, curation, discovery, consolidation. The
+old A2A agent servers (all `*-scout` servers, `claim-extractor`,
+`entity-tracker`, `sota-tracker`, `curator`, `skeptic`) and the legacy
+`scheduler` are **deleted** from the compose files.
 
-The accommodation **trims the always-on set without losing the modern A2A
-pipeline**. The only functional reduction is fewer source connectors
-(`arxiv` + `github` + `hn` instead of all 7).
+So the always-on stack is now just **7 services** (read `docker-compose.yml`):
 
-### Target footprint
-
-| State | Services | ~RAM |
+| Service | Role | ~RAM |
 |---|---|---|
-| **Always-on** | `mesh-postgres`, `scheduler`, `api`, `arxiv-scout`, `github-scout`, `hn-scout`, `claim-extractor`, `entity-tracker`, `sota-tracker`, `curator`, `skeptic` | ~1.9 GB idle / ~2.7 GB peak |
-| **On-demand** | `wiki`, `personalizer`, `research-qa`, unused scouts | started only when needed |
+| `mesh-postgres` | Postgres + pgvector store (the only data tier) | ~200–400 MB |
+| `controller` | always-on self-driving orchestrator (`--forever`, incl. fastembed) | ~250–400 MB |
+| `api` | read API on :8000 | ~150 MB |
+| `wiki` | Next.js wiki on :3000 | ~150–300 MB |
+| `research-qa` | backs the wiki Ask box + Telegram chat (POST /api/v1/ask) | ~250–400 MB |
+| `personalizer` | backs the daily brief | ~150–250 MB |
+| `telegram-bot` | Telegram bridge | ~80–150 MB |
 
-All five scheduled loops keep working: `ingest` (6 h), `skeptic`,
-`discovery`, `belief_consolidation`, `memory_consolidation` (all daily).
+Add OS + Docker (~300–500 MB) and steady state is roughly **~1.5–2.3 GB**. That
+fits in 4 GB, especially with ~8 GB of swap on the SSD to absorb spikes.
+
+So the accommodation is **not** about trimming a big agent fleet — there isn't
+one anymore. It is about two things:
+
+1. **Get Postgres off the microSD onto an SSD.** A 24/7 write workload will wear
+   out (and eventually corrupt) a microSD card. The SSD is the single most
+   important hardware change.
+2. **Low-RAM Postgres tuning + swap.** Tune Postgres's memory settings down and
+   keep an SSD-backed swap file as a safety net for memory spikes.
+
+There are **no compose profiles** anymore — everything is default-on.
+
+### Scheduled loops are now controller rules, not cron jobs
+
+There is **no scheduler**. The controller self-drives continuously: each pass it
+senses the field, plans a worklist via its rule engine, dispatches skills, then
+idles `MESH_CONTROLLER_IDLE_SLEEP_SEC` between empty passes. Scouting, skeptic
+challenges, discovery, belief consolidation/decay/archival, and memory
+consolidation **all still happen** — but as controller rules whose cadence comes
+from the rules' own cooldowns plus that idle backoff, not from a cron clock.
 
 ---
 
@@ -48,37 +70,37 @@ All five scheduled loops keep working: `ingest` (6 h), `skeptic`,
 These are committed to the repo and travel to the Pi via `git pull`. None of
 them affect a laptop, because the laptop never sets `COMPOSE_FILE`.
 
-### A1. `docker-compose.pi.yml` — the overlay (create at repo root)
+### A1. `docker-compose.pi.yml` — the overlay (lives at repo root)
 
-This is an **opt-in overlay**, not auto-merged. Verify it exists with exactly
-this content (it may already be present):
+This is an **opt-in overlay**, not auto-merged. It's already committed — don't
+re-create it inline; read the real file. It now does only three things, with
+**no compose profiles** (the agent fleet and scheduler are gone, so there's
+nothing left to park):
+
+1. **Tunes Postgres for low RAM** and binds its data dir to the SSD.
+2. **Binds `mesh_pg_data` to `/mnt/ssd/mesh_pg_data`** (the SSD).
+3. **Lengthens healthcheck `start_period` to 180s** for `api`, `wiki`,
+   `research-qa`, `personalizer`, and `telegram-bot` — the Pi's arm64 CPU needs
+   ~3 min to `uv sync` + import heavy ML deps before binding a port, and the
+   base 15–30s gates would otherwise abort `up --build`.
+
+The key bits (see the file for the full thing):
 
 ```yaml
-# docker-compose.pi.yml — Raspberry Pi 5 (4 GB) accommodation overlay.
-#
-# NOT auto-merged. Opt in on the Pi only, either by passing it explicitly:
-#     docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d
-# or (recommended) by setting in the Pi's .env:
-#     COMPOSE_FILE=docker-compose.yml:docker-compose.pi.yml
-# so every `docker compose` / `make` command picks it up automatically.
-# Your laptop never sets COMPOSE_FILE, so its behaviour is unchanged.
+# Slow-start anchor merged into every service with a healthcheck (only
+# start_period is overridden; the rest is inherited from docker-compose.yml).
+x-pi-slow-start: &pi-slow-start
+  healthcheck:
+    start_period: 180s
 
 services:
-  # ── scouts we don't run on the Pi → park in the `extra` profile ────────────
-  bluesky-scout:     { profiles: ["extra"] }
-  reddit-scout:      { profiles: ["extra"] }
-  blog-scout:        { profiles: ["extra"] }
-  leaderboard-scout: { profiles: ["extra"] }
-  web-search-scout:  { profiles: ["extra"] }
-  rss-scout:         { profiles: ["extra"] }
-  rest-json-scout:   { profiles: ["extra"] }
+  api:           *pi-slow-start
+  wiki:          *pi-slow-start
+  research-qa:   *pi-slow-start
+  personalizer:  *pi-slow-start
+  telegram-bot:  *pi-slow-start
 
-  # ── viewing/aux services → `ui` profile (start only when you need them) ─────
-  wiki:         { profiles: ["ui"] }
-  personalizer: { profiles: ["ui"] }
-  research-qa:  { profiles: ["ui"] }
-
-  # ── Postgres: low-RAM tuning + SSD-backed data dir ─────────────────────────
+  # Postgres: low-RAM tuning + SSD-backed data dir
   mesh-postgres:
     command:
       - postgres
@@ -93,12 +115,6 @@ services:
       - -c
       - maintenance_work_mem=64MB
 
-  # ── scheduler: only advertise the agents we actually run on the Pi ─────────
-  scheduler:
-    environment:
-      MESH_AGENT_URLS: "http://arxiv-scout:8001,http://claim-extractor:8002,http://entity-tracker:8003,http://sota-tracker:8004,http://hn-scout:8005,http://github-scout:8008"
-      MESH_SKEPTIC_AGENT_URLS: "http://curator:8007,http://skeptic:8006"
-
 # Bind the named Postgres volume to a directory on the SSD.
 volumes:
   mesh_pg_data:
@@ -111,67 +127,35 @@ volumes:
 
 > If the SSD mount path differs from `/mnt/ssd`, change `device:` accordingly.
 
-### A2. Makefile — add Pi convenience targets
+### A2. Makefile — Pi convenience targets (already present)
 
-Append these targets (tab-indented recipes). They assume the Pi's `.env` sets
-`COMPOSE_FILE` so the overlay applies. Add `pi-up pi-down pi-wiki pi-pipeline`
-to the `.PHONY` line.
+These targets assume the Pi's `.env` sets `COMPOSE_FILE` so the overlay applies:
 
 ```makefile
 # ── Raspberry Pi (4 GB) helpers — assume COMPOSE_FILE includes the overlay ──
 pi-up:
-	docker compose up -d --build
+	docker compose up -d --build --remove-orphans
 	@docker compose ps
 
 pi-down:
-	docker compose --profile ui --profile extra down --remove-orphans
+	docker compose down --remove-orphans
 
-# Browse the wiki on demand, then `docker compose stop wiki` to free the RAM.
-pi-wiki:
-	docker compose up -d wiki
-	@echo "wiki → http://localhost:3000 (or the Pi's tailnet name)"
-
-# One bounded controller run via the scheduler image.
+# One bounded controller round (shadow → use controller-apply to act).
 pi-pipeline:
 	docker compose run --rm --no-deps \
-		--entrypoint "uv run mesh-controller --apply" scheduler
+		--entrypoint "uv run mesh-controller --apply" controller
 ```
 
-### A3. (Optional) Scheduler misfire grace — `apps/scheduler/src/mesh_scheduler/scheduler.py`
+`make controller` / `make controller-apply` (in the same Makefile) run one
+controller pass against the `controller` service — shadow vs. apply. There is
+no `pi-wiki` target anymore: the wiki is always-on.
 
-In `SchedulerManager._register`, the `add_job(...)` call already sets
-`coalesce=True, max_instances=1`. Add a generous `misfire_grace_time` so a
-within-process pause (a long-running job, a brief hang) doesn't silently drop
-the next fire:
+### A3. Connector enablement is data, not code
 
-```python
-        self._scheduler.add_job(
-            self._scheduled_fire,
-            args=[job_id, field_id],
-            trigger=IntervalTrigger(hours=hours),
-            id=aps_id,
-            name=f"Mesh {aps_id}",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=3600,  # tolerate up to 1h of lateness, then run once
-        )
-```
-
-**Honest scope:** this helps *within* a running process. It does **not** make
-the scheduler "catch up" on fires missed while the whole process/host was down,
-because the jobstore is in-memory and rebuilt on startup (next run = now +
-interval). For the Pi that's acceptable: after a reboot, the first run lands
-within one interval (≤6 h for the pipeline), and every job is idempotent. Full
-reboot-catch-up would require a persistent jobstore or a startup "run if
-overdue" check against `pipeline_runs.started_at` — out of scope here; only do
-it if missing one post-reboot cycle is genuinely unacceptable.
-
-### A4. Connector disablement is data, not code
-
-The unused connectors are turned off in the `field_connectors` table at deploy
-time (Part D, Step 6) — not in code. No repo change. Re-enabling later is a
-single SQL `UPDATE` plus starting that scout.
+Connectors are enabled per-field in the `field_connectors` catalog table — not
+in code. The controller polls the enabled ones **in-process**; there is no
+per-scout container to start or stop. Disabling a noisy connector is a single
+SQL `UPDATE` (Part D, Step 6).
 
 ---
 
@@ -192,9 +176,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### B1. SSD for Postgres (required — do not use the microSD card)
 
-A microSD card is slow under Postgres's write pattern and **will wear out**
-under a 24/7 DB workload, eventually losing your knowledge base. Use the Pi 5's
-PCIe NVMe HAT or a USB 3 SSD.
+**This is the single most important hardware change.** A 24/7 Postgres write
+workload **will corrupt and wear out a microSD card**, eventually losing your
+whole knowledge base. The SSD is non-negotiable. Use the Pi 5's PCIe NVMe HAT or
+a USB 3 SSD.
 
 ```bash
 # Mount the SSD at /mnt/ssd and make it persistent across reboots.
@@ -209,15 +194,20 @@ sudo mount -a
 sudo mkdir -p /mnt/ssd/mesh_pg_data
 ```
 
-### B2. zram compressed swap (RAM safety cushion)
+### B2. Swap on the SSD (RAM safety cushion)
 
-Absorbs the brief peak during a pipeline run without thrashing the SSD.
+Keep ~8 GB of swap **on the SSD** as a free safety net for memory spikes. Never
+put swap on the microSD card — the write load that corrupts it for Postgres
+applies doubly to swap.
 
 ```bash
-sudo apt-get install -y zram-tools
-printf 'ALGO=zstd\nPERCENT=50\n' | sudo tee /etc/default/zramswap
-sudo systemctl restart zramswap
-free -h     # confirm a swap line now appears
+# An 8 GB swapfile on the SSD, persistent across reboots.
+sudo fallocate -l 8G /mnt/ssd/swapfile
+sudo chmod 600 /mnt/ssd/swapfile
+sudo mkswap /mnt/ssd/swapfile
+sudo swapon /mnt/ssd/swapfile
+echo '/mnt/ssd/swapfile  none  swap  sw  0  0' | sudo tee -a /etc/fstab
+free -h     # confirm ~8 GB of swap now appears
 ```
 
 ### B3. Docker log rotation (prevent disk fill)
@@ -269,9 +259,8 @@ cp .env.example .env
 ANTHROPIC_API_KEY=sk-ant-...
 MESH_LLM_PROVIDER=anthropic
 
-# --- Pi accommodation (activates the overlay + trimmed always-on set) ---
+# --- Pi accommodation (activates the low-RAM/SSD overlay) ---
 COMPOSE_FILE=docker-compose.yml:docker-compose.pi.yml
-COMPOSE_PROFILES=scheduler,skeptic
 MESH_PG_POOL_MAX=3
 
 # --- HARDENING: change the default DB passwords BEFORE first init ---
@@ -285,35 +274,44 @@ MESH_BIND_INTERFACE=100.x.x.x        # the Pi's tailnet IP from `tailscale ip -4
 ```
 
 > If you skip Tailscale, leave `MESH_BIND_INTERFACE` empty **and** firewall the
-> Pi (e.g. `ufw`) so ports 3000/8000/9100/8001+ aren't exposed on your LAN.
+> Pi (e.g. `ufw`) so ports 3000/8000/8013/8016/9110 aren't exposed on your LAN.
 
 ### Step 3 — First build & boot
 
+The simplest way to start everything is the launcher at the repo root. It
+respects `COMPOSE_FILE`, so on the Pi it picks up the overlay automatically:
+
 ```bash
-docker compose up -d --build     # or: make pi-up
-# First arm64 build is slow (10–20 min). Be patient. The heavy Next.js wiki
-# build is skipped (it's in the `ui` profile).
+./run.sh                         # build (if needed) + start all 7 services, then show status
 ```
+
+`make pi-up` and `docker compose up -d --build --remove-orphans` are exact
+equivalents. The first arm64 build is slow (10–20 min, including the Next.js
+wiki build) — be patient.
 
 ### Step 4 — Apply schema + roles
 
 ```bash
 uv run mesh.cli init-db          # idempotent; creates the knowledge schema + writer/reader roles
-docker compose ps                # confirm the always-on set is healthy
+./run.sh status                  # confirm all 7 services are healthy (or: docker compose ps)
 ```
 
 ### Step 5 — Verify the pipeline end-to-end
 
 ```bash
 curl -s localhost:8000/healthz
-make pi-pipeline                 # one bounded 5-paper run via the scheduler image
+make pi-pipeline                 # one bounded controller run via the `controller` service
 uv run mesh.cli pipeline-stats   # confirm claims / entities / beliefs landed
 ```
 
-### Step 6 — Disable the unused connectors
+(The always-on `controller` service is already self-driving; `make pi-pipeline`
+just runs one extra bounded pass on demand.)
 
-`ai-robotics` still enables all 7 connectors, so the controller would try (and
-fail, noisily) to reach the trimmed-out ones. Turn them off:
+### Step 6 — (Optional) Disable noisy connectors
+
+The controller polls every enabled connector for the field **in-process**. If a
+connector is failing or you want to cut load, disable it in the catalog — no
+container to stop:
 
 ```bash
 docker compose exec mesh-postgres psql -U langgraph -d langgraph -c \
@@ -322,51 +320,62 @@ docker compose exec mesh-postgres psql -U langgraph -d langgraph -c \
    AND connector_id IN ('bluesky','reddit','blog','leaderboard');"
 ```
 
-Leaves `arxiv`, `hn`, `github` enabled — matching the running scouts.
+Re-enable later by flipping `enabled = true` — that's the whole change.
 
 ### Step 7 — Confirm always-on + reboot persistence
 
 ```bash
-docker stats --no-stream         # peak should stay well under 4 GB
+docker stats --no-stream         # steady state ~1.5–2.3 GB, peak well under 4 GB
 free -h
-sudo reboot                      # after reboot, the always-on set auto-restarts
-# (restart: unless-stopped + `systemctl enable docker`). The scheduler resumes
-# its clock with no laptop involved.
+sudo reboot                      # after reboot, all 7 services auto-restart
+# (restart: unless-stopped + `systemctl enable docker`). The controller resumes
+# self-driving with no laptop involved.
 ```
 
 ---
 
 ## Part E — Operations
 
-### Browse the wiki on demand
+### Browse the wiki
+
+The wiki is always-on — just open it (no separate start step):
 
 ```bash
-make pi-wiki                     # builds + starts the wiki (first build is slow)
 # → http://<pi-name>.<tailnet>.ts.net:3000
-docker compose stop wiki         # free the RAM when done
 ```
 
-### Adjust the schedule (no restart needed)
+### Follow what the controller is doing
 
 ```bash
-# Stretch the ingest loop to every 12h to reduce load:
-docker compose exec mesh-postgres psql -U langgraph -d langgraph -c \
-"UPDATE public.schedules SET interval_hours = 12 WHERE job_id = 'ingest';"
-# Disable a loop entirely:
-docker compose exec mesh-postgres psql -U langgraph -d langgraph -c \
-"UPDATE public.schedules SET enabled = false WHERE job_id = 'discovery';"
-# Applies within ~30s via the scheduler's reconcile poll.
+./run.sh logs                    # follow logs from every service (or: docker compose logs -f)
+docker compose logs -f controller
 ```
+
+### Tune the cadence
+
+There is **no scheduler** and no `schedules` table to edit. The controller
+self-drives; cadence comes from the rules' own cooldowns plus idle backoff. Tune
+it through the `MESH_CONTROLLER_*` env vars in `.env`, then restart the
+controller:
+
+```bash
+# e.g. scout connectors less often, idle longer between empty passes:
+#   MESH_CONTROLLER_SCOUT_COOLDOWN_SEC=...   MESH_CONTROLLER_IDLE_SLEEP_SEC=...
+#   MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC=...
+docker compose up -d controller   # picks up the new .env values
+```
+
+To cut work without touching cadence, disable a connector in the catalog
+(Part D, Step 6).
 
 ### Run the controller manually
 
-Challenge, discovery, belief consolidation, decay/archival, and memory
-consolidation are all controller rules now — there are no separate maintenance
-jobs to run by hand. A single controller run exercises whichever rules have
-pending tensions:
+The always-on `controller` already runs continuously. To force one extra bounded
+pass on demand (extract, challenge, consolidate, discover — whichever rules have
+pending tensions):
 
 ```bash
-make controller-apply    # one full controller run: extract, challenge, consolidate, discover, …
+make controller-apply    # one full controller pass against the `controller` service
 ```
 
 ### Nightly backup of the knowledge store (recommended)
@@ -386,39 +395,22 @@ make controller-apply    # one full controller run: extract, challenge, consolid
 
 | Symptom | Cause / fix |
 |---|---|
-| Container exits with **code 137** | OOM-kill. Stop the orphaned agent containers (the controller runs skills in-process — see low-footprint mode below). |
+| Container exits with **code 137** | OOM-kill. The stack is already minimal (7 in-process services — there's nothing to trim). Add/confirm ~8 GB SSD swap (B2), confirm Postgres is on the SSD with the low-RAM tuning applied (overlay active via `COMPOSE_FILE`), and check `free -h` / `docker stats`. Stretch `MESH_CONTROLLER_*` cooldowns to spread load. |
 | Controller logs a connector reach failure | Disable that connector for the field (Step 6). |
 | Postgres won't start, permission errors on data dir | `/mnt/ssd/mesh_pg_data` not writable / SSD not mounted. Confirm `mount -a` and the dir exists. |
-| Wiki build killed | Build it on a laptop with `docker buildx --platform linux/arm64`, push/load the image, then `docker compose up -d wiki`. |
+| Wiki build killed during `up --build` | The arm64 Next.js build is the heaviest step. Confirm SSD swap is on (B2); if it still OOMs, build it on a laptop with `docker buildx --platform linux/arm64`, push/load the image, then `docker compose up -d wiki`. |
 | Everything dies on reboot | `sudo systemctl enable docker`; confirm services show `restart: unless-stopped` in `docker inspect`. |
 
-### Low-footprint mode (zero agent containers)
-
-The deterministic controller already runs every skill in-process — the A2A agent
-servers are orphaned and need not run. So **only `mesh-postgres` + `scheduler` +
-`api`** need to be up; you can stop the scout/extractor containers entirely with
-no loss of functionality. The scheduler's single `controller` job
-(`mesh-controller --apply`) drives the whole loop. There is no separate in-process
-fallback to switch to — the controller *is* the in-process path, with full
-per-field connectors, semantic entity resolution, discovery, and observability.
+The stack is already at its minimal footprint: the deterministic controller runs
+every skill **in-process**, so there are no agent containers to stop or
+"low-footprint mode" to switch to. The only knobs left are swap, the SSD, the
+Postgres tuning (all above), and the `MESH_CONTROLLER_*` cooldowns.
 
 ---
 
-## Appendix — Connector slug ↔ scout container reference
+## Appendix — Connectors
 
-| Connector slug | Scout container | Port | Default-enabled (ai-robotics) | Kept on Pi |
-|---|---|---|---|---|
-| `arxiv` | `arxiv-scout` | 8001 | ✅ | ✅ |
-| `hn` | `hn-scout` | 8005 | ✅ | ✅ |
-| `github` | `github-scout` | 8008 | ✅ | ✅ |
-| `bluesky` | `bluesky-scout` | 8009 | ✅ | ❌ (disabled) |
-| `reddit` | `reddit-scout` | 8010 | ✅ | ❌ (disabled) |
-| `blog` | `blog-scout` | 8011 | ✅ | ❌ (disabled) |
-| `leaderboard` | `leaderboard-scout` | 8012 | ✅ | ❌ (disabled) |
-| (config-driven) | `web-search-scout` | 8017 | ❌ | ❌ |
-| (config-driven) | `rss-scout` | 8014 | ❌ | ❌ |
-| (config-driven) | `rest-json-scout` | 8015 | ❌ | ❌ |
-
-Other always-on (no connector): `claim-extractor` (8002), `entity-tracker`
-(8003), `sota-tracker` (8004), `curator` (8007), `skeptic` (8006), `api`
-(8000), `scheduler` (9100), `mesh-postgres` (5432).
+There are no per-scout containers. Connectors are enabled per-field in the
+`knowledge.field_connectors` catalog table, and the controller polls each
+enabled one **in-process** during scouting. Enable/disable a connector with a
+single SQL `UPDATE` (Part D, Step 6) — no container starts or stops.

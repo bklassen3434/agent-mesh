@@ -1,16 +1,16 @@
 .PHONY: up down logs controller controller-apply wiki api types types-check check hooks wiki-install \
-	pi-up pi-down pi-wiki pi-pipeline \
+	pi-up pi-down pi-pipeline \
 	test test-ui test-ui-headed test-ui-debug test-ui-report
 
 # ── Local Docker Compose targets ────────────────────────────────────────────
 
 up:
-	docker compose up -d --build
+	docker compose up -d --build --remove-orphans
 	@echo "Waiting for healthchecks..."
 	@docker compose ps
 
 down:
-	docker compose --profile controller --profile scheduler down --remove-orphans
+	docker compose down --remove-orphans
 
 logs:
 	docker compose logs -f
@@ -33,21 +33,16 @@ controller-apply:
 
 # ── Raspberry Pi (4 GB) helpers — assume COMPOSE_FILE includes the overlay ──
 pi-up:
-	docker compose up -d --build
+	docker compose up -d --build --remove-orphans
 	@docker compose ps
 
 pi-down:
-	docker compose --profile ui --profile extra down --remove-orphans
+	docker compose down --remove-orphans
 
-# Browse the wiki on demand, then `docker compose stop wiki` to free the RAM.
-pi-wiki:
-	docker compose up -d wiki
-	@echo "wiki → http://localhost:3000 (or the Pi's tailnet name)"
-
-# One bounded controller round via the scheduler image.
+# One bounded controller round (shadow → use controller-apply to act).
 pi-pipeline:
 	docker compose run --rm --no-deps \
-		--entrypoint "uv run mesh-controller --apply" scheduler
+		--entrypoint "uv run mesh-controller --apply" controller
 
 # ── Wiki / API convenience ──────────────────────────────────────────────────
 

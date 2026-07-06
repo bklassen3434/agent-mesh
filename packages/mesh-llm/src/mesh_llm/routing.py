@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from mesh_llm.client import LLMResponseError
+from mesh_llm.client import LLMRateLimitedError, LLMResponseError
 from mesh_llm.protocol import LLMClient
 
 # Tier defaults. The cheap tier mirrors each provider's current hard default so
@@ -106,6 +106,8 @@ class RoutingConfig:
     strong_provider: str
     escalate_chars: int
     escalate_on_parse_fail: bool
+    # Defaulted so pre-existing full-field constructions keep working.
+    escalate_on_rate_limit: bool = True
 
     @classmethod
     def from_env(
@@ -168,6 +170,7 @@ class RoutingConfig:
             strong_provider=strong_provider,
             escalate_chars=_int_env("MESH_ROUTE_ESCALATE_CHARS", _DEFAULT_ESCALATE_CHARS),
             escalate_on_parse_fail=_env_flag("MESH_ROUTE_ESCALATE_ON_PARSE_FAIL", True),
+            escalate_on_rate_limit=_env_flag("MESH_ROUTE_ESCALATE_ON_RATE_LIMIT", True),
         )
 
 
@@ -391,6 +394,14 @@ class RoutedLLMClient:
                 name, system, user, response_model,
                 self._with_trace_meta(options, escalation),
             )
+        except LLMRateLimitedError:
+            escalation = self._escalate_after_rate_limit(decision)
+            if escalation is None:
+                raise
+            return self.strong_client.complete_with_latency(
+                name, system, user, response_model,
+                self._with_trace_meta(options, escalation),
+            )
 
     def complete_with_usage(
         self,
@@ -414,6 +425,14 @@ class RoutedLLMClient:
                 name, system, user, response_model,
                 self._with_trace_meta(options, escalation),
             )
+        except LLMRateLimitedError:
+            escalation = self._escalate_after_rate_limit(decision)
+            if escalation is None:
+                raise
+            return self.strong_client.complete_with_usage(
+                name, system, user, response_model,
+                self._with_trace_meta(options, escalation),
+            )
 
     def _escalate_after_parse_fail(
         self, decision: RoutingDecision
@@ -429,4 +448,22 @@ class RoutedLLMClient:
             self._config.strong_model,
             self._config.strong_provider,
             "cheap parse failure → escalate",
+        )
+
+    def _escalate_after_rate_limit(
+        self, decision: RoutingDecision
+    ) -> RoutingDecision | None:
+        """Decide whether a rate-limited cheap tier should retry on strong.
+
+        A 429/TPM-413 from the cheap provider is capacity, not difficulty —
+        spilling to the strong tier keeps the pipeline at full pace at the
+        strong tier's price. Returns ``None`` to re-raise (already on strong,
+        or ``MESH_ROUTE_ESCALATE_ON_RATE_LIMIT`` disabled)."""
+        if decision.tier is Tier.STRONG or not self._config.escalate_on_rate_limit:
+            return None
+        return RoutingDecision(
+            Tier.STRONG,
+            self._config.strong_model,
+            self._config.strong_provider,
+            "cheap tier rate-limited → escalate",
         )

@@ -17,6 +17,7 @@ _ROUTE_VARS = (
     "MESH_ROUTE_STRONG_PROVIDER",
     "MESH_ROUTE_ESCALATE_CHARS",
     "MESH_ROUTE_ESCALATE_ON_PARSE_FAIL",
+    "MESH_ROUTE_ESCALATE_ON_RATE_LIMIT",
     "MESH_ROUTE_SKEPTIC_ENABLED",
     "MESH_ROUTE_EXTRACTION_ENABLED",
     "MESH_LLM_MODEL",
@@ -81,6 +82,7 @@ def test_from_env_round_trips_all_knobs(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("MESH_ROUTE_STRONG_PROVIDER", "anthropic")
     monkeypatch.setenv("MESH_ROUTE_ESCALATE_CHARS", "5000")
     monkeypatch.setenv("MESH_ROUTE_ESCALATE_ON_PARSE_FAIL", "false")
+    monkeypatch.setenv("MESH_ROUTE_ESCALATE_ON_RATE_LIMIT", "false")
 
     cfg = RoutingConfig.from_env()
     assert cfg.enabled is True
@@ -90,6 +92,7 @@ def test_from_env_round_trips_all_knobs(monkeypatch: pytest.MonkeyPatch) -> None
     assert cfg.strong_provider == "anthropic"
     assert cfg.escalate_chars == 5000
     assert cfg.escalate_on_parse_fail is False
+    assert cfg.escalate_on_rate_limit is False
 
 
 def test_bad_escalate_chars_falls_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:

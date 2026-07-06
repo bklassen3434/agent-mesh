@@ -35,7 +35,11 @@ from tenacity import (
     wait_exponential,
 )
 
-from mesh_llm.client import LLMProviderNotReadyError, LLMResponseError
+from mesh_llm.client import (
+    LLMProviderNotReadyError,
+    LLMRateLimitedError,
+    LLMResponseError,
+)
 from mesh_llm.pricing import estimate_cost, is_priced
 from mesh_llm.usage import LLMUsage
 from mesh_llm.usage_sink import UsageEvent, record_usage
@@ -234,9 +238,13 @@ class GroqClient:
             raise GroqNotReadyError(
                 "Groq API key was rejected. Check GROQ_API_KEY."
             )
-        if response.status_code == 429:
-            raise GroqNotReadyError(
-                "Groq rate limit exceeded; back off and retry later."
+        if response.status_code == 429 or response.status_code == 413:
+            # 429 = over RPM/TPM/TPD; 413 = single request larger than the
+            # tier's TPM admission budget. Both are capacity, not config —
+            # distinguishable so the router can escalate instead of failing.
+            raise LLMRateLimitedError(
+                f"Groq rate limit exceeded ({response.status_code}): "
+                f"{response.text[:200]}"
             )
         if response.status_code >= 400:
             raise GroqNotReadyError(

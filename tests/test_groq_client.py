@@ -7,7 +7,13 @@ from typing import Any
 
 import httpx
 import pytest
-from mesh_llm import GroqClient, GroqNotReadyError, LLMResponseError
+from mesh_llm import (
+    GroqClient,
+    GroqNotReadyError,
+    LLMProviderNotReadyError,
+    LLMRateLimitedError,
+    LLMResponseError,
+)
 from pydantic import BaseModel
 
 
@@ -120,10 +126,22 @@ def test_rejected_key_raises_not_ready() -> None:
         client.complete("t", "sys", "user")
 
 
-def test_rate_limit_raises_not_ready() -> None:
+def test_rate_limit_raises_typed_error() -> None:
     client = _client(lambda request: httpx.Response(429, json={"error": "slow down"}))
-    with pytest.raises(GroqNotReadyError, match="rate limit"):
+    with pytest.raises(LLMRateLimitedError, match="rate limit"):
         client.complete("t", "sys", "user")
+
+
+def test_tpm_413_raises_typed_error_and_stays_provider_failure() -> None:
+    # 413 = request larger than the tier's TPM admission budget. Must be the
+    # rate-limit type (router escalates) while still matching the generic
+    # abort-on-provider-failure catch.
+    client = _client(
+        lambda request: httpx.Response(413, json={"error": "Request too large"})
+    )
+    with pytest.raises(LLMRateLimitedError):
+        client.complete("t", "sys", "user")
+    assert issubclass(LLMRateLimitedError, LLMProviderNotReadyError)
 
 
 def test_health_check_ok_and_missing_model() -> None:

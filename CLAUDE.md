@@ -173,6 +173,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_ROUTE_CHEAP_PROVIDER` / `MESH_ROUTE_STRONG_PROVIDER` | `MESH_LLM_PROVIDER` | Per-tier provider (e.g. cheap local Ollama, strong Anthropic API) |
 | `MESH_ROUTE_ESCALATE_CHARS` | `12000` | User-content length (chars) at/above which a request escalates to strong |
 | `MESH_ROUTE_ESCALATE_ON_PARSE_FAIL` | `true` | Retry once on the strong tier when the cheap tier fails to parse |
+| `MESH_ROUTE_ESCALATE_ON_RATE_LIMIT` | `true` | Retry once on the strong tier when the cheap tier is rate-limited (429/TPM-413) |
 | `MESH_BELIEF_MERGE_HIGH` | `0.95` | Cosine similarity ≥ this auto-merges beliefs (consolidation; tighter than entity resolution) |
 | `MESH_BELIEF_MERGE_LOW` | `0.85` | Cosine similarity ≤ this auto-rejects; the middle band goes to the LLM (defaults to not-same) |
 | `MESH_BELIEF_CANDIDATE_LIMIT` | `500` | Per-field cap on query beliefs scanned per consolidation run (incrementality bound) |

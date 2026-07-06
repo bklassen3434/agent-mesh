@@ -37,6 +37,16 @@ class LLMProviderNotReadyError(Exception):
     """
 
 
+class LLMRateLimitedError(LLMProviderNotReadyError):
+    """The provider rejected the request on a rate/quota limit (429 or a
+    TPM-admission 413), not a configuration problem.
+
+    Subclasses ``LLMProviderNotReadyError`` so existing abort-on-provider-
+    failure callers are unchanged; ``RoutedLLMClient`` catches it specifically
+    to retry a rate-limited cheap-tier request on the strong tier
+    (``MESH_ROUTE_ESCALATE_ON_RATE_LIMIT``)."""
+
+
 class OllamaNotReadyError(LLMProviderNotReadyError):
     """Raised when Ollama is unreachable or the required model is not pulled."""
 

@@ -4,6 +4,7 @@ from mesh_llm.anthropic_client import AnthropicClient, AnthropicNotReadyError
 from mesh_llm.batch import BatchItemResult, BatchRequestItem
 from mesh_llm.client import (
     LLMProviderNotReadyError,
+    LLMRateLimitedError,
     LLMResponseError,
     OllamaClient,
     OllamaNotReadyError,
@@ -45,6 +46,7 @@ __all__ = [
     "GroqNotReadyError",
     "LLMClient",
     "LLMProviderNotReadyError",
+    "LLMRateLimitedError",
     "LLMResponseError",
     "LLMUsage",
     "OllamaClient",

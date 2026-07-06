@@ -109,8 +109,18 @@ into the expected schema) triggers **one retry on the strong tier**
 silent: the escalation is recorded with reason `"cheap parse failure →
 escalate"`. A **strong-tier** failure surfaces normally — there is no retry loop.
 
-Provider-not-ready errors (`AnthropicNotReadyError` / `OllamaNotReadyError` /
-`GroqNotReadyError`) **always propagate** — routing never swallows an
+## Escalate on rate limit
+
+A rate-limited cheap tier (`LLMRateLimitedError` — a Groq 429, or a 413 where
+the request exceeds the tier's TPM admission budget) likewise retries **once on
+the strong tier** (`MESH_ROUTE_ESCALATE_ON_RATE_LIMIT`, default `true`), with
+reason `"cheap tier rate-limited → escalate"`. Capacity, not difficulty: the
+pipeline keeps full pace at the strong tier's price while the cheap provider is
+throttled (e.g. the Groq free tier). A rate limit on the strong tier surfaces
+normally.
+
+Other provider-not-ready errors (`AnthropicNotReadyError` / `OllamaNotReadyError`
+/ `GroqNotReadyError`) **always propagate** — routing never swallows an
 unconfigured-provider error.
 
 `health_check()` checks only the **cheap tier** (the default path every enabled
@@ -141,6 +151,7 @@ Routing knobs:
 | `MESH_ROUTE_CHEAP_PROVIDER` / `MESH_ROUTE_STRONG_PROVIDER` | `MESH_LLM_PROVIDER` | Per-tier provider (e.g. cheap local Ollama, strong Anthropic API) |
 | `MESH_ROUTE_ESCALATE_CHARS` | `12000` | User-content length threshold for escalation |
 | `MESH_ROUTE_ESCALATE_ON_PARSE_FAIL` | `true` | Retry once on strong when the cheap tier fails to parse |
+| `MESH_ROUTE_ESCALATE_ON_RATE_LIMIT` | `true` | Retry once on strong when the cheap tier is rate-limited |
 
 ---
 

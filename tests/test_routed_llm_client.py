@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from mesh_llm import LLMClient, LLMResponseError
+from mesh_llm import LLMClient, LLMRateLimitedError, LLMResponseError
 from mesh_llm.routing import RoutedLLMClient, RoutingConfig, Tier
 from mesh_llm.usage import LLMUsage
 
@@ -12,14 +12,17 @@ from mesh_llm.usage import LLMUsage
 class _FakeClient:
     """Records the calls it receives and returns canned latency/usage.
 
-    Optionally raises ``LLMResponseError`` on its first call to exercise the
-    cheap→strong parse-failure escalation.
+    Optionally raises ``LLMResponseError`` (or ``LLMRateLimitedError``) on its
+    first call to exercise the cheap→strong escalations.
     """
 
-    def __init__(self, model: str, *, fail_once: bool = False) -> None:
+    def __init__(
+        self, model: str, *, fail_once: bool = False, rate_limit_once: bool = False
+    ) -> None:
         self.model = model
         self.agent_name: str | None = None
         self._fail_once = fail_once
+        self._rate_limit_once = rate_limit_once
         self.calls: list[dict[str, Any]] = []
         self.health_checked = False
 
@@ -37,6 +40,8 @@ class _FakeClient:
         self.calls.append({"options": options})
         if self._fail_once and len(self.calls) == 1:
             raise LLMResponseError(f"parse fail on {self.model}")
+        if self._rate_limit_once and len(self.calls) == 1:
+            raise LLMRateLimitedError(f"rate limited on {self.model}")
         return f"answer:{self.model}", 42
 
     def complete_with_usage(
@@ -50,6 +55,8 @@ class _FakeClient:
         self.calls.append({"options": options})
         if self._fail_once and len(self.calls) == 1:
             raise LLMResponseError(f"parse fail on {self.model}")
+        if self._rate_limit_once and len(self.calls) == 1:
+            raise LLMRateLimitedError(f"rate limited on {self.model}")
         # Real clients stamp the model that served the call onto the usage.
         return (
             f"answer:{self.model}",
@@ -65,6 +72,7 @@ def _routed(
     *,
     escalate_chars: int = 12_000,
     escalate_on_parse_fail: bool = True,
+    escalate_on_rate_limit: bool = True,
 ) -> RoutedLLMClient:
     cfg = RoutingConfig(
         enabled=True,
@@ -74,6 +82,7 @@ def _routed(
         strong_provider="anthropic",
         escalate_chars=escalate_chars,
         escalate_on_parse_fail=escalate_on_parse_fail,
+        escalate_on_rate_limit=escalate_on_rate_limit,
     )
     router = RoutedLLMClient(cfg, agent_name="extraction")
     # Inject fakes so no real provider SDK is constructed.
@@ -154,6 +163,38 @@ def test_usage_carries_realized_model_on_escalation(
     router3 = _routed(monkeypatch, cheap3, strong3)
     _, _, usage3 = router3.complete_with_usage("x", "sys", "short input")
     assert usage3.model == "haiku"
+
+
+def test_cheap_rate_limit_escalates_to_strong(monkeypatch: pytest.MonkeyPatch) -> None:
+    cheap = _FakeClient("gpt-oss", rate_limit_once=True)
+    strong = _FakeClient("haiku")
+    router = _routed(monkeypatch, cheap, strong)
+    result, _, usage = router.complete_with_usage("x", "sys", "short input")
+    assert result == "answer:haiku"
+    assert usage.model == "haiku"
+    assert len(cheap.calls) == 1
+    assert len(strong.calls) == 1
+    meta = strong.calls[0]["options"]["_route"]
+    assert meta["route_reason"] == "cheap tier rate-limited → escalate"
+
+
+def test_rate_limit_no_escalation_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    cheap = _FakeClient("gpt-oss", rate_limit_once=True)
+    strong = _FakeClient("haiku")
+    router = _routed(monkeypatch, cheap, strong, escalate_on_rate_limit=False)
+    with pytest.raises(LLMRateLimitedError):
+        router.complete_with_usage("x", "sys", "short input")
+    assert strong.calls == []
+
+
+def test_strong_rate_limit_does_not_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    cheap = _FakeClient("gpt-oss")
+    strong = _FakeClient("haiku", rate_limit_once=True)
+    router = _routed(monkeypatch, cheap, strong, escalate_chars=10)
+    with pytest.raises(LLMRateLimitedError):
+        router.complete_with_usage("x", "sys", "y" * 50)
+    assert len(strong.calls) == 1
+    assert cheap.calls == []
 
 
 def test_parse_fail_no_escalation_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

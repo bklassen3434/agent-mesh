@@ -75,7 +75,7 @@ def test_structured_output_parses_and_sends_json_schema() -> None:
     assert result.verdict == "supported"
 
     assert seen["model"] == "openai/gpt-oss-120b"
-    assert seen["max_completion_tokens"] == 16000
+    assert seen["max_completion_tokens"] == 4096
     assert seen["response_format"]["type"] == "json_schema"
     assert seen["response_format"]["json_schema"]["name"] == "_Answer"
     assert "properties" in seen["response_format"]["json_schema"]["schema"]

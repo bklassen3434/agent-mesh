@@ -44,7 +44,12 @@ T = TypeVar("T", bound=BaseModel)
 
 _DEFAULT_MODEL = "openai/gpt-oss-120b"
 _DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
-_DEFAULT_MAX_TOKENS = 16000
+# Groq counts max_completion_tokens against the per-minute token limit (TPM)
+# when admitting a request — a 16k reservation per call 413s the free tier
+# (8k TPM) outright and burns paid-tier TPM under concurrency. Skill outputs
+# (claim lists, critiques, answers) fit comfortably in 4k; callers needing
+# more pass options={"max_tokens": ...}.
+_DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_TEMPERATURE = 0.1
 _TIMEOUT_SECONDS = 120.0
 

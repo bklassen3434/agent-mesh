@@ -4,6 +4,7 @@ import os
 
 from mesh_llm.anthropic_client import AnthropicClient
 from mesh_llm.client import OllamaClient
+from mesh_llm.groq_client import GroqClient
 from mesh_llm.protocol import LLMClient
 
 _DEFAULT_PROVIDER = "anthropic"
@@ -37,7 +38,8 @@ def make_llm_client(
 ) -> LLMClient:
     """Return the configured LLMClient implementation.
 
-    `provider` (or `MESH_LLM_PROVIDER`) picks the backend (`anthropic` | `ollama`).
+    `provider` (or `MESH_LLM_PROVIDER`) picks the backend
+    (`anthropic` | `ollama` | `groq`).
     `agent_name` selects which per-agent model env var to consult — see
     `resolve_model()` for the full precedence chain. Pass the agent's role
     (`"extraction"`, `"skeptic"`, `"sota"`, etc.); the constructor reads
@@ -48,8 +50,11 @@ def make_llm_client(
         return AnthropicClient(agent_name=agent_name)
     if name == "ollama":
         return OllamaClient(agent_name=agent_name)
+    if name == "groq":
+        return GroqClient(agent_name=agent_name)
     raise ValueError(
-        f"Unknown MESH_LLM_PROVIDER: {name!r}. Expected 'anthropic' or 'ollama'."
+        f"Unknown MESH_LLM_PROVIDER: {name!r}. "
+        "Expected 'anthropic', 'ollama', or 'groq'."
     )
 
 

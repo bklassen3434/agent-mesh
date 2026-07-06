@@ -57,6 +57,19 @@ def test_cheap_model_default_follows_provider(monkeypatch: pytest.MonkeyPatch) -
     assert cfg.strong_model == "claude-sonnet-4-6"
 
 
+def test_groq_cheap_tier_defaults_to_gpt_oss(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The GPT-OSS-on-Groq → Haiku recipe: only the providers + strong model are
+    # set; the cheap model falls out of the provider default.
+    monkeypatch.setenv("MESH_ROUTE_CHEAP_PROVIDER", "groq")
+    monkeypatch.setenv("MESH_ROUTE_STRONG_PROVIDER", "anthropic")
+    monkeypatch.setenv("MESH_ROUTE_STRONG_MODEL", "claude-haiku-4-5")
+    cfg = RoutingConfig.from_env()
+    assert cfg.cheap_provider == "groq"
+    assert cfg.cheap_model == "openai/gpt-oss-120b"
+    assert cfg.strong_provider == "anthropic"
+    assert cfg.strong_model == "claude-haiku-4-5"
+
+
 # ── round-trip of every knob ─────────────────────────────────────────────────
 
 

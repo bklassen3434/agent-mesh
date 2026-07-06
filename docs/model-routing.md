@@ -11,12 +11,12 @@ disabled the system behaves exactly as before.
 
 | | Default | Typical use |
 |---|---|---|
-| Cheap tier | the provider default (`claude-haiku-4-5` / `qwen3:8b`) | the common path — most requests |
-| Strong tier | `claude-sonnet-4-6` (operator may set `claude-opus-4-8`) | long/dense inputs, hinted-hard requests, cheap-tier parse failures |
+| Cheap tier | the provider default (`claude-haiku-4-5` / `qwen3:8b` / `openai/gpt-oss-120b`) | the common path — most requests |
+| Strong tier | `claude-sonnet-4-6` (operator may set another Claude model) | long/dense inputs, hinted-hard requests, cheap-tier parse failures |
 
 The router is itself an `LLMClient` (same Protocol as `AnthropicClient` /
-`OllamaClient`), so agents, the batch path, and tracing treat it like any other
-client. No agent learns it is being routed.
+`OllamaClient` / `GroqClient`), so agents, the batch path, and tracing treat it
+like any other client. No agent learns it is being routed.
 
 ---
 
@@ -28,7 +28,20 @@ only when **both** hold:
 1. **No static model pin exists for the agent** (see precedence below).
 2. **Routing is enabled** for the agent.
 
-Recommended recipe in `.env` — cheap=Haiku 4.5, strong=Sonnet 4.6, routing the
+Recommended recipe in `.env` — cheap=GPT-OSS-120B on Groq (open-weight,
+~7x cheaper than Haiku at similar-or-better latency), strong=Haiku 4.5 on
+Anthropic, routing every unpinned agent:
+
+```
+MESH_ROUTE_ENABLED=true
+MESH_ROUTE_CHEAP_PROVIDER=groq
+MESH_ROUTE_CHEAP_MODEL=openai/gpt-oss-120b
+MESH_ROUTE_STRONG_PROVIDER=anthropic
+MESH_ROUTE_STRONG_MODEL=claude-haiku-4-5
+GROQ_API_KEY=gsk_...
+```
+
+All-Anthropic alternative — cheap=Haiku 4.5, strong=Sonnet 4.6, routing only the
 high-volume, input-size-variance agents (extraction + skeptic + entity
 resolution):
 
@@ -45,11 +58,24 @@ MESH_ROUTE_ENTITY_RESOLUTION_ENABLED=true
 > `.env.example` is an explicit operator pin and wins over routing. To let an
 > agent route, leave its model unpinned (comment `MESH_LLM_MODEL` out).
 
-The three opted-in call sites are `claim_extractor` (highest volume, most input
-variance — the primary win), the controller's entity-resolution adjudication
-(already best-effort; cheap-first with escalate-on-ambiguity fits its posture),
-and the skeptic challenge path. The personalizer and the CLI backfill stay on the
-plain factory.
+The routed call sites are the controller's `extract_source` skill and the
+`claim_extractor` A2A server (highest volume, most input variance — the primary
+win), the entity-resolution adjudication (already best-effort; cheap-first with
+escalate-on-ambiguity fits its posture), the skeptic challenge/adjudication
+paths, belief/memory consolidation, discovery, and `research_qa`. The
+personalizer (pinned to Sonnet in `.env.example`) and the CLI backfills stay on
+the plain factory.
+
+### The Groq cheap tier
+
+`GroqClient` speaks Groq's OpenAI-compatible chat-completions API over httpx
+(no provider SDK). Structured output uses `response_format=json_schema`; when
+Groq's server-side schema validation rejects a generation (`json_validate_failed`)
+it surfaces as `LLMResponseError`, so the escalate-on-parse-fail retry lands the
+request on the strong Anthropic tier automatically. Groq's prompt caching is
+provider-side and automatic; the client reports the full prompt as
+`input_tokens`, so ledger cost errs slightly high on cache hits. Rates for
+Groq-hosted models live in `mesh_llm.pricing` next to the Anthropic table.
 
 ---
 
@@ -83,8 +109,9 @@ into the expected schema) triggers **one retry on the strong tier**
 silent: the escalation is recorded with reason `"cheap parse failure →
 escalate"`. A **strong-tier** failure surfaces normally — there is no retry loop.
 
-Provider-not-ready errors (`AnthropicNotReadyError` / `OllamaNotReadyError`)
-**always propagate** — routing never swallows an unconfigured-provider error.
+Provider-not-ready errors (`AnthropicNotReadyError` / `OllamaNotReadyError` /
+`GroqNotReadyError`) **always propagate** — routing never swallows an
+unconfigured-provider error.
 
 `health_check()` checks only the **cheap tier** (the default path every enabled
 run exercises). The strong tier is built lazily on first escalation, so a

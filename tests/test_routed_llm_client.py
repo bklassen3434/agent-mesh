@@ -201,3 +201,14 @@ def test_decide_returns_explainable_reason(monkeypatch: pytest.MonkeyPatch) -> N
     assert cheap_decision.tier is Tier.CHEAP
     assert cheap_decision.model == "haiku"
     assert "cheap" in cheap_decision.reason.lower()
+
+
+def test_build_tier_client_supports_groq(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mesh_llm import GroqClient
+    from mesh_llm.routing import _build_tier_client
+
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    client = _build_tier_client("groq", "openai/gpt-oss-120b", "extraction")
+    assert isinstance(client, GroqClient)
+    assert client.model == "openai/gpt-oss-120b"
+    assert client.agent_name == "extraction"

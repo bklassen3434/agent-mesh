@@ -33,7 +33,7 @@ from mesh_llm import (
     LLMClient,
     LLMResponseError,
     make_embedder,
-    make_llm_client,
+    make_routed_llm_client,
 )
 from mesh_llm.embeddings import entity_embed_text
 from mesh_models.claim import Claim
@@ -152,8 +152,10 @@ class ExtractSourceSkill:
         # 1. Extract claims via the shared extraction core (prompt + LLM +
         #    structured output + injected memory; memory reads run on this skill's
         #    connection). A parse failure yields no claims — the source is left for
-        #    a later pass, matching the agent/A2A degradation.
-        llm = self._llm or make_llm_client()
+        #    a later pass, matching the agent/A2A degradation. Routed as
+        #    "extraction" — with routing off this is byte-for-byte the plain
+        #    client, so nothing changes for unrouted deployments.
+        llm = self._llm or make_routed_llm_client(agent_name="extraction")
         paper = _paper_from_source(source, tension)
         try:
             extracted_claims, _latency, _usage, _model, _debug = await asyncio.to_thread(

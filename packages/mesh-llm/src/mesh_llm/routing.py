@@ -43,6 +43,7 @@ from mesh_llm.protocol import LLMClient
 _DEFAULT_CHEAP_MODEL: dict[str, str] = {
     "anthropic": "claude-haiku-4-5",
     "ollama": "qwen3:8b",
+    "groq": "openai/gpt-oss-120b",
 }
 _DEFAULT_STRONG_MODEL = "claude-sonnet-4-6"
 _DEFAULT_PROVIDER = "anthropic"
@@ -259,14 +260,18 @@ def _build_tier_client(
     """
     from mesh_llm.anthropic_client import AnthropicClient
     from mesh_llm.client import OllamaClient
+    from mesh_llm.groq_client import GroqClient
 
     name = provider.lower()
     if name == "anthropic":
         return AnthropicClient(model=model, agent_name=agent_name)
     if name == "ollama":
         return OllamaClient(model=model, agent_name=agent_name)
+    if name == "groq":
+        return GroqClient(model=model, agent_name=agent_name)
     raise ValueError(
-        f"Unknown routing provider: {name!r}. Expected 'anthropic' or 'ollama'."
+        f"Unknown routing provider: {name!r}. "
+        "Expected 'anthropic', 'ollama', or 'groq'."
     )
 
 

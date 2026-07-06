@@ -103,7 +103,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 - **`packages/mesh-models`** — Pydantic v2 domain models; no I/O. Seven entities: `Entity`, `Source`, `Claim`, `Belief`, `BeliefRevision`, `Relationship`, `Investigation`.
 - **`packages/mesh-db`** — Postgres access layer (pooled psycopg3). One typed module per entity (`entities.py`, `claims.py`, etc.) with a stable public interface; `connection.py` hands out a `MeshConnection` proxy over a `psycopg_pool` pool (`close()` returns to the pool), selecting the writer or reader role by `read_only`. Numbered SQL migrations in `packages/mesh-db/migrations_pg/NNN_*.sql`, applied via `mesh_db.pg_migrations.init_pg()` (idempotent; also creates the `mesh_writer`/`mesh_reader` roles).
 - **`packages/mesh-tracing`** — Langfuse wrapper; no-ops when env vars are absent.
-- **`packages/mesh-llm`** — Two interchangeable LLM clients implementing the `LLMClient` Protocol: `AnthropicClient` (default; `messages.parse()` for Pydantic-typed structured output with `cache_control` on the system prompt) and `OllamaClient` (local; structured output via `format=schema`). `make_llm_client()` picks one based on `MESH_LLM_PROVIDER`. `LLMResponseError` signals parse failure (pipeline continues); `AnthropicNotReadyError` / `OllamaNotReadyError` signal provider failure (pipeline aborts).
+- **`packages/mesh-llm`** — Three interchangeable LLM clients implementing the `LLMClient` Protocol: `AnthropicClient` (default; `messages.parse()` for Pydantic-typed structured output with `cache_control` on the system prompt), `OllamaClient` (local; structured output via `format=schema`), and `GroqClient` (cloud open-weight models via Groq's OpenAI-compatible API over httpx; structured output via `response_format=json_schema` — the tiered-routing cheap tier). `make_llm_client()` picks one based on `MESH_LLM_PROVIDER`. `LLMResponseError` signals parse failure (pipeline continues; includes Groq's server-side `json_validate_failed`); `AnthropicNotReadyError` / `OllamaNotReadyError` / `GroqNotReadyError` signal provider failure (pipeline aborts).
 - **`packages/mesh-agents`** — Four agent classes, each with `async run(input) -> output`. `ClaimExtractorAgent` calls the configured LLM via `LLMClient`; `EntityTrackerAgent` does find-or-create against DB; `SotaTrackerAgent` is rule-based (no LLM).
 - **`apps/cli`** — Click CLI (`mesh.cli`) wrapping all DB operations with `rich` table output.
 - **`apps/pipeline`** — the controller (`controller.py`, `mesh-controller`). A plain async loop, not a LangGraph graph: each round it senses the field into tensions (`mesh_agents.agenda` + scout/investigation/maintenance producers), loads per-tension counters, `plan()`s the worklist via `mesh_agents.rules`, dispatches the top `MESH_CONTROLLER_STEP_CAP` skills concurrently (`asyncio.Semaphore(MESH_PIPELINE_CONCURRENCY)`), records outcomes (incl. one `agent_invocations` row per dispatch + `llm_usage` rows per LLM call), and applies their effects through the `mesh_db.effects` gateway — looping to quiescence (`MESH_CONTROLLER_MAX_ROUNDS`). `--forever` (`run_controller_forever`) wraps that pass in a self-driving daemon (idle backoff between empty passes), so it is its own driver — no scheduler. A bad skill records an error and never aborts the run. (The old `coordinator.py`/`skeptic_sweep.py`/`discovery.py` LangGraph jobs are deleted.)
@@ -132,9 +132,11 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_PG_READER_URL` | (falls back to base DSN) | API read connection (`mesh_reader` role) |
 | `MESH_WRITER_PASSWORD` / `MESH_READER_PASSWORD` | `mesh_writer` / `mesh_reader` | Passwords `init_pg` sets on the writer/reader roles |
 | `MESH_PG_POOL_MAX` | `10` | Max connections per pool |
-| `MESH_LLM_PROVIDER` | `anthropic` | `anthropic` (cloud, Haiku 4.5) or `ollama` (local) |
-| `MESH_LLM_MODEL` | `claude-haiku-4-5` | Model ID; matches the provider |
+| `MESH_LLM_PROVIDER` | `anthropic` | `anthropic` (cloud, Haiku 4.5), `ollama` (local), or `groq` (cloud, open-weight) |
+| `MESH_LLM_MODEL` | `claude-haiku-4-5` | Model ID; matches the provider. Setting it is a static pin that bypasses tiered routing |
 | `ANTHROPIC_API_KEY` | (empty) | Required when provider=anthropic |
+| `GROQ_API_KEY` | (empty) | Required when provider=groq or a routing tier uses Groq |
+| `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq (or OpenAI-compatible proxy) endpoint |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (provider=ollama only) |
 | `MESH_PIPELINE_FIELD` | `ai-robotics` | Field slug a pipeline run scopes to (`--field`) |
 | `MESH_SKEPTIC_FIELD` | `ai-robotics` | Field slug the skeptic sweep scopes to (`--field`) |
@@ -165,7 +167,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_CONFIDENCE_SEVERE_CAP` | `3.0` | Severe-failure-mode-count saturation cap |
 | `MESH_ROUTE_ENABLED` | `false` | Global tiered-routing switch (Phase 20) |
 | `MESH_ROUTE_<AGENT>_ENABLED` | (inherits global) | Per-agent routing enable; overrides the global flag |
-| `MESH_ROUTE_CHEAP_MODEL` | provider default (`claude-haiku-4-5` / `qwen3:8b`) | Cheap-tier model id |
+| `MESH_ROUTE_CHEAP_MODEL` | provider default (`claude-haiku-4-5` / `qwen3:8b` / `openai/gpt-oss-120b`) | Cheap-tier model id |
 | `MESH_ROUTE_STRONG_MODEL` | `claude-sonnet-4-6` | Strong-tier model id (escalation target) |
 | `MESH_LLM_MODEL_<AGENT>_STRONG` | (falls back to `MESH_ROUTE_STRONG_MODEL`) | Per-agent strong-model override |
 | `MESH_ROUTE_CHEAP_PROVIDER` / `MESH_ROUTE_STRONG_PROVIDER` | `MESH_LLM_PROVIDER` | Per-tier provider (e.g. cheap local Ollama, strong Anthropic API) |

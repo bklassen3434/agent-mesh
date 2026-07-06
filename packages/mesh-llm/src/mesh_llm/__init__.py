@@ -18,6 +18,7 @@ from mesh_llm.embeddings import (
     make_embedder,
 )
 from mesh_llm.factory import make_llm_client, make_routed_llm_client
+from mesh_llm.groq_client import GroqClient, GroqNotReadyError
 from mesh_llm.pricing import CostBreakdown, estimate_cost, is_priced
 from mesh_llm.protocol import LLMClient
 from mesh_llm.routing import (
@@ -40,6 +41,8 @@ __all__ = [
     "CostBreakdown",
     "Embedder",
     "FastEmbedEmbedder",
+    "GroqClient",
+    "GroqNotReadyError",
     "LLMClient",
     "LLMProviderNotReadyError",
     "LLMResponseError",

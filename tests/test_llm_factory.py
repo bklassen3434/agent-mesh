@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from mesh_llm import AnthropicClient, OllamaClient, make_llm_client
+from mesh_llm import AnthropicClient, GroqClient, OllamaClient, make_llm_client
 
 
 def test_factory_defaults_to_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -17,6 +17,22 @@ def test_factory_selects_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
     # over the wire — fine to construct without an Ollama daemon running.
     client = make_llm_client()
     assert isinstance(client, OllamaClient)
+
+
+def test_factory_selects_groq(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MESH_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    client = make_llm_client()
+    assert isinstance(client, GroqClient)
+
+
+def test_groq_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mesh_llm import GroqNotReadyError
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setenv("MESH_LLM_PROVIDER", "groq")
+    with pytest.raises(GroqNotReadyError, match="GROQ_API_KEY"):
+        make_llm_client()
 
 
 def test_factory_unknown_provider_raises(monkeypatch: pytest.MonkeyPatch) -> None:

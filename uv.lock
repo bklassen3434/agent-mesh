@@ -1326,6 +1326,7 @@ source = { editable = "packages/mesh-llm" }
 dependencies = [
     { name = "anthropic" },
     { name = "fastembed" },
+    { name = "httpx" },
     { name = "mesh-tracing" },
     { name = "ollama" },
     { name = "pydantic" },
@@ -1336,6 +1337,7 @@ dependencies = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "fastembed", specifier = ">=0.4" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mesh-tracing", editable = "packages/mesh-tracing" },
     { name = "ollama", specifier = ">=0.3" },
     { name = "pydantic", specifier = ">=2.0" },

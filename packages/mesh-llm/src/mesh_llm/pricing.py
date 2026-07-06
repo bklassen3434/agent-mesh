@@ -1,4 +1,4 @@
-"""Anthropic list-price table and per-call cost estimation (Phase 11a).
+"""Model list-price table and per-call cost estimation (Phase 11a).
 
 Single source of truth for token pricing. Every cost figure in the
 ``mesh.cli cost report`` command, the Langfuse cost attribution, and
@@ -33,6 +33,13 @@ _PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     # Legacy families occasionally still routed to:
     "claude-3-5-haiku": (0.80, 4.0),
     "claude-3-5-sonnet": (3.0, 15.0),
+    # Groq-hosted open-weight models (tiered-routing cheap tier). Groq bills
+    # cached input at 0.5x, but GroqClient reports the full prompt as
+    # input_tokens with the cache fields zero — so these two rates are the
+    # whole computation and the estimate errs slightly high on cache hits.
+    # Last confirmed 2026-07-05 at https://groq.com/pricing.
+    "openai/gpt-oss-120b": (0.15, 0.60),
+    "qwen/qwen3-32b": (0.29, 0.59),
 }
 
 

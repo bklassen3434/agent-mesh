@@ -224,7 +224,9 @@ def find_duplicate_candidate_pairs(
     duplicates (agentic-migration tension: ``merge_candidate``). One pgvector
     self-join, field-scoped, each unordered pair once. Returns
     ``(id_a, name_a, id_b, name_b, similarity)`` most-similar first. Entities with
-    no ``name_embedding`` are skipped."""
+    no ``name_embedding`` are skipped, as are pairs already adjudicated
+    not-the-same (``entity_merge_rejections``) — a rejected pair must not
+    re-raise the merge-candidate tension every sensing pass."""
     distance_max = 1.0 - float(min_similarity)
     rows = conn.execute(
         """
@@ -239,12 +241,42 @@ def find_duplicate_candidate_pairs(
           AND e1.name_embedding IS NOT NULL
           AND e2.name_embedding IS NOT NULL
           AND (e1.name_embedding <=> e2.name_embedding) <= %s
+          AND NOT EXISTS (
+              SELECT 1 FROM entity_merge_rejections r
+              WHERE r.entity_id_a = e1.id AND r.entity_id_b = e2.id
+          )
         ORDER BY similarity DESC
         LIMIT %s
         """,
         [field_id, distance_max, max(int(limit), 0)],
     ).fetchall()
     return [(str(r[0]), str(r[1]), str(r[2]), str(r[3]), float(r[4])) for r in rows]
+
+
+def record_merge_rejection(
+    conn: MeshConnection,
+    entity_id_a: str,
+    entity_id_b: str,
+    *,
+    field_id: str,
+    similarity: float | None = None,
+) -> None:
+    """Persist an adjudicated "not the same entity" verdict (idempotent).
+
+    The pair is stored ordered (a < b) to match the duplicate scan's
+    ``e2.id > e1.id`` join, so one row suppresses the pair regardless of
+    argument order. Rows cascade away if either entity is later deleted
+    (e.g. absorbed by a different merge)."""
+    id_a, id_b = sorted((entity_id_a, entity_id_b))
+    conn.execute(
+        """
+        INSERT INTO entity_merge_rejections
+            (entity_id_a, entity_id_b, field_id, similarity)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (entity_id_a, entity_id_b) DO NOTHING
+        """,
+        [id_a, id_b, field_id, similarity],
+    )
 
 
 def get_entities_by_ids(

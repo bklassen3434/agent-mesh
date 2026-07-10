@@ -39,6 +39,7 @@ from mesh_models.effect import (
     MergeBeliefsEffect,
     MergeEntitiesEffect,
     OpenInvestigationEffect,
+    RejectEntityMergeEffect,
     ReviseBeliefEffect,
     SupersedeClaimEffect,
     UpdateInvestigationEffect,
@@ -57,7 +58,12 @@ from mesh_db.beliefs import (
 )
 from mesh_db.claims import create_claim, update_claim_status
 from mesh_db.connection import MeshConnection
-from mesh_db.entities import create_entity, merge_entities, set_entity_embedding
+from mesh_db.entities import (
+    create_entity,
+    merge_entities,
+    record_merge_rejection,
+    set_entity_embedding,
+)
 from mesh_db.heuristics import create_heuristic, create_heuristic_revision
 from mesh_db.investigations import (
     attach_claim_to_investigation,
@@ -89,6 +95,7 @@ class ApplyReport(BaseModel):
     beliefs_created: int = 0
     beliefs_revised: int = 0
     entities_merged: int = 0
+    entity_merges_rejected: int = 0
     beliefs_merged: int = 0
     relationship_edges: int = 0
     investigations_opened: int = 0
@@ -178,6 +185,17 @@ def _apply_one(
     elif isinstance(effect, MergeEntitiesEffect):
         merge_entities(conn, effect.canonical_id, effect.duplicate_id)
         report.entities_merged += 1
+
+    elif isinstance(effect, RejectEntityMergeEffect):
+        # Idempotent — a swarm's unioned copies collapse to one rejection row.
+        record_merge_rejection(
+            conn,
+            effect.entity_id_a,
+            effect.entity_id_b,
+            field_id=effect.field_id,
+            similarity=effect.similarity,
+        )
+        report.entity_merges_rejected += 1
 
     elif isinstance(effect, MergeBeliefsEffect):
         # Append-only belief consolidation: the duplicate is absorbed, not erased

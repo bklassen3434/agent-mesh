@@ -16,10 +16,17 @@ from mesh_agents.skills.merge_candidate import MergeCandidateSkill
 from mesh_db.claims import create_claim
 from mesh_db.connection import MeshConnection
 from mesh_db.effects import apply_effects
-from mesh_db.entities import count_entities, create_entity, get_entity_by_id
+from mesh_db.entities import (
+    count_entities,
+    create_entity,
+    find_duplicate_candidate_pairs,
+    get_entity_by_id,
+    set_entity_embedding,
+)
 from mesh_db.sources import create_source
+from mesh_llm import EMBED_DIM
 from mesh_models.claim import Claim
-from mesh_models.effect import MergeEntitiesEffect
+from mesh_models.effect import MergeEntitiesEffect, RejectEntityMergeEffect
 from mesh_models.entity import Entity, EntityType
 from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.source import Source, SourceType
@@ -126,12 +133,14 @@ def test_high_band_auto_merges_without_llm(tmp_db: MeshConnection) -> None:
     assert get_entity_by_id(tmp_db, b.id) is not None
 
 
-def test_low_band_rejects(tmp_db: MeshConnection) -> None:
+def test_low_band_rejects_durably(tmp_db: MeshConnection) -> None:
     a = _entity(tmp_db, "Mamba")
     b = _entity(tmp_db, "Transformer")
     skill = MergeCandidateSkill(llm=_FakeLLM(EntityMatchDecision(same_entity=True)))  # type: ignore[arg-type]
     effects = asyncio.run(skill.run(tmp_db, _tension(a.id, b.id, 0.5), budget_usd=0.02))
-    assert effects == []
+    # A definitive "no" is an effect now (durable rejection), not silence.
+    assert len(effects) == 1
+    assert isinstance(effects[0], RejectEntityMergeEffect)
 
 
 def test_middle_band_adjudicates_same_emits_effect(tmp_db: MeshConnection) -> None:
@@ -150,12 +159,43 @@ def test_middle_band_adjudicates_same_emits_effect(tmp_db: MeshConnection) -> No
     assert eff.duplicate_id == b.id
 
 
-def test_middle_band_adjudicates_not_same_returns_empty(tmp_db: MeshConnection) -> None:
+def test_middle_band_adjudicates_not_same_records_rejection(
+    tmp_db: MeshConnection,
+) -> None:
     a = _entity(tmp_db, "Mamba")
     b = _entity(tmp_db, "Mamba2")
     skill = MergeCandidateSkill(llm=_FakeLLM(EntityMatchDecision(same_entity=False)))  # type: ignore[arg-type]
     effects = asyncio.run(skill.run(tmp_db, _tension(a.id, b.id, 0.85), budget_usd=0.02))
-    assert effects == []
+    assert len(effects) == 1
+    eff = effects[0]
+    assert isinstance(eff, RejectEntityMergeEffect)
+    assert [eff.entity_id_a, eff.entity_id_b] == sorted([a.id, b.id])
+    # The skill itself wrote nothing — both entities untouched.
+    assert get_entity_by_id(tmp_db, a.id) is not None
+    assert get_entity_by_id(tmp_db, b.id) is not None
+
+
+def test_rejected_pair_stops_re_firing(tmp_db: MeshConnection) -> None:
+    """The churn kill-switch: adjudicate not-same → gateway writes the
+    rejection → the duplicate scan no longer surfaces the pair, so the
+    merge-candidate tension can never re-fire for it."""
+    a = _entity(tmp_db, "Mamba")
+    b = _entity(tmp_db, "Mamba2")
+    emb = [0.1] * EMBED_DIM  # identical embeddings → similarity 1.0
+    set_entity_embedding(tmp_db, a.id, emb)
+    set_entity_embedding(tmp_db, b.id, emb)
+    assert find_duplicate_candidate_pairs(tmp_db, field_id=DEFAULT_FIELD_ID) != []
+
+    skill = MergeCandidateSkill(llm=_FakeLLM(EntityMatchDecision(same_entity=False)))  # type: ignore[arg-type]
+    effects = asyncio.run(skill.run(tmp_db, _tension(a.id, b.id, 0.85), budget_usd=0.02))
+    report = apply_effects(tmp_db, effects)
+    assert report.entity_merges_rejected == 1
+    assert report.errors == []
+
+    assert find_duplicate_candidate_pairs(tmp_db, field_id=DEFAULT_FIELD_ID) == []
+    # Idempotent — a swarm's unioned duplicate rejections don't error.
+    report2 = apply_effects(tmp_db, effects)
+    assert report2.errors == []
 
 
 def test_middle_band_without_llm_is_conservative(tmp_db: MeshConnection) -> None:

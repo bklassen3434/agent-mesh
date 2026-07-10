@@ -24,7 +24,7 @@ from mesh_db.claims import list_claims
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import choose_canonical, get_entity_by_id
 from mesh_llm.protocol import LLMClient
-from mesh_models.effect import MergeEntitiesEffect
+from mesh_models.effect import MergeEntitiesEffect, RejectEntityMergeEffect
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.entity_resolution import (
@@ -71,7 +71,10 @@ class MergeCandidateSkill:
         cfg = ResolutionConfig.from_env()
         decision = classify_pair(similarity, cfg)
         if decision == "reject":
-            return []
+            # A definitive verdict, so make it durable — otherwise the scan
+            # re-raises this exact pair every sensing pass and the tension
+            # re-fires forever (the July-2026 36k-calls/day churn).
+            return [self._rejection(tension, entity_id, candidate_id, similarity)]
 
         ent_a = get_entity_by_id(conn, entity_id)
         ent_b = get_entity_by_id(conn, candidate_id)
@@ -100,13 +103,26 @@ class MergeCandidateSkill:
                 ),
             )
             if not adjudicate_same_entity(llm, a, b).same_entity:
-                return []
+                # LLM says distinct — durable, same rationale as the reject band.
+                return [self._rejection(tension, entity_id, candidate_id, similarity)]
         # else: decision == "merge" — high band, no LLM needed.
 
         canonical_id, duplicate_id = choose_canonical(conn, entity_id, candidate_id)
         return [
             MergeEntitiesEffect(canonical_id=canonical_id, duplicate_id=duplicate_id)
         ]
+
+    @staticmethod
+    def _rejection(
+        tension: Tension, entity_id: str, candidate_id: str, similarity: float
+    ) -> RejectEntityMergeEffect:
+        id_a, id_b = sorted((entity_id, candidate_id))
+        return RejectEntityMergeEffect(
+            entity_id_a=id_a,
+            entity_id_b=id_b,
+            field_id=tension.field_id,
+            similarity=similarity,
+        )
 
     def _resolve_llm(self) -> LLMClient | None:
         """The injected client if present, else a best-effort routed adjudication

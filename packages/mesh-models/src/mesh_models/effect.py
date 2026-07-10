@@ -117,6 +117,23 @@ class MergeEntitiesEffect(BaseModel):
     duplicate_id: str
 
 
+class RejectEntityMergeEffect(BaseModel):
+    """Record that an adjudicated entity pair is NOT the same thing.
+
+    The durable complement of :class:`MergeEntitiesEffect`: a "no merge"
+    verdict used to be returned as no effect at all, so the duplicate-pair
+    scan re-derived the same pair every sensing pass and the same LLM
+    adjudication re-ran forever. The gateway writes one idempotent
+    ``entity_merge_rejections`` row; the scan skips rejected pairs. IDs are
+    normalized so ``entity_id_a < entity_id_b``."""
+
+    kind: Literal["reject_entity_merge"] = "reject_entity_merge"
+    entity_id_a: str
+    entity_id_b: str
+    field_id: str
+    similarity: float | None = None
+
+
 class MergeBeliefsEffect(BaseModel):
     """Fold a redundant belief into a canonical one (append-only ``merge_beliefs``).
 
@@ -201,6 +218,7 @@ Effect = Annotated[
     | CreateBeliefEffect
     | ReviseBeliefEffect
     | MergeEntitiesEffect
+    | RejectEntityMergeEffect
     | MergeBeliefsEffect
     | AddRelationshipEvidenceEffect
     | OpenInvestigationEffect

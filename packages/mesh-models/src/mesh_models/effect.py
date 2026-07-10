@@ -19,7 +19,7 @@ coordinator keeps writing directly while skills accumulate behind the gateway.
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -115,6 +115,19 @@ class MergeEntitiesEffect(BaseModel):
     kind: Literal["merge_entities"] = "merge_entities"
     canonical_id: str
     duplicate_id: str
+
+
+class WriteFieldBriefEffect(BaseModel):
+    """Persist one LLM-written "state of the field" narrative (append-only).
+
+    Emitted by the ``write-field-brief`` skill; the gateway inserts a
+    ``field_briefs`` row. Readers (the Field Overview API) take the latest."""
+
+    kind: Literal["write_field_brief"] = "write_field_brief"
+    field_id: str
+    narrative: str
+    model: str = ""
+    inputs_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class RejectEntityMergeEffect(BaseModel):
@@ -224,6 +237,7 @@ Effect = Annotated[
     | OpenInvestigationEffect
     | UpdateInvestigationEffect
     | AttachClaimToInvestigationEffect
-    | WriteHeuristicEffect,
+    | WriteHeuristicEffect
+    | WriteFieldBriefEffect,
     Field(discriminator="kind"),
 ]

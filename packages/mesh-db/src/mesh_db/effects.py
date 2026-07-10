@@ -43,6 +43,7 @@ from mesh_models.effect import (
     ReviseBeliefEffect,
     SupersedeClaimEffect,
     UpdateInvestigationEffect,
+    WriteFieldBriefEffect,
     WriteHeuristicEffect,
 )
 from mesh_models.investigation import InvestigationStatus
@@ -102,6 +103,7 @@ class ApplyReport(BaseModel):
     investigations_updated: int = 0
     investigation_claims_attached: int = 0
     heuristics_written: int = 0
+    field_briefs_written: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -185,6 +187,22 @@ def _apply_one(
     elif isinstance(effect, MergeEntitiesEffect):
         merge_entities(conn, effect.canonical_id, effect.duplicate_id)
         report.entities_merged += 1
+
+    elif isinstance(effect, WriteFieldBriefEffect):
+        from mesh_models.field_brief import FieldBrief
+
+        from mesh_db.field_briefs import create_field_brief
+
+        create_field_brief(
+            conn,
+            FieldBrief(
+                field_id=effect.field_id,
+                narrative=effect.narrative,
+                model=effect.model,
+                inputs_summary=effect.inputs_summary,
+            ),
+        )
+        report.field_briefs_written += 1
 
     elif isinstance(effect, RejectEntityMergeEffect):
         # Idempotent — a swarm's unioned copies collapse to one rejection row.

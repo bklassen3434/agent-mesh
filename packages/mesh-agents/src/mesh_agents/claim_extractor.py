@@ -77,6 +77,11 @@ class ExtractedClaim(BaseModel):
         "speculates",
     ]
     subject_name: str
+    # What kind of thing the subject is (EntityType values). Drives entity
+    # minting; "concept" is the safe fallback the pre-typing store was full of.
+    subject_type: Literal[
+        "model", "paper", "benchmark", "method", "person", "lab", "repo", "concept"
+    ] = "concept"
     object: ClaimObject = Field(default_factory=ClaimObject)
     raw_excerpt: str
     confidence: float = Field(default=0.85, ge=0.0, le=1.0)

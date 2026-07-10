@@ -446,6 +446,26 @@ export interface paths {
         patch: operations["patch_field_endpoint_api_v1_fields__slug__patch"];
         trace?: never;
     };
+    "/api/v1/fields/{slug}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * State-of-the-field overview
+         * @description The latest narrative brief plus strongest / recently-revised / contested beliefs, movement counts, and open discovery gaps.
+         */
+        get: operations["field_overview_endpoint_api_v1_fields__slug__overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/connectors": {
         parameters: {
             query?: never;
@@ -1212,6 +1232,21 @@ export interface components {
              */
             is_active: boolean;
         };
+        /** FieldBriefOut */
+        FieldBriefOut: {
+            /** Narrative */
+            narrative: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+        };
         /**
          * FieldConnector
          * @description One field's enablement + config of a catalog connector.
@@ -1268,6 +1303,21 @@ export interface components {
              * @default sota
              */
             topic_label: string;
+        };
+        /** FieldOverviewResponse */
+        FieldOverviewResponse: {
+            /** Field */
+            field: string;
+            brief?: components["schemas"]["FieldBriefOut"] | null;
+            movement: components["schemas"]["MovementStats"];
+            /** Strongest */
+            strongest: components["schemas"]["OverviewBelief"][];
+            /** Recently Revised */
+            recently_revised: components["schemas"]["OverviewBelief"][];
+            /** Contested */
+            contested: components["schemas"]["OverviewBelief"][];
+            /** Gaps */
+            gaps: components["schemas"]["OverviewGap"][];
         };
         /**
          * FieldPatch
@@ -1388,6 +1438,54 @@ export interface components {
             status: string;
             /** Db Present */
             db_present: boolean;
+        };
+        /** MovementStats */
+        MovementStats: {
+            /** Held Total */
+            held_total: number;
+            /** New */
+            new: number;
+            /** Revised */
+            revised: number;
+            /** Dropped */
+            dropped: number;
+            /** Window Days */
+            window_days: number;
+        };
+        /** OverviewBelief */
+        OverviewBelief: {
+            /** Id */
+            id: string;
+            /** Topic */
+            topic: string;
+            /** Statement */
+            statement: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Contradiction Count
+             * @default 0
+             */
+            contradiction_count: number;
+            /**
+             * Last Revised At
+             * Format: date-time
+             */
+            last_revised_at: string;
+        };
+        /** OverviewGap */
+        OverviewGap: {
+            /** Id */
+            id: string;
+            /** Question */
+            question: string;
+            /**
+             * Rationale
+             * @default
+             */
+            rationale: string;
+            /** Status */
+            status: string;
         };
         /** Page[Belief] */
         Page_Belief_: {
@@ -2441,6 +2539,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Field"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    field_overview_endpoint_api_v1_fields__slug__overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldOverviewResponse"];
                 };
             };
             /** @description Validation Error */

@@ -254,6 +254,7 @@ def _scout_when_idle(state: ControllerState) -> list[Activation]:
 _MAINTENANCE_KINDS: tuple[TensionKind, ...] = (
     TensionKind.aging_belief,
     TensionKind.consolidatable_memory,
+    TensionKind.stale_field_brief,
 )
 
 

@@ -146,6 +146,8 @@ def test_mints_unknown_subject_as_create_entity_effect(tmp_db: MeshConnection) -
     claim_effects = [e for e in effects if isinstance(e, CreateClaimEffect)]
     assert len(entity_effects) == 1  # all four canned claims share one new subject
     assert entity_effects[0].entity.canonical_name == "TestModel-7B"
+    # The extractor's subject_type drives minting — not the blanket "concept".
+    assert entity_effects[0].entity.type == EntityType.model
     assert entity_effects[0].name_embedding is not None
     assert len(claim_effects) == 4
     # The entity effect comes before the claims that FK it (gateway applies in order).

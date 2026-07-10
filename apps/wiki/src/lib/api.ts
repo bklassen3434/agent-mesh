@@ -22,6 +22,7 @@ export type GraphResponse = Schemas['GraphResponse'];
 export type GraphNode = Schemas['GraphNode'];
 export type GraphEdge = Schemas['GraphEdge'];
 export type GraphData = Schemas['GraphData'];
+export type FieldOverview = Schemas['FieldOverviewResponse'];
 export type GraphDataNode = Schemas['GraphDataNode'];
 export type GraphDataEdge = Schemas['GraphDataEdge'];
 export type BeliefSignalSummary = Schemas['BeliefSignalSummary'];
@@ -208,6 +209,8 @@ export const api = {
   graph: (q: { max_nodes?: number; max_edges?: number } = {}) =>
     apiGet<GraphResponse>('/api/v1/graph', { query: q }),
   graphData: () => apiGet<GraphData>('/api/v1/graph/data'),
+  fieldOverview: (field: string) =>
+    apiGet<FieldOverview>(`/api/v1/fields/${encodeURIComponent(field)}/overview`),
 
   beliefSignals: (ids: string[] = []) => {
     const qs = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');

@@ -103,6 +103,7 @@ def load_builtin_skills() -> list[Skill]:
         merge_candidate,
         scout_source,
         synthesize_belief,
+        write_field_brief,
     )
 
     return all_skills()

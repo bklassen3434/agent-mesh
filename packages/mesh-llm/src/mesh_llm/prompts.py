@@ -33,6 +33,7 @@ Rules:
    lab, an achieves_score needs a number AND benchmark, a based_on needs the parent.
    If the key isn't in the text, drop that claim rather than emitting an empty object.
 4. subject_name should be the canonical entity name as it appears in the source text (e.g. "GPT-4", "RoboAgent", "MMLU").
+4b. subject_type classifies what kind of thing the subject is — one of "model", "paper", "benchmark", "method", "person", "lab", "repo", "concept". Pick the most specific that applies; use "concept" only when nothing else fits.
 5. If no claims fit these predicates, return an empty claims list.
 6. Do NOT invent claims not in the source text.
 

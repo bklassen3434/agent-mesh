@@ -60,6 +60,114 @@ def init_db() -> None:
         console.print("[green]Knowledge schema already up to date.[/green]")
 
 
+@cli.command("reclassify-entities")
+@click.option("--field", "field_slug", default="ai-robotics", show_default=True)
+@click.option(
+    "--apply", "apply_changes", is_flag=True, default=False,
+    help="Write the reclassifications (default: dry-run preview).",
+)
+@click.option("--batch-size", default=50, show_default=True)
+def reclassify_entities_cmd(field_slug: str, apply_changes: bool, batch_size: int) -> None:
+    """One-time backfill: LLM-type the 'concept'-typed entities.
+
+    Entities minted before extraction carried a ``subject_type`` all defaulted
+    to ``concept`` (every graph node grey). Asks the configured LLM to classify
+    each such entity's NAME into one of the EntityType values; names it can't
+    place stay ``concept``. Idempotent — already-typed entities are untouched.
+    """
+    from mesh_db.fields import get_field_by_slug
+    from mesh_llm import LLMProviderNotReadyError, make_llm_client
+    from pydantic import BaseModel
+
+    class _Assignment(BaseModel):
+        name: str
+        type: str
+
+    class _Assignments(BaseModel):
+        assignments: list[_Assignment]
+
+    valid = {e.value for e in EntityType}
+
+    conn = get_connection()  # writer
+    try:
+        fld = get_field_by_slug(conn, field_slug)
+        field_id = fld.id if fld is not None else field_slug
+        field_desc = field_slug
+        if fld is not None:
+            field_desc = getattr(fld, "description", "") or getattr(fld, "name", "")
+
+        try:
+            llm = make_llm_client(agent_name="entity_reclassifier")
+            llm.health_check()
+        except LLMProviderNotReadyError as exc:
+            console.print(f"[red]LLM unavailable: {exc}[/red]")
+            raise SystemExit(1) from exc
+
+        system = (
+            f"You classify entity names from a research knowledge base about: {field_desc}.\n"
+            "For each input name, assign exactly one type:\n"
+            "- model: a trained system/agent/artifact that performs tasks\n"
+            "- paper: a publication or article title\n"
+            "- benchmark: a named evaluation suite, dataset-as-test, or leaderboard\n"
+            "- method: a technique, algorithm, architecture, or procedure\n"
+            "- person: an individual researcher or author\n"
+            "- lab: an organization, company, team, or institution\n"
+            "- repo: a code repository, library, or software package\n"
+            "- concept: ONLY when nothing above fits (an abstract idea or topic)\n"
+            "Return every input name exactly once. Return only valid JSON matching the schema."
+        )
+
+        # Page through all concept-typed entities first (stable snapshot).
+        todo: list[Entity] = []
+        offset = 0
+        while True:
+            page = list_entities(
+                conn, type=EntityType.concept, limit=200, offset=offset, field_id=field_id
+            )
+            if not page:
+                break
+            todo.extend(page)
+            offset += len(page)
+        console.print(f"{len(todo)} concept-typed entities in field '{field_slug}'.")
+
+        changed: dict[str, str] = {}
+        errors = 0
+        for i in range(0, len(todo), max(batch_size, 1)):
+            batch = todo[i : i + batch_size]
+            names = "\n".join(f"- {e.canonical_name}" for e in batch)
+            try:
+                result = llm.complete_with_latency(
+                    "reclassify_entities", system, f"Classify these names:\n{names}",
+                    _Assignments,
+                )[0]
+            except Exception as exc:  # one bad batch shouldn't kill the backfill
+                errors += 1
+                console.print(f"[yellow]batch {i // batch_size} failed: {exc}[/yellow]")
+                continue
+            by_name = {a.name.strip().lower(): a.type for a in result.assignments}
+            for ent in batch:
+                new_type = by_name.get(ent.canonical_name.strip().lower())
+                if new_type in valid and new_type != EntityType.concept.value:
+                    changed[ent.id] = new_type
+                    if apply_changes:
+                        from mesh_db.entities import update_entity
+
+                        update_entity(conn, ent.id, type=EntityType(new_type))
+
+        from collections import Counter
+
+        dist = Counter(changed.values())
+        mode = "APPLIED" if apply_changes else "dry-run (use --apply to write)"
+        console.print(
+            f"[green]{len(changed)}/{len(todo)} entities reclassified ({mode}); "
+            f"{errors} failed batch(es).[/green]"
+        )
+        for t, n in dist.most_common():
+            console.print(f"  {t}: {n}")
+    finally:
+        conn.close()
+
+
 @cli.command("backfill-claim-types")
 def backfill_claim_types_cmd() -> None:
     """Type any untyped/drifted claims (Phase 14a). Deterministic + idempotent.

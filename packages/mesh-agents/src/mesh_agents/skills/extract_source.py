@@ -168,13 +168,19 @@ class ExtractSourceSkill:
             return []
 
         # 2. Resolve subject names against existing entities (pure, read-only).
+        # The extractor's subject_type rides along so a genuinely-new subject is
+        # minted as what the source says it is, not the blanket "concept".
         candidate_names = list({c.subject_name for c in extracted_claims})
         existing = _load_existing_entities(conn, candidate_names, tension.field_id)
+        type_hints: dict[str, str] = {
+            c.subject_name: c.subject_type for c in extracted_claims
+        }
         tracker = EntityTrackerAgent()
         resolved = await tracker.run_skill(
             EntityResolveSkillInput(
                 candidate_names=candidate_names,
                 existing_entities=existing,
+                type_hints=type_hints,
             )
         )
         name_to_id = {r.name: r.entity_id for r in resolved.resolved if not r.is_new}

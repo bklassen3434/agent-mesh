@@ -3,28 +3,43 @@
     {
       "predicate": "achieves_score",
       "subject_name": "TestModel-7B",
-      "object": {"score": 87.5, "benchmark": "MMLU", "metric": "accuracy"},
+      "subject_type": "model",
+      "object": {
+        "score": 87.5,
+        "benchmark": "MMLU",
+        "metric": "accuracy"
+      },
       "raw_excerpt": "TestModel-7B achieves 87.5% accuracy on MMLU",
       "confidence": 0.95
     },
     {
       "predicate": "outperforms",
       "subject_name": "TestModel-7B",
-      "object": {"compared_to": "GPT-3", "on": "MMLU"},
+      "subject_type": "model",
+      "object": {
+        "compared_to": "GPT-3",
+        "on": "MMLU"
+      },
       "raw_excerpt": "outperforming GPT-3 on MMLU",
       "confidence": 0.88
     },
     {
       "predicate": "developed_by",
       "subject_name": "TestModel-7B",
-      "object": {"lab": "TestLab"},
+      "subject_type": "model",
+      "object": {
+        "lab": "TestLab"
+      },
       "raw_excerpt": "developed by TestLab",
       "confidence": 0.99
     },
     {
       "predicate": "evaluated_on",
       "subject_name": "TestModel-7B",
-      "object": {"benchmark": "MMLU"},
+      "subject_type": "model",
+      "object": {
+        "benchmark": "MMLU"
+      },
       "raw_excerpt": "evaluated on MMLU",
       "confidence": 0.99
     }

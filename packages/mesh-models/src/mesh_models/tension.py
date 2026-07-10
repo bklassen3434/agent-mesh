@@ -50,6 +50,7 @@ class TensionKind(StrEnum):
     # condition is a stored-timestamp state condition), not board-state driven.
     aging_belief = "aging_belief"  # the held corpus is due for decay + archival
     consolidatable_memory = "consolidatable_memory"  # episodic history due to distil
+    stale_field_brief = "stale_field_brief"  # the field's narrative brief is due
     # A load-bearing held belief contradicted by fresh evidence — the flagship
     # deep-reasoning case: gather corroboration, weigh both sides, then decide.
     contradicted_belief = "contradicted_belief"

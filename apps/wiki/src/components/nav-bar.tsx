@@ -35,11 +35,13 @@ const KNOWLEDGE = [
 // and topic management.
 const BETA_LINKS = [
   { href: '/', label: 'Chat' },
+  { href: '/overview', label: 'Overview' },
   { href: '/graph', label: 'Graph' },
   { href: '/connectors', label: 'Connectors' },
 ];
 const ADMIN_LINKS = [
   { href: '/', label: 'Chat' },
+  { href: '/overview', label: 'Overview' },
   { href: '/briefing', label: 'Daily Brief' },
   { href: '/graph', label: 'Graph' },
   { href: '/connectors', label: 'Connectors' },

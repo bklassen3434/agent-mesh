@@ -56,6 +56,7 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.open_investigation: 0.05,
     TensionKind.aging_belief: 0.001,  # LLM-free corpus scan
     TensionKind.consolidatable_memory: 0.04,  # one sync distil call per target
+    TensionKind.stale_field_brief: 0.02,  # one narrative call per field
     TensionKind.contradicted_belief: 0.08,  # gather corroboration + weigh both sides
 }
 
@@ -74,6 +75,7 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.open_investigation: "dispatch-investigation",
     TensionKind.aging_belief: "maintain-belief",
     TensionKind.consolidatable_memory: "consolidate-memory",
+    TensionKind.stale_field_brief: "write-field-brief",
     TensionKind.contradicted_belief: "adjudicate-contradiction",
 }
 
@@ -99,6 +101,7 @@ _KIND_TIER: dict[TensionKind, ReasoningTier] = {
     TensionKind.open_investigation: ReasoningTier.deep,
     TensionKind.aging_belief: ReasoningTier.simple,
     TensionKind.consolidatable_memory: ReasoningTier.simple,
+    TensionKind.stale_field_brief: ReasoningTier.simple,
     TensionKind.contradicted_belief: ReasoningTier.deep,
 }
 
@@ -262,6 +265,27 @@ def maintenance_tensions(conn: Any, field_id: str) -> list[Tension]:
                 kind=kind,
                 subject="memory consolidation",
                 rationale="Periodic distillation of recent episodic history into heuristics.",
+                value=0.2,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
+                target_ref={"field_id": field_id},
+                signals={},
+            )
+        )
+
+    if list_beliefs(conn, currently_held=True, limit=1, field_id=field_id):
+        kind = TensionKind.stale_field_brief
+        out.append(
+            Tension(
+                id=f"{kind.value}:{field_id}",
+                field_id=field_id,
+                kind=kind,
+                subject="field brief",
+                rationale=(
+                    "Periodic refresh of the field's narrative brief "
+                    "(the Overview page headline)."
+                ),
                 value=0.2,
                 est_cost_usd=_KIND_COST_USD[kind],
                 handler_skill=_KIND_SKILL[kind],

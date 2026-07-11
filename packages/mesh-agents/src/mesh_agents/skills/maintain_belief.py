@@ -36,6 +36,8 @@ class MaintainBeliefSkill:
 
     skill_id = "maintain-belief"
     handles = (TensionKind.aging_belief,)
+    # LLM-free: keeps running while the daily LLM budget brake is engaged.
+    uses_llm = False
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

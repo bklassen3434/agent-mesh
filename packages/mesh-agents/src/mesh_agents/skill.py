@@ -34,6 +34,10 @@ class Skill(Protocol):
 
     skill_id: str
     handles: tuple[TensionKind, ...]
+    # Optional class attribute (presumed True when absent): whether running the
+    # skill may spend LLM tokens. LLM-free skills set ``uses_llm = False`` so the
+    # controller's daily budget brake (MESH_DAILY_LLM_BUDGET_*) lets them keep
+    # running while LLM-bound work is deferred.
 
     async def run(self, conn: Any, tension: Tension, *, budget_usd: float) -> list[Any]:
         """Do the work and return ``Effect``s for the gateway. Writes nothing

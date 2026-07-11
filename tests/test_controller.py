@@ -337,3 +337,112 @@ def test_controller_opens_an_adjudication_investigation_for_a_contradiction(
     )
     assert len(opened) == 1
     assert opened[0].opened_by_belief_id is not None
+
+
+# ── daily LLM budget brake ────────────────────────────────────────────────────
+
+
+def _seed_usage_today(conn: MeshConnection, *, tokens: int, usd: float) -> None:
+    from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
+
+    create_llm_usage(
+        conn,
+        LLMUsageRecord(
+            run_id="budget-test-run",
+            skill_id="extract-source",
+            model="claude-haiku-4-5",
+            input_tokens=tokens,
+            estimated_cost_usd=usd,
+        ),
+    )
+
+
+def test_budget_brake_defers_llm_bound_work(
+    tmp_db: MeshConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ledger over the token budget → the (uses_llm-presumed) handler is deferred:
+    # the plan empties and the controller is quiescent without dispatching.
+    monkeypatch.setenv("MESH_DAILY_LLM_BUDGET_TOKENS", "1000")
+    monkeypatch.delenv("MESH_DAILY_LLM_BUDGET_USD", raising=False)
+    _register_belief_maker()
+    _unread_source(tmp_db, "budget-src")
+    _seed_usage_today(tmp_db, tokens=2000, usd=0.01)
+
+    result = asyncio.run(run_controller(_FIELD, shadow=False, max_rounds=1, conn=tmp_db))
+
+    assert result.quiescent is True
+    assert all(r.dispatched == 0 for r in result.rounds)
+    assert list_beliefs(tmp_db, currently_held=True, limit=10) == []
+
+
+def test_budget_brake_usd_knob(
+    tmp_db: MeshConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MESH_DAILY_LLM_BUDGET_TOKENS", raising=False)
+    monkeypatch.setenv("MESH_DAILY_LLM_BUDGET_USD", "1.50")
+    _register_belief_maker()
+    _unread_source(tmp_db, "budget-usd-src")
+    _seed_usage_today(tmp_db, tokens=10, usd=2.00)
+
+    result = asyncio.run(run_controller(_FIELD, shadow=False, max_rounds=1, conn=tmp_db))
+    assert all(r.dispatched == 0 for r in result.rounds)
+
+
+def test_budget_brake_lets_llm_free_skills_run(
+    tmp_db: MeshConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An over-budget day must NOT stop LLM-free work: a uses_llm=False handler
+    # for the same tension still dispatches and its effects apply.
+    monkeypatch.setenv("MESH_DAILY_LLM_BUDGET_TOKENS", "1000")
+
+    @register_skill
+    class _FreeBeliefMaker:
+        skill_id = "extract-source"
+        handles = (TensionKind.unextracted_source,)
+        uses_llm = False
+
+        async def run(self, conn: Any, tension: Any, *, budget_usd: float) -> list[Any]:
+            return [
+                CreateBeliefEffect(
+                    field_id=tension.field_id,
+                    belief=Belief(
+                        topic="free-skill",
+                        statement="written while budget exhausted",
+                        confidence=0.5,
+                        is_currently_held=True,
+                    ),
+                )
+            ]
+
+    _unread_source(tmp_db, "budget-free-src")
+    _seed_usage_today(tmp_db, tokens=2000, usd=0.01)
+
+    result = asyncio.run(run_controller(_FIELD, shadow=False, max_rounds=1, conn=tmp_db))
+    assert any(r.dispatched >= 1 for r in result.rounds)
+    assert len(list_beliefs(tmp_db, currently_held=True, limit=10)) == 1
+
+
+def test_budget_unset_is_a_noop(
+    tmp_db: MeshConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MESH_DAILY_LLM_BUDGET_TOKENS", raising=False)
+    monkeypatch.delenv("MESH_DAILY_LLM_BUDGET_USD", raising=False)
+    _register_belief_maker()
+    _unread_source(tmp_db, "budget-off-src")
+    _seed_usage_today(tmp_db, tokens=10_000_000, usd=100.0)
+
+    result = asyncio.run(run_controller(_FIELD, shadow=False, max_rounds=1, conn=tmp_db))
+    assert any(r.dispatched >= 1 for r in result.rounds)
+
+
+def test_budget_under_limit_dispatches_normally(
+    tmp_db: MeshConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MESH_DAILY_LLM_BUDGET_TOKENS", "1000000")
+    monkeypatch.setenv("MESH_DAILY_LLM_BUDGET_USD", "5.0")
+    _register_belief_maker()
+    _unread_source(tmp_db, "budget-under-src")
+    _seed_usage_today(tmp_db, tokens=500, usd=0.01)
+
+    result = asyncio.run(run_controller(_FIELD, shadow=False, max_rounds=1, conn=tmp_db))
+    assert any(r.dispatched >= 1 for r in result.rounds)

@@ -48,6 +48,8 @@ class ScoutSourceSkill:
 
     skill_id = "scout-source"
     handles = (TensionKind.unscouted_connector,)
+    # LLM-free: keeps running while the daily LLM budget brake is engaged.
+    uses_llm = False
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

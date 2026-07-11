@@ -21,10 +21,13 @@ Per round it:
      stay deterministic across invocations) and applies effects via the gateway;
   6. repeats until the plan is empty (**quiescence**) or ``max_rounds``.
 
-No budget, no prices, no daemon — the only knobs are a per-round ``step_cap`` and
-``max_rounds``. ``shadow=True`` (the default) previews one round's plan + effects
-and writes nothing (no effects, no counters); ``--apply`` acts and loops to
-quiescence.
+No auction, no prices — the knobs are a per-round ``step_cap``, ``max_rounds``,
+and an optional **daily LLM budget brake** (``MESH_DAILY_LLM_BUDGET_TOKENS`` /
+``MESH_DAILY_LLM_BUDGET_USD``): when today's ``llm_usage`` ledger exceeds either
+limit, LLM-bound activations are deferred until the UTC day rolls over while
+LLM-free work (scouting, synthesis, maintenance) continues. ``shadow=True`` (the
+default) previews one round's plan + effects and writes nothing (no effects, no
+counters); ``--apply`` acts and loops to quiescence.
 """
 from __future__ import annotations
 
@@ -52,7 +55,7 @@ from mesh_db.connection import MeshConnection, get_connection
 from mesh_db.controller_state import DispatchOutcome, get_tension_states, record_dispatch
 from mesh_db.effects import ApplyReport, apply_effects
 from mesh_db.fields import get_field_by_slug
-from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage
+from mesh_db.llm_usage import LLMUsageRecord, create_llm_usage, usage_totals_since
 from mesh_db.pg_migrations import init_pg
 from mesh_db.pipeline_runs import PipelineRun, create_pipeline_run, pipeline_run_exists
 from mesh_llm.usage_sink import UsageEvent, open_sink
@@ -103,6 +106,75 @@ def _get_step_cap() -> int:
     """Max activations dispatched per round (the deterministic replacement for the
     market's per-round budget). A large default — the loop runs to quiescence."""
     return int(os.environ.get("MESH_CONTROLLER_STEP_CAP", "8"))
+
+
+def _get_daily_budget_tokens() -> int | None:
+    raw = (os.environ.get("MESH_DAILY_LLM_BUDGET_TOKENS") or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _get_daily_budget_usd() -> float | None:
+    raw = (os.environ.get("MESH_DAILY_LLM_BUDGET_USD") or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _skill_uses_llm(skill_id: str) -> bool:
+    """Whether a skill's dispatch may spend LLM tokens. Skills opt OUT via a
+    ``uses_llm = False`` class attribute; unknown/unmarked skills are presumed
+    to cost (the safe default for the budget brake)."""
+    skill = get_skill(skill_id)
+    if skill is None:
+        return True
+    return bool(getattr(skill, "uses_llm", True))
+
+
+def _apply_llm_budget(
+    conn: Any, activations: list[Activation], clock: datetime
+) -> list[Activation]:
+    """The daily LLM budget brake.
+
+    With ``MESH_DAILY_LLM_BUDGET_TOKENS`` / ``MESH_DAILY_LLM_BUDGET_USD`` unset
+    this is a no-op. Otherwise, when today's (UTC) ``llm_usage`` ledger meets
+    either limit, LLM-bound activations are dropped from the worklist — they are
+    not lost, only deferred: the tensions stay on the board and re-plan once the
+    day rolls over. LLM-free skills keep running so the mesh keeps sensing,
+    fetching, and synthesizing. Designed so the cheap tier can be pinned to a
+    provider's free daily quota (e.g. Cerebras's 1M tokens/day) and the mesh
+    simply lives inside it."""
+    budget_tokens = _get_daily_budget_tokens()
+    budget_usd = _get_daily_budget_usd()
+    if budget_tokens is None and budget_usd is None:
+        return activations
+    midnight = clock.astimezone(UTC).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    tokens_today, usd_today = usage_totals_since(conn, midnight)
+    over = (budget_tokens is not None and tokens_today >= budget_tokens) or (
+        budget_usd is not None and usd_today >= budget_usd
+    )
+    if not over:
+        return activations
+    kept = [a for a in activations if not _skill_uses_llm(a.skill_id)]
+    if len(kept) < len(activations):
+        log.warning(
+            "llm_budget_exhausted",
+            tokens_today=tokens_today,
+            usd_today=round(usd_today, 4),
+            budget_tokens=budget_tokens,
+            budget_usd=budget_usd,
+            deferred=len(activations) - len(kept),
+        )
+    return kept
 
 
 def _swarm_quorum_enabled() -> bool:
@@ -207,8 +279,10 @@ async def run_controller(
                 dispatched=dispatched,
             )
 
-            # 3. plan: every rule fires → deterministic ordered worklist.
-            activations = plan(state)
+            # 3. plan: every rule fires → deterministic ordered worklist. The
+            # daily LLM budget brake then defers LLM-bound work when today's
+            # ledger is over MESH_DAILY_LLM_BUDGET_TOKENS / _USD.
+            activations = _apply_llm_budget(conn, plan(state), clock)
             if not activations:
                 result.quiescent = True
                 break

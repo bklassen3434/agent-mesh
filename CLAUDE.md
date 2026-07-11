@@ -202,6 +202,8 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_ADJUDICATE_MIN_DEPENDENTS` | `2` | Min supporting-claim fan-in before a contradiction is treated as load-bearing |
 | `MESH_ADJUDICATE_REFUTE_FLOOR` | `0.2` | Post-adjudication confidence below which a `contradicted` verdict drops the belief from the held set (append-only) |
 | `MESH_CONTROLLER_SCOUT_COOLDOWN_SEC` | `600` | Min seconds between scouts of a connector once the board is idle |
+| `MESH_DAILY_LLM_BUDGET_TOKENS` | (unset = off) | Daily LLM budget brake: when today's (UTC) `llm_usage` tokens reach this, the controller defers LLM-bound skills until the day rolls over (pin to a provider's free daily quota, e.g. 950000 for Cerebras's 1M/day) |
+| `MESH_DAILY_LLM_BUDGET_USD` | (unset = off) | Same brake in dollars — a hard ceiling on estimated daily LLM spend; LLM-free skills keep running |
 | `MESH_ADMIN_MODE` | (empty/off) | **Wiki only.** Server-side flag: `true` grants admin on that instance; off = beta-only. Never client-supplied, so a public visitor can't reach admin. Enable ONLY on a local / non-exposed instance. |
 | `MESH_INTERNAL_TOKEN` | (empty) | **Wiki + API (same value).** Lets only the wiki server call privileged API endpoints (create/patch topic, connector toggle, schedule, trigger) and the rate-limited `/ask`. Unset on the API = guard disabled (dev/local). |
 | `MESH_BETA_DAILY_QUERY_LIMIT` | `3` | **API only.** Grounded chatbot questions an anonymous beta browser may ask per day (resets daily). Admins are unlimited. |

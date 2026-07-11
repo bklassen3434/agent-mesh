@@ -58,6 +58,8 @@ class DispatchInvestigationSkill:
 
     skill_id = "dispatch-investigation"
     handles = (TensionKind.open_investigation,)
+    # LLM-free: keeps running while the daily LLM budget brake is engaged.
+    uses_llm = False
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float

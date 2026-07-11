@@ -69,6 +69,26 @@ def create_llm_usage(
     return record
 
 
+def usage_totals_since(
+    conn: MeshConnection, since: datetime
+) -> tuple[int, float]:
+    """Total tokens (all four kinds) and estimated USD across all runs since
+    ``since``. Feeds the controller's daily LLM budget brake
+    (``MESH_DAILY_LLM_BUDGET_TOKENS`` / ``MESH_DAILY_LLM_BUDGET_USD``)."""
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(input_tokens + output_tokens
+                            + cache_read_tokens + cache_creation_tokens), 0),
+               COALESCE(SUM(estimated_cost_usd), 0.0)
+        FROM llm_usage
+        WHERE created_at >= %s
+        """,
+        [since],
+    ).fetchone()
+    assert row is not None
+    return int(row[0]), float(row[1])
+
+
 def aggregate_usage_by_skill(
     conn: MeshConnection, run_id: str
 ) -> list[SkillUsageTotals]:

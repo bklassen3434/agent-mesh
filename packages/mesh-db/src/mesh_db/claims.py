@@ -200,7 +200,12 @@ def unsynthesized_claim_counts_by_entity(
     it they would re-trigger this tension forever (synthesize-belief re-runs and
     returns no effects — ~45% of its dispatches were this churn). Claim types that
     synthesize into nothing (critique / reproduction / speculative) are excluded
-    for the same reason — they feed the skeptic/contradiction path, not synthesis."""
+    for the same reason — they feed the skeptic/contradiction path, not synthesis.
+
+    A relational claim whose object names **no target entity** (e.g. an
+    ``outperforms`` with an empty ``compared_to``) can never form an edge, so it is
+    excluded too — otherwise it stays unhandled and re-fires the tension forever
+    (synthesize-belief mints a target only when one is *named*)."""
     rows = conn.execute(
         """
         WITH used AS (
@@ -219,6 +224,15 @@ def unsynthesized_claim_counts_by_entity(
           AND c.status = 'active'
           AND c.claim_type NOT IN ('critique', 'reproduction', 'speculative')
           AND c.id NOT IN (SELECT claim_id FROM used)
+          AND NOT (
+              c.claim_type IN ('comparison', 'attribution', 'lineage', 'evaluation')
+              AND COALESCE(NULLIF(TRIM(c.object ->> CASE c.claim_type
+                      WHEN 'comparison'  THEN 'compared_to'
+                      WHEN 'attribution' THEN 'lab'
+                      WHEN 'lineage'     THEN 'parent'
+                      WHEN 'evaluation'  THEN 'benchmark'
+                  END), ''), '') = ''
+          )
         GROUP BY c.subject_entity_id
         ORDER BY cnt DESC
         LIMIT %s

@@ -40,6 +40,13 @@ class Source(BaseModel):
     # the controller's scout-source skill so extract-source can recover the content a
     # round later; NULL for coordinator-written sources (extracted in one pass).
     payload: dict[str, Any] | None = None
+    # Terminal state for the unextracted_source tension. "pending" until the
+    # reader has extracted claims (then the claim rows exclude it) or exhausted it
+    # ("attempted, produced nothing" — off-topic/thin content, or too many parse
+    # failures). extract-source marks it exhausted so the tension stops re-firing;
+    # extraction_attempts bounds transient parse-failure retries.
+    extraction_status: str = "pending"
+    extraction_attempts: int = 0
 
     @field_validator("reliability_prior")
     @classmethod

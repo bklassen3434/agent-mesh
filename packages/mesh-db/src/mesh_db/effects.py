@@ -39,6 +39,7 @@ from mesh_models.effect import (
     MergeBeliefsEffect,
     MergeEntitiesEffect,
     OpenInvestigationEffect,
+    RecordExtractionAttemptEffect,
     RejectEntityMergeEffect,
     ReviseBeliefEffect,
     SupersedeClaimEffect,
@@ -74,7 +75,7 @@ from mesh_db.investigations import (
 )
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
-from mesh_db.sources import create_source
+from mesh_db.sources import create_source, record_extraction_attempt
 
 log = structlog.get_logger()
 
@@ -104,6 +105,8 @@ class ApplyReport(BaseModel):
     investigation_claims_attached: int = 0
     heuristics_written: int = 0
     field_briefs_written: int = 0
+    extraction_attempts_recorded: int = 0
+    sources_exhausted: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -250,6 +253,14 @@ def _apply_one(
     elif isinstance(effect, AttachClaimToInvestigationEffect):
         attach_claim_to_investigation(conn, effect.investigation_id, effect.claim_id)
         report.investigation_claims_attached += 1
+
+    elif isinstance(effect, RecordExtractionAttemptEffect):
+        # Terminal state for a source that extracted to nothing — stops the
+        # unextracted_source tension re-firing forever on dead sources.
+        record_extraction_attempt(conn, effect.source_id, exhausted=effect.exhausted)
+        report.extraction_attempts_recorded += 1
+        if effect.exhausted:
+            report.sources_exhausted += 1
 
     elif isinstance(effect, WriteHeuristicEffect):
         # Append-only procedural memory: head row + genesis revision (the skill

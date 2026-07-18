@@ -11,9 +11,18 @@ from mesh_db.connection import MeshConnection
 
 
 def _row_to_source(row: tuple[Any, ...]) -> Source:
-    id_, type_, url, author, published_at, fetched_at, raw_content_hash, reliability_prior = (
-        row[:8]
-    )
+    (
+        id_,
+        type_,
+        url,
+        author,
+        published_at,
+        fetched_at,
+        raw_content_hash,
+        reliability_prior,
+        extraction_status,
+        extraction_attempts,
+    ) = row[:10]
     return Source(
         id=id_,
         type=SourceType(type_),
@@ -29,6 +38,8 @@ def _row_to_source(row: tuple[Any, ...]) -> Source:
         ),
         raw_content_hash=raw_content_hash,
         reliability_prior=float(reliability_prior),
+        extraction_status=str(extraction_status),
+        extraction_attempts=int(extraction_attempts),
     )
 
 
@@ -74,11 +85,7 @@ def get_source_payload(conn: MeshConnection, id: str) -> dict[str, Any] | None:
 
 
 def get_source_by_id(conn: MeshConnection, id: str) -> Source | None:
-    row = conn.execute(
-        "SELECT id, type, url, author, published_at, fetched_at, "
-        "raw_content_hash, reliability_prior FROM sources WHERE id = %s",
-        [id],
-    ).fetchone()
+    row = conn.execute(f"{_SELECT} WHERE id = %s", [id]).fetchone()
     return _row_to_source(row) if row else None
 
 
@@ -86,7 +93,8 @@ MAX_LIMIT = 200
 
 _SELECT = (
     "SELECT id, type, url, author, published_at, fetched_at, "
-    "raw_content_hash, reliability_prior FROM sources"
+    "raw_content_hash, reliability_prior, extraction_status, "
+    "extraction_attempts FROM sources"
 )
 
 
@@ -145,14 +153,17 @@ def unextracted_sources(
     """Sources in ``field_id`` that no claim references yet — the mesh has them
     but hasn't read them (the ``unextracted_source`` tension; agentic-migration
     Phase 0). Newest-first. ``agent_reasoning`` sources are skipped: they're
-    synthesized rationale, not inputs to extract. A single anti-join, read-only,
-    field-scoped."""
+    synthesized rationale, not inputs to extract. Sources marked
+    ``extraction_status = 'exhausted'`` are skipped too: extract-source read them
+    and there was nothing to pull, so re-reading only re-burns the LLM budget. A
+    single anti-join, read-only, field-scoped."""
     limit = min(max(limit, 0), MAX_LIMIT)
     rows = conn.execute(
         _SELECT
         + """
         WHERE field_id = %s
           AND type <> 'agent_reasoning'
+          AND extraction_status <> 'exhausted'
           AND NOT EXISTS (
               SELECT 1 FROM claims c WHERE c.source_id = sources.id
           )
@@ -162,6 +173,25 @@ def unextracted_sources(
         [field_id, limit],
     ).fetchall()
     return [_row_to_source(r) for r in rows]
+
+
+def record_extraction_attempt(
+    conn: MeshConnection, id: str, *, exhausted: bool
+) -> None:
+    """Bump a source's ``extraction_attempts`` and, when ``exhausted``, flip its
+    ``extraction_status`` to 'exhausted' so ``unextracted_sources`` skips it — the
+    terminal state for a source the reader tried and could pull no claims from.
+    Idempotent enough for a swarm: two copies just increment twice and converge on
+    'exhausted'."""
+    conn.execute(
+        """
+        UPDATE sources
+        SET extraction_attempts = extraction_attempts + 1,
+            extraction_status = CASE WHEN %s THEN 'exhausted' ELSE extraction_status END
+        WHERE id = %s
+        """,
+        [exhausted, id],
+    )
 
 
 def get_sources_by_ids(

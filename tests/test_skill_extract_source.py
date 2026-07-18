@@ -18,8 +18,12 @@ from mesh_db.claims import count_claims
 from mesh_db.connection import MeshConnection
 from mesh_db.effects import apply_effects
 from mesh_db.entities import create_entity
-from mesh_db.sources import create_source
-from mesh_models.effect import CreateClaimEffect, CreateEntityEffect
+from mesh_db.sources import create_source, get_source_by_id, unextracted_sources
+from mesh_models.effect import (
+    CreateClaimEffect,
+    CreateEntityEffect,
+    RecordExtractionAttemptEffect,
+)
 from mesh_models.entity import Entity, EntityType
 from mesh_models.field import DEFAULT_FIELD_ID
 from mesh_models.source import Source, SourceType
@@ -119,12 +123,27 @@ def test_emits_one_create_claim_effect_per_known_subject(tmp_db: MeshConnection)
     assert count_claims(tmp_db, field_id=DEFAULT_FIELD_ID) == 4
 
 
-def test_skips_unknown_subject_when_minting_disabled(tmp_db: MeshConnection) -> None:
-    # Conservative path (no embedder / minting off): unknown subject → no effects.
+def test_unresolved_subject_exhausts_source_when_minting_disabled(
+    tmp_db: MeshConnection,
+) -> None:
+    # Conservative path (no embedder / minting off): the unknown subject yields no
+    # claim, so no claim row will ever reference this source. Rather than leave the
+    # tension re-firing forever, the skill retires the source as exhausted.
     source = _seed_source(tmp_db)
     skill = ExtractSourceSkill(llm=MockLLMClient(), mint_entities=False)  # type: ignore[arg-type]
     effects = _run(skill, tmp_db, _tension(source.id))
-    assert effects == []
+
+    assert not [e for e in effects if isinstance(e, CreateClaimEffect)]
+    attempts = [e for e in effects if isinstance(e, RecordExtractionAttemptEffect)]
+    assert len(attempts) == 1
+    assert attempts[0].exhausted
+    assert attempts[0].reason == "unresolved_subjects"
+
+    apply_effects(tmp_db, effects)
+    refetched = get_source_by_id(tmp_db, source.id)
+    assert refetched is not None and refetched.extraction_status == "exhausted"
+    # And it drops out of the unextracted pool, so the tension stops re-firing.
+    assert source.id not in {s.id for s in unextracted_sources(tmp_db, field_id=DEFAULT_FIELD_ID)}
 
 
 class _StubEmbedder:
@@ -166,12 +185,49 @@ def test_missing_source_returns_empty(tmp_db: MeshConnection) -> None:
     assert effects == []
 
 
-def test_no_claims_extracted_returns_empty(tmp_db: MeshConnection) -> None:
+def test_empty_extraction_exhausts_source(tmp_db: MeshConnection) -> None:
+    # A successful read that found nothing (off-topic / thin content) is
+    # deterministic: retire the source immediately so its tension stops re-firing
+    # and re-burning the LLM budget every pass.
     source = _seed_source(tmp_db)
     _seed_entity(tmp_db, "TestModel-7B")
     skill = ExtractSourceSkill(llm=MockLLMClient(response_json='{"claims": []}'))  # type: ignore[arg-type]
     effects = _run(skill, tmp_db, _tension(source.id))
-    assert effects == []
+
+    assert len(effects) == 1
+    assert isinstance(effects[0], RecordExtractionAttemptEffect)
+    assert effects[0].exhausted and effects[0].reason == "no_claims"
+
+    apply_effects(tmp_db, effects)
+    refetched = get_source_by_id(tmp_db, source.id)
+    assert refetched is not None and refetched.extraction_status == "exhausted"
+
+
+def test_parse_failure_retries_then_exhausts(tmp_db: MeshConnection) -> None:
+    # A parse failure may be a transient provider hiccup, so it is retried up to
+    # MAX_EXTRACTION_ATTEMPTS before the source is retired — a paper that always
+    # fails to parse can't churn forever, but a one-off blip isn't dropped.
+    from mesh_agents.skills.extract_source import MAX_EXTRACTION_ATTEMPTS
+
+    source = _seed_source(tmp_db)
+    _seed_entity(tmp_db, "TestModel-7B")
+    # Malformed structured output → LLMResponseError inside the skill.
+    skill = ExtractSourceSkill(llm=MockLLMClient(response_json="{not json"))  # type: ignore[arg-type]
+
+    for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
+        effects = _run(skill, tmp_db, _tension(source.id))
+        assert len(effects) == 1
+        eff = effects[0]
+        assert isinstance(eff, RecordExtractionAttemptEffect)
+        assert eff.reason == "parse_error"
+        # Exhausted only on the final permitted attempt; earlier ones keep retrying.
+        assert eff.exhausted == (attempt >= MAX_EXTRACTION_ATTEMPTS)
+        apply_effects(tmp_db, effects)
+
+    refetched = get_source_by_id(tmp_db, source.id)
+    assert refetched is not None
+    assert refetched.extraction_status == "exhausted"
+    assert refetched.extraction_attempts == MAX_EXTRACTION_ATTEMPTS
 
 
 def test_registered_in_builtin_registry() -> None:

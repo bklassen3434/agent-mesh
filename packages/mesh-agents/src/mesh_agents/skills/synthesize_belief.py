@@ -32,14 +32,18 @@ from typing import Any
 from mesh_db.beliefs import list_beliefs
 from mesh_db.claims import list_claims
 from mesh_db.entities import get_entity_by_id, list_entities
+from mesh_llm import Embedder, make_embedder
+from mesh_llm.embeddings import entity_embed_text
 from mesh_models.belief import Belief
 from mesh_models.claim import Claim, ClaimStatus, ClaimType
 from mesh_models.effect import (
     AddRelationshipEvidenceEffect,
     CreateBeliefEffect,
+    CreateEntityEffect,
     Effect,
     ReviseBeliefEffect,
 )
+from mesh_models.entity import Entity, EntityType
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.skill import register_skill
@@ -187,22 +191,59 @@ def _resolve_entity_by_name(conn: Any, name: str, *, field_id: str) -> str | Non
     return None
 
 
+# What kind of node a relational edge points at, so a minted target is typed as
+# what it is (a benchmark, a lab, another model) rather than the blanket
+# "concept" — keyed by the edge type ``edge_for_claim`` returns.
+_EDGE_TARGET_TYPE: dict[str, EntityType] = {
+    "evaluated_on": EntityType.benchmark,  # evaluation → the benchmark
+    "developed_by": EntityType.lab,        # attribution → the lab
+    "outperforms": EntityType.model,       # comparison → the compared-to model
+    "based_on": EntityType.model,          # lineage → the parent it builds on
+}
+
+
 def _edge_effects(
-    conn: Any, entity_id: str, claims: list[Claim], *, field_id: str
+    conn: Any,
+    entity_id: str,
+    claims: list[Claim],
+    *,
+    field_id: str,
+    embedder: Embedder | None = None,
 ) -> list[Effect]:
     """Claim-grounded relationship edges from the entity's relational claims
     (``edge_for_claim``). Self-filters: non-relational claims map to ``None``.
-    Skips edges whose target doesn't resolve or that would self-loop."""
-    effects: list[Effect] = []
+
+    When the edge's target names an entity the field doesn't have yet, the target
+    is **minted** (typed by edge kind, with a name embedding so merge-candidate can
+    later block on it) rather than skipped — the old skip left the claim forever
+    unhandled, so its ``unsynthesized_claims`` tension re-fired every pass (the
+    dominant source of synthesize-belief churn) and the benchmark/lab nodes never
+    entered the graph. Mint effects come first so the gateway creates each target
+    before the edge that FKs it. Self-loops are still skipped. With no embedder we
+    fall back to the conservative skip (an un-blockable node can never reconcile)."""
+    mint_effects: list[Effect] = []
+    edge_effects: list[Effect] = []
+    minted: dict[str, str] = {}  # lower(name) -> new entity id (dedup within run)
     for c in claims:
         spec = edge_for_claim(c.claim_type, c.object)
         if spec is None:
             continue
         edge_type, target_name = spec
         target_id = _resolve_entity_by_name(conn, target_name, field_id=field_id)
-        if target_id is None or target_id == entity_id:
+        if target_id is None:
+            key = target_name.strip().lower()
+            if key in minted:
+                target_id = minted[key]
+            elif embedder is not None:
+                target_id = _mint_target(
+                    target_name, edge_type, field_id, embedder, mint_effects
+                )
+                minted[key] = target_id
+            else:
+                continue  # no embedder → can't mint a blockable node; skip
+        if target_id == entity_id:
             continue
-        effects.append(
+        edge_effects.append(
             AddRelationshipEvidenceEffect(
                 field_id=field_id,
                 from_entity_id=entity_id,
@@ -212,7 +253,29 @@ def _edge_effects(
                 confidence=c.confidence,
             )
         )
-    return effects
+    return mint_effects + edge_effects
+
+
+def _mint_target(
+    target_name: str,
+    edge_type: str,
+    field_id: str,
+    embedder: Embedder,
+    out: list[Effect],
+) -> str:
+    """Append a ``CreateEntityEffect`` for a not-yet-known edge target and return
+    its id. Typed by edge kind; embedded (best-effort) so merge-candidate can
+    block on it — mirrors extract-source's subject minting."""
+    etype = _EDGE_TARGET_TYPE.get(edge_type, EntityType.concept)
+    entity = Entity(canonical_name=target_name.strip(), type=etype)
+    try:
+        vec: list[float] | None = embedder.embed(
+            [entity_embed_text(entity.canonical_name, etype.value)]
+        )[0]
+    except Exception:  # embedding is best-effort; mint without it
+        vec = None
+    out.append(CreateEntityEffect(field_id=field_id, entity=entity, name_embedding=vec))
+    return entity.id
 
 
 @register_skill
@@ -222,8 +285,21 @@ class SynthesizeBeliefSkill:
 
     skill_id = "synthesize-belief"
     handles = (TensionKind.unsynthesized_claims,)
-    # LLM-free: keeps running while the daily LLM budget brake is engaged.
+    # LLM-free: keeps running while the daily LLM budget brake is engaged. Minting
+    # an edge target embeds its name with a LOCAL fastembed model (no LLM call), so
+    # this stays true.
     uses_llm = False
+
+    def __init__(self, embedder: Embedder | None = None) -> None:
+        # No-arg constructable for the registry; tests inject a stub embedder.
+        self._embedder = embedder
+
+    def _embedder_for_run(self) -> Embedder | None:
+        if self._embedder is not None:
+            return self._embedder
+        # Lazy, like extract-source: the ONNX model loads on first ``embed``, so a
+        # run whose targets all resolve never pays for it.
+        return make_embedder()
 
     async def run(
         self, conn: Any, tension: Tension, *, budget_usd: float
@@ -248,5 +324,13 @@ class SynthesizeBeliefSkill:
         effects.extend(
             _capability_effects(conn, entity_id, claims, field_id=field_id)
         )
-        effects.extend(_edge_effects(conn, entity_id, claims, field_id=field_id))
+        effects.extend(
+            _edge_effects(
+                conn,
+                entity_id,
+                claims,
+                field_id=field_id,
+                embedder=self._embedder_for_run(),
+            )
+        )
         return effects

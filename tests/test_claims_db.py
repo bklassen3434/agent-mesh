@@ -201,3 +201,27 @@ def test_unsynthesized_excludes_edge_and_nonsynthesizable_claims(
 
     counts = dict(unsynthesized_claim_counts_by_entity(tmp_db))
     assert counts.get(eid) == 1  # only the score claim remains unsynthesized
+
+
+def test_unsynthesized_excludes_relational_claims_with_no_target(
+    tmp_db: MeshConnection,
+) -> None:
+    """A relational claim whose object names no target entity can never form an
+    edge (synthesize-belief mints a target only when one is named), so it must not
+    be counted as unsynthesized — otherwise it re-fires the tension forever."""
+    from mesh_db.claims import unsynthesized_claim_counts_by_entity
+
+    eid, sid = _setup(tmp_db)
+    # outperforms with an empty compared_to → no edge target → un-synthesizable
+    create_claim(
+        tmp_db,
+        _make_claim(eid, sid, predicate="outperforms", object={"on": "MMLU"}),
+    )
+    # evaluated_on with a real benchmark target → still counts (mintable)
+    create_claim(
+        tmp_db,
+        _make_claim(eid, sid, predicate="evaluated_on", object={"benchmark": "MMLU"}),
+    )
+
+    counts = dict(unsynthesized_claim_counts_by_entity(tmp_db))
+    assert counts.get(eid) == 1  # only the targeted evaluation claim counts

@@ -1711,6 +1711,16 @@ export interface components {
             payload?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Extraction Status
+             * @default pending
+             */
+            extraction_status: string;
+            /**
+             * Extraction Attempts
+             * @default 0
+             */
+            extraction_attempts: number;
         };
         /** SourceDetail */
         SourceDetail: {

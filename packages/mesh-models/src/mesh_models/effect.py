@@ -194,6 +194,25 @@ class UpdateInvestigationEffect(BaseModel):
     set_resolved_at: bool = False
 
 
+class RecordExtractionAttemptEffect(BaseModel):
+    """Record that extract-source read a source, and whether it should stop trying.
+
+    The durable terminal state for the ``unextracted_source`` tension — the
+    complement of ``CreateClaimEffect`` for the case where a source yields no
+    claims. Without it, a source that legitimately extracts to nothing (off-topic
+    HN noise, an index page, an off-topic paper) stayed "unextracted" forever: the
+    tension re-fired every pass, escalated to a swarm, and re-burned the LLM budget
+    on the same dead sources. The gateway bumps ``extraction_attempts`` and, when
+    ``exhausted`` (a successful empty extraction, unresolvable subjects, or too many
+    parse failures), flips ``extraction_status`` to 'exhausted' so
+    ``unextracted_sources`` skips it. ``reason`` is audit-only."""
+
+    kind: Literal["record_extraction_attempt"] = "record_extraction_attempt"
+    source_id: str
+    exhausted: bool
+    reason: str = ""
+
+
 class AttachClaimToInvestigationEffect(BaseModel):
     """Link a claim gathered for an investigation to it (append-only on
     ``collected_claim_ids``). Emitted by extract-source when the source it read was
@@ -237,6 +256,7 @@ Effect = Annotated[
     | OpenInvestigationEffect
     | UpdateInvestigationEffect
     | AttachClaimToInvestigationEffect
+    | RecordExtractionAttemptEffect
     | WriteHeuristicEffect
     | WriteFieldBriefEffect,
     Field(discriminator="kind"),

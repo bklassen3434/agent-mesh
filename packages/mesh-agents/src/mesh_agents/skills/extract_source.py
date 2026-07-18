@@ -42,6 +42,7 @@ from mesh_models.effect import (
     CreateClaimEffect,
     CreateEntityEffect,
     Effect,
+    RecordExtractionAttemptEffect,
 )
 from mesh_models.entity import Entity, EntityType
 from mesh_models.tension import Tension, TensionKind
@@ -55,6 +56,12 @@ from mesh_agents.entity_tracker import (
     ResolvedEntityInfo,
 )
 from mesh_agents.skill import register_skill
+
+# A source that keeps failing to parse (a transient LLM/provider hiccup) is
+# retried up to this many times, then retired as exhausted rather than churning
+# the tension forever. A *successful* empty extraction retires immediately (its
+# emptiness is deterministic — re-reading yields the same nothing).
+MAX_EXTRACTION_ATTEMPTS = 3
 
 
 def _load_existing_entities(
@@ -163,9 +170,25 @@ class ExtractSourceSkill:
                 llm, paper, "claim_extractor", tension.field_id, conn,
             )
         except LLMResponseError:
-            return []
+            # Parse failure may be a transient provider hiccup — retry a bounded
+            # number of times, then retire the source so it stops re-firing.
+            attempts = getattr(source, "extraction_attempts", 0)
+            return [
+                RecordExtractionAttemptEffect(
+                    source_id=source.id,
+                    exhausted=attempts + 1 >= MAX_EXTRACTION_ATTEMPTS,
+                    reason="parse_error",
+                )
+            ]
         if not extracted_claims:
-            return []
+            # A successful read that found nothing to extract (off-topic / thin
+            # content). Deterministic — retire it now rather than re-reading it
+            # every pass.
+            return [
+                RecordExtractionAttemptEffect(
+                    source_id=source.id, exhausted=True, reason="no_claims"
+                )
+            ]
 
         # 2. Resolve subject names against existing entities (pure, read-only).
         # The extractor's subject_type rides along so a genuinely-new subject is
@@ -201,6 +224,7 @@ class ExtractSourceSkill:
         #    the source was gathered for an investigation (lineage on the tension),
         #    attach each claim back so the investigation can resolve.
         investigation_id = tension.signals.get("investigation_id")
+        claims_created = 0
         for ec in extracted_claims:
             entity_id = name_to_id.get(ec.subject_name)
             if entity_id is None:
@@ -215,12 +239,23 @@ class ExtractSourceSkill:
                 confidence=ec.confidence,
             )
             effects.append(CreateClaimEffect(field_id=tension.field_id, claim=claim))
+            claims_created += 1
             if investigation_id:
                 effects.append(
                     AttachClaimToInvestigationEffect(
                         investigation_id=str(investigation_id), claim_id=claim.id
                     )
                 )
+
+        # Extraction produced claims but none had a resolvable/mintable subject
+        # (e.g. no embedder to mint against). No claim row will ever reference this
+        # source, so retire it rather than leave the tension re-firing forever.
+        if claims_created == 0:
+            return [
+                RecordExtractionAttemptEffect(
+                    source_id=source.id, exhausted=True, reason="unresolved_subjects"
+                )
+            ]
         return effects
 
     @staticmethod

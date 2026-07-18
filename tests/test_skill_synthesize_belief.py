@@ -13,7 +13,7 @@ from typing import Any
 
 import mesh_agents.skills.synthesize_belief as _synth_mod
 import pytest
-from mesh_agents.skill import clear_registry, get_skill, load_builtin_skills
+from mesh_agents.skill import clear_registry, load_builtin_skills
 from mesh_agents.synthesis import capability_topic
 from mesh_db.beliefs import create_belief, list_beliefs
 from mesh_db.claims import create_claim
@@ -28,6 +28,7 @@ from mesh_models.claim import Claim
 from mesh_models.effect import (
     AddRelationshipEvidenceEffect,
     CreateBeliefEffect,
+    CreateEntityEffect,
     ReviseBeliefEffect,
 )
 from mesh_models.entity import Entity, EntityType
@@ -52,10 +53,20 @@ def _registry() -> Any:
     clear_registry()
 
 
+class _StubEmbedder:
+    """Deterministic 384-dim unit vectors (matching the ``vector(384)`` column) so
+    minting an edge target populates a ``name_embedding`` without loading the real
+    fastembed model."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 383 + [1.0] for _ in texts]
+
+
 def _skill() -> Any:
-    skill = get_skill("synthesize-belief")
-    assert skill is not None
-    return skill
+    # Construct the (reloaded) concrete skill with a stub embedder so minting an
+    # edge target doesn't load the real fastembed model. Registration itself is
+    # covered by test_load_builtin_skills_registers_synthesize_belief.
+    return _synth_mod.SynthesizeBeliefSkill(embedder=_StubEmbedder())
 
 
 def _entity(conn: MeshConnection, name: str) -> Entity:
@@ -232,13 +243,32 @@ def test_relational_claim_yields_edge_effect(tmp_db: MeshConnection) -> None:
     assert edges[0].field_id == _FIELD
 
 
-def test_edge_skipped_when_target_entity_unknown(tmp_db: MeshConnection) -> None:
+def test_unknown_edge_target_is_minted_then_linked(tmp_db: MeshConnection) -> None:
+    """An edge to a not-yet-known target mints the target (typed by edge kind)
+    rather than skipping the claim — the old skip left the claim forever
+    unsynthesized, churning its tension every pass. The mint effect precedes the
+    edge that FKs it, and both land through the gateway."""
     a = _entity(tmp_db, "LoneNet")
     src = _source(tmp_db, "s6")
     _claim(tmp_db, a.id, src.id, "outperforms", {"compared_to": "GhostNet"})
 
     effects = _run(_skill(), _tension(a.id), tmp_db)
-    assert not [e for e in effects if isinstance(e, AddRelationshipEvidenceEffect)]
+
+    mints = [e for e in effects if isinstance(e, CreateEntityEffect)]
+    edges = [e for e in effects if isinstance(e, AddRelationshipEvidenceEffect)]
+    assert len(mints) == 1
+    assert mints[0].entity.canonical_name == "GhostNet"
+    assert mints[0].entity.type == EntityType.model  # outperforms → a model
+    assert mints[0].name_embedding is not None
+    assert len(edges) == 1
+    assert edges[0].to_entity_id == mints[0].entity.id
+    # Mint precedes the edge so the gateway creates the node before FKing it.
+    assert effects.index(mints[0]) < effects.index(edges[0])
+
+    report = apply_effects(tmp_db, effects)
+    assert report.entities_created == 1
+    assert report.relationship_edges == 1
+    assert find_relationship(tmp_db, a.id, mints[0].entity.id, "outperforms") is not None
 
 
 # ── never writes; gateway lands the intent ───────────────────────────────────

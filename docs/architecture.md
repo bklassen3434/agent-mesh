@@ -49,7 +49,7 @@ flowchart TD
 
     subgraph read["👁️ Read path"]
         API["apps/api — FastAPI<br/>read-only (mesh_reader) :8000"]
-        WIKI["apps/wiki — Next.js<br/>Daily Brief · Knowledge · Graph · Agents · Pipelines :3000"]
+        WIKI["apps/wiki — Next.js<br/>Chatbot · Daily Brief · Knowledge · Graph · Agents :3000"]
     end
 
     sources --> SCOUT
@@ -69,9 +69,9 @@ Challenge, de-duplication, decay/archival, and memory consolidation are not sepa
 
 ```mermaid
 flowchart LR
-    SCHED["⏱️ Scheduler<br/>(BackgroundScheduler, :9100)<br/>config in Postgres"]
+    LOOP["♾️ Self-driving loop<br/>(mesh-controller --apply --forever)<br/>idle-sleep between empty passes — no scheduler"]
 
-    SCHED --> CTRL["controller<br/>(mesh-controller --apply, per field)"]
+    LOOP --> CTRL["controller round<br/>(sense → plan → dispatch, per field)"]
 
     CTRL --> R1["challenge-belief<br/>counter-claims, confidence ↓"]
     CTRL --> R2["investigate-gap<br/>find gaps → open investigations"]
@@ -94,8 +94,8 @@ flowchart LR
 
 ### 3. How it's deployed
 
-- **Long-running services** (`make up`): `mesh-postgres`, `apps/api` (:8000), `apps/wiki` (:3000), `apps/scheduler` (:9100). The A2A agent servers still exist but are orphaned (skills call shared core functions in-process).
-- **On-demand**: the controller runs per field when the scheduler fires it — or by hand via `make controller` / `make controller-apply` / `mesh.cli`.
+- **Long-running services** (`make up`): `mesh-postgres`, `controller` (`mesh-controller --apply --forever`, the always-on daemon), `apps/api` (:8000), `apps/wiki` (:3000). The A2A agent servers still exist but are orphaned (skills call shared core functions in-process).
+- **The controller is its own driver** — no scheduler/cron. `--forever` runs the whole loop to quiescence, then idle-sleeps and re-senses. You can also drive one round by hand via `make controller` / `make controller-apply` / `mesh.cli`.
 - **Field-scoped**: every knowledge row carries a `field_id`. The seeded `ai-robotics` field is the default; the core never branches on field, so new fields drop in as config, not code.
 
 The sections below trace how the system reached this shape, phase by phase.

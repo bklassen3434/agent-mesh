@@ -29,6 +29,7 @@ from mesh_models.effect import (
     AddRelationshipEvidenceEffect,
     CreateBeliefEffect,
     CreateEntityEffect,
+    MarkClaimsSynthesizedEffect,
     ReviseBeliefEffect,
 )
 from mesh_models.entity import Entity, EntityType
@@ -201,10 +202,13 @@ def test_existing_capability_belief_yields_revise_effect(
     assert "planning" in revise[0].new_statement
 
 
-def test_idempotent_capability_synthesis_emits_nothing(
+def test_idempotent_capability_synthesis_emits_no_belief_change(
     tmp_db: MeshConnection,
 ) -> None:
-    """A belief already in sync with the evidence → no revision effect."""
+    """A belief already in sync with the evidence → no belief revision. But the
+    claim is still marked synthesized, so the entity stops re-firing its tension
+    (that terminal mark is the whole point — an idempotent re-run must retire the
+    claim, not churn on it forever)."""
     ent = _entity(tmp_db, "SteadyNet")
     src = _source(tmp_db, "s4")
     c = _claim(tmp_db, ent.id, src.id, "has_capability", {"capability": "reasoning"})
@@ -221,7 +225,10 @@ def test_idempotent_capability_synthesis_emits_nothing(
     )
 
     effects = _run(_skill(), _tension(ent.id), tmp_db)
-    assert effects == []
+    assert not [e for e in effects if isinstance(e, (CreateBeliefEffect, ReviseBeliefEffect))]
+    marks = [e for e in effects if isinstance(e, MarkClaimsSynthesizedEffect)]
+    assert len(marks) == 1
+    assert marks[0].claim_ids == [c.id]
 
 
 # ── relational claims → graph edge ───────────────────────────────────────────
@@ -269,6 +276,36 @@ def test_unknown_edge_target_is_minted_then_linked(tmp_db: MeshConnection) -> No
     assert report.entities_created == 1
     assert report.relationship_edges == 1
     assert find_relationship(tmp_db, a.id, mints[0].entity.id, "outperforms") is not None
+
+
+def test_nonleader_score_claim_stops_refiring_after_synthesis(
+    tmp_db: MeshConnection,
+) -> None:
+    """The churn regression: a score claim that isn't the leaderboard record-holder
+    never enters any belief (SOTA keeps only the leader), so it used to re-fire the
+    entity's tension forever. Once synthesize marks it processed, the entity drops
+    out of the unsynthesized count — until a genuinely new claim arrives."""
+    from mesh_db.claims import unsynthesized_claim_counts_by_entity
+
+    ent = _entity(tmp_db, "RunnerUp")
+    src = _source(tmp_db, "s-score")
+    # Two scores on the same benchmark; only the higher becomes the SOTA leader.
+    _claim(tmp_db, ent.id, src.id, "achieves_score", {"benchmark": "GLUE", "score": 80.0})
+    _claim(tmp_db, ent.id, src.id, "achieves_score", {"benchmark": "GLUE", "score": 70.0})
+
+    # Before synthesis the entity is on the board (2 unsynthesized score claims).
+    assert dict(unsynthesized_claim_counts_by_entity(tmp_db, field_id=_FIELD)).get(ent.id) == 2
+
+    effects = _run(_skill(), _tension(ent.id), tmp_db)
+    apply_effects(tmp_db, effects)
+
+    # After synthesis: the SOTA belief exists, and BOTH score claims are marked
+    # processed — so the entity no longer appears in the count (no more churn).
+    assert ent.id not in dict(unsynthesized_claim_counts_by_entity(tmp_db, field_id=_FIELD))
+
+    # A genuinely new claim re-triggers (it arrives unmarked).
+    _claim(tmp_db, ent.id, src.id, "has_capability", {"capability": "new skill"})
+    assert dict(unsynthesized_claim_counts_by_entity(tmp_db, field_id=_FIELD)).get(ent.id) == 1
 
 
 # ── never writes; gateway lands the intent ───────────────────────────────────

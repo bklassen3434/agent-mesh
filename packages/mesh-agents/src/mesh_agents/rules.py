@@ -74,6 +74,19 @@ def scout_cooldown_seconds() -> float:
     return _float_env("MESH_CONTROLLER_SCOUT_COOLDOWN_SEC", 600.0)
 
 
+def scout_max_staleness_seconds() -> float:
+    """Safety valve: the longest a connector may go un-scouted **even while the
+    board is busy**. Normally scouting waits for an idle board (drain the backlog
+    first), but a persistent backlog must never starve ingestion indefinitely — a
+    stuck synthesize loop once kept the board "busy" for a week and no new sources
+    were pulled. Past this age a connector scouts regardless of backlog. Clamped to
+    at least the cooldown."""
+    return max(
+        _float_env("MESH_CONTROLLER_SCOUT_MAX_STALENESS_SEC", 86400.0),
+        scout_cooldown_seconds(),
+    )
+
+
 def maintenance_cooldown_seconds() -> float:
     """Minimum seconds between periodic, LLM-free maintenance passes (belief
     aging, memory consolidation) — the deterministic form of "run this daily".
@@ -217,18 +230,30 @@ def _escalate_stalled(state: ControllerState) -> list[Activation]:
 
 
 def _scout_when_idle(state: ControllerState) -> list[Activation]:
-    """Acquire new material only when the board has no other actionable work AND
-    the per-connector scout cooldown has elapsed. This is the deterministic form
-    of "if the field is quiescent for 10 minutes, run the scouts": the idle test
-    is a board-state query, the cooldown is ``now - last_attempt_at >= cooldown``
-    over a stored timestamp — no daemon, no wall-clock watcher."""
-    if state.has_actionable_knowledge_work():
-        return []  # let the existing backlog drain before pulling in more
+    """Acquire new material when the per-connector scout cooldown has elapsed and
+    either the board is idle **or** the connector is egregiously overdue.
+
+    The deterministic form of "if the field is quiescent for 10 minutes, run the
+    scouts": the idle test is a board-state query, the cooldown is
+    ``now - last_attempt_at >= cooldown`` over a stored timestamp — no daemon.
+
+    Normally scouting waits for an idle board so the existing backlog drains first.
+    But a persistent backlog must never starve ingestion forever (a stuck
+    synthesize loop once kept the board "busy" for days with no new sources), so a
+    connector past ``scout_max_staleness_seconds`` scouts regardless of backlog."""
+    idle = not state.has_actionable_knowledge_work()
     cooldown = scout_cooldown_seconds()
+    max_staleness = scout_max_staleness_seconds()
     out: list[Activation] = []
     for t in state.tensions_of(TensionKind.unscouted_connector):
         st = state.state_for(t.id)
         elapsed = st.seconds_since_attempt(state.now) if st else None
+        # A never-scouted connector follows the normal idle gate (no bootstrap
+        # scouting while a backlog exists); only one previously scouted but now
+        # egregiously stale forces through regardless of backlog.
+        overdue = elapsed is not None and elapsed >= max_staleness
+        if not (idle or overdue):
+            continue  # board busy and this connector isn't stale enough to force
         if elapsed is not None and elapsed < cooldown:
             continue  # scouted this connector too recently
         out.append(
@@ -237,7 +262,7 @@ def _scout_when_idle(state: ControllerState) -> list[Activation]:
                 skill_id=t.handler_skill,
                 priority=P_SCOUT,
                 reason=(
-                    "board idle"
+                    ("board idle" if idle else "overdue (backlog present)")
                     + (
                         f", {int(elapsed)}s since last scout"
                         if elapsed is not None

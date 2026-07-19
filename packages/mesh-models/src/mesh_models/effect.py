@@ -194,6 +194,22 @@ class UpdateInvestigationEffect(BaseModel):
     set_resolved_at: bool = False
 
 
+class MarkClaimsSynthesizedEffect(BaseModel):
+    """Record that synthesize-belief has processed these claims — the terminal
+    state for the ``unsynthesized_claims`` tension.
+
+    The claim analog of ``RecordExtractionAttemptEffect``: a claim that synthesis
+    considered but did not turn into a belief member (a non-leader score, a
+    capability the belief already covers, a relational claim whose edge already
+    exists) used to stay "unsynthesized" forever and re-fire the tension every
+    pass. The gateway upserts one row per id into ``synthesized_claims``; the count
+    query then excludes them, so the entity drops out of the trigger until a
+    genuinely new (unmarked) claim arrives. Idempotent (ON CONFLICT DO NOTHING)."""
+
+    kind: Literal["mark_claims_synthesized"] = "mark_claims_synthesized"
+    claim_ids: list[str]
+
+
 class RecordExtractionAttemptEffect(BaseModel):
     """Record that extract-source read a source, and whether it should stop trying.
 
@@ -257,6 +273,7 @@ Effect = Annotated[
     | UpdateInvestigationEffect
     | AttachClaimToInvestigationEffect
     | RecordExtractionAttemptEffect
+    | MarkClaimsSynthesizedEffect
     | WriteHeuristicEffect
     | WriteFieldBriefEffect,
     Field(discriminator="kind"),

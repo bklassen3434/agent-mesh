@@ -41,6 +41,7 @@ from mesh_models.effect import (
     CreateBeliefEffect,
     CreateEntityEffect,
     Effect,
+    MarkClaimsSynthesizedEffect,
     ReviseBeliefEffect,
 )
 from mesh_models.entity import Entity, EntityType
@@ -69,6 +70,13 @@ REVISED_BY = "synthesize-belief"
 # Per-entity cap on active claims scanned per run — bounds the read; synthesis is
 # idempotent so anything past the cap is picked up on a later round.
 _MAX_CLAIMS = 500
+
+# Claim types synthesis never turns into anything (they feed the skeptic /
+# contradiction path). Mirrors the exclusion in
+# ``unsynthesized_claim_counts_by_entity`` so the marker set matches the count.
+_NON_SYNTHESIZABLE = frozenset(
+    {ClaimType.critique, ClaimType.reproduction, ClaimType.speculative}
+)
 
 
 def _to_resolved(claim: Claim) -> ResolvedClaim:
@@ -333,4 +341,13 @@ class SynthesizeBeliefSkill:
                 embedder=self._embedder_for_run(),
             )
         )
+
+        # Terminal state: mark every synthesizable claim we just processed, so a
+        # claim that synthesis considered but left un-membered (a non-leader score,
+        # an already-covered capability) stops re-firing this entity's tension. A
+        # genuinely new claim arrives unmarked and re-triggers a full re-read. The
+        # marker set mirrors the count's synthesizable filter exactly.
+        processed = [c.id for c in claims if c.claim_type not in _NON_SYNTHESIZABLE]
+        if processed:
+            effects.append(MarkClaimsSynthesizedEffect(claim_ids=processed))
         return effects

@@ -202,6 +202,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_ADJUDICATE_MIN_DEPENDENTS` | `2` | Min supporting-claim fan-in before a contradiction is treated as load-bearing |
 | `MESH_ADJUDICATE_REFUTE_FLOOR` | `0.2` | Post-adjudication confidence below which a `contradicted` verdict drops the belief from the held set (append-only) |
 | `MESH_CONTROLLER_SCOUT_COOLDOWN_SEC` | `600` | Min seconds between scouts of a connector once the board is idle |
+| `MESH_CONTROLLER_SCOUT_MAX_STALENESS_SEC` | `86400` | Safety valve: longest a connector may go un-scouted **even while the board is busy** — past this, it scouts regardless of backlog, so a persistent tension loop can't starve ingestion (clamped to ≥ the cooldown) |
 | `MESH_DAILY_LLM_BUDGET_TOKENS` | (unset = off) | Daily LLM budget brake: when today's (UTC) `llm_usage` tokens reach this, the controller defers LLM-bound skills until the day rolls over (pin to a provider's free daily quota, e.g. 950000 for Cerebras's 1M/day) |
 | `MESH_DAILY_LLM_BUDGET_USD` | (unset = off) | Same brake in dollars — a hard ceiling on estimated daily LLM spend; LLM-free skills keep running |
 | `MESH_ADMIN_MODE` | (empty/off) | **Wiki only.** Server-side flag: `true` grants admin on that instance; off = beta-only. Never client-supplied, so a public visitor can't reach admin. Enable ONLY on a local / non-exposed instance. |

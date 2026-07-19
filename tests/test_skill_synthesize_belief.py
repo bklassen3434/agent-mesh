@@ -308,6 +308,30 @@ def test_nonleader_score_claim_stops_refiring_after_synthesis(
     assert dict(unsynthesized_claim_counts_by_entity(tmp_db, field_id=_FIELD)).get(ent.id) == 1
 
 
+def test_entity_with_more_than_one_page_of_claims_is_fully_marked(
+    tmp_db: MeshConnection,
+) -> None:
+    """An entity with more claims than list_claims' per-call MAX_LIMIT (200) must
+    have ALL its claims processed and marked — a single capped read left the tail
+    unread/unmarked, so the entity re-fired its tension forever (the live stall)."""
+    from mesh_db.claims import unsynthesized_claim_counts_by_entity
+
+    ent = _entity(tmp_db, "MegaBench")
+    src = _source(tmp_db, "s-mega")
+    # 250 evaluation claims (> the 200 page size), each to a distinct benchmark.
+    for i in range(250):
+        _claim(tmp_db, ent.id, src.id, "evaluated_on", {"benchmark": f"Bench-{i}"})
+
+    assert dict(unsynthesized_claim_counts_by_entity(tmp_db, field_id=_FIELD)).get(ent.id) == 250
+
+    effects = _run(_skill(), _tension(ent.id), tmp_db)
+    apply_effects(tmp_db, effects)
+
+    # Every claim (all 250, not just the first 200) is now processed → the entity
+    # drops off the board entirely rather than re-firing on its unread tail.
+    assert ent.id not in dict(unsynthesized_claim_counts_by_entity(tmp_db, field_id=_FIELD))
+
+
 # ── never writes; gateway lands the intent ───────────────────────────────────
 
 

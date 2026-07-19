@@ -134,7 +134,10 @@ def list_claims(
     )
     params.extend([limit, offset])
     rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY extracted_at DESC LIMIT %s OFFSET %s", params
+        # ``id`` breaks extracted_at ties so OFFSET pagination can't skip or
+        # duplicate a row across pages (a caller reading every page of a
+        # >MAX_LIMIT entity relies on a total order).
+        f"{_SELECT}{where} ORDER BY extracted_at DESC, id LIMIT %s OFFSET %s", params
     ).fetchall()
     return [_row_to_claim(r) for r in rows]
 

@@ -67,9 +67,13 @@ from mesh_agents.synthesis import (
 # it onto the append-only BeliefRevision row).
 REVISED_BY = "synthesize-belief"
 
-# Per-entity cap on active claims scanned per run — bounds the read; synthesis is
-# idempotent so anything past the cap is picked up on a later round.
-_MAX_CLAIMS = 500
+# Per-entity cap on active claims scanned per run — bounds the read. Read in full
+# (paginated past list_claims' per-call MAX_LIMIT) so every claim is processed AND
+# marked: a single capped read left the tail of a >200-claim entity permanently
+# unread, so those claims were never marked synthesized and the entity re-fired
+# its tension forever. Generous headroom over any real entity's claim count.
+_MAX_CLAIMS = 2000
+_CLAIMS_PAGE = 200  # list_claims caps a single call at MAX_LIMIT (200)
 
 # Claim types synthesis never turns into anything (they feed the skeptic /
 # contradiction path). Mirrors the exclusion in
@@ -77,6 +81,29 @@ _MAX_CLAIMS = 500
 _NON_SYNTHESIZABLE = frozenset(
     {ClaimType.critique, ClaimType.reproduction, ClaimType.speculative}
 )
+
+
+def _read_all_active_claims(conn: Any, entity_id: str, field_id: str) -> list[Claim]:
+    """Every active claim for the entity, paginated past list_claims' per-call
+    MAX_LIMIT (bounded by ``_MAX_CLAIMS``). Reading the full set is load-bearing:
+    synthesis marks each processed claim, and a claim left unread stays unmarked
+    and re-fires the entity's tension forever."""
+    out: list[Claim] = []
+    offset = 0
+    while len(out) < _MAX_CLAIMS:
+        batch = list_claims(
+            conn,
+            entity_id=entity_id,
+            status=ClaimStatus.active,
+            limit=_CLAIMS_PAGE,
+            offset=offset,
+            field_id=field_id,
+        )
+        out.extend(batch)
+        if len(batch) < _CLAIMS_PAGE:
+            break
+        offset += _CLAIMS_PAGE
+    return out[:_MAX_CLAIMS]
 
 
 def _to_resolved(claim: Claim) -> ResolvedClaim:
@@ -317,15 +344,9 @@ class SynthesizeBeliefSkill:
             return []
         field_id = tension.field_id
 
-        # One read of the entity's active claims, partitioned by the handlers below
-        # (mirrors the coordinator's score / capability / edge split).
-        claims = list_claims(
-            conn,
-            entity_id=entity_id,
-            status=ClaimStatus.active,
-            limit=_MAX_CLAIMS,
-            field_id=field_id,
-        )
+        # Read the entity's active claims in full (paginated), partitioned by the
+        # handlers below (mirrors the coordinator's score / capability / edge split).
+        claims = _read_all_active_claims(conn, entity_id, field_id)
 
         effects: list[Effect] = []
         effects.extend(_score_effects(conn, claims, field_id=field_id))

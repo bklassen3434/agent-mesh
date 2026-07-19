@@ -36,6 +36,7 @@ from mesh_models.effect import (
     CreateClaimEffect,
     CreateEntityEffect,
     CreateSourceEffect,
+    MarkClaimsSynthesizedEffect,
     MergeBeliefsEffect,
     MergeEntitiesEffect,
     OpenInvestigationEffect,
@@ -58,7 +59,7 @@ from mesh_db.beliefs import (
     set_belief_embedding,
     update_belief,
 )
-from mesh_db.claims import create_claim, update_claim_status
+from mesh_db.claims import create_claim, mark_claims_synthesized, update_claim_status
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import (
     create_entity,
@@ -107,6 +108,7 @@ class ApplyReport(BaseModel):
     field_briefs_written: int = 0
     extraction_attempts_recorded: int = 0
     sources_exhausted: int = 0
+    claims_marked_synthesized: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -253,6 +255,13 @@ def _apply_one(
     elif isinstance(effect, AttachClaimToInvestigationEffect):
         attach_claim_to_investigation(conn, effect.investigation_id, effect.claim_id)
         report.investigation_claims_attached += 1
+
+    elif isinstance(effect, MarkClaimsSynthesizedEffect):
+        # Terminal state for synthesize-belief: mark processed claims so a
+        # non-member (non-leader score, already-covered capability) stops re-firing
+        # the unsynthesized tension forever.
+        n = mark_claims_synthesized(conn, effect.claim_ids)
+        report.claims_marked_synthesized += n
 
     elif isinstance(effect, RecordExtractionAttemptEffect):
         # Terminal state for a source that extracted to nothing — stops the

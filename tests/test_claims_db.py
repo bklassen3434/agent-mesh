@@ -203,6 +203,35 @@ def test_unsynthesized_excludes_edge_and_nonsynthesizable_claims(
     assert counts.get(eid) == 1  # only the score claim remains unsynthesized
 
 
+def test_unsynthesized_excludes_marked_synthesized_claims(
+    tmp_db: MeshConnection,
+) -> None:
+    """A claim recorded in synthesized_claims is excluded from the count even
+    though it's in no belief — the terminal state that stops synthesize-belief
+    re-firing on processed-but-unmembered claims (non-leader scores etc.)."""
+    from mesh_db.claims import (
+        mark_claims_synthesized,
+        unsynthesized_claim_counts_by_entity,
+    )
+
+    eid, sid = _setup(tmp_db)
+    c1 = _make_claim(eid, sid, predicate="achieves_score",
+                     object={"score": 90.0, "benchmark": "MMLU"})
+    c2 = _make_claim(eid, sid, predicate="achieves_score",
+                     object={"score": 80.0, "benchmark": "MMLU"})
+    create_claim(tmp_db, c1)
+    create_claim(tmp_db, c2)
+    assert dict(unsynthesized_claim_counts_by_entity(tmp_db)).get(eid) == 2
+
+    # Marking one drops it from the count; idempotent re-marking is a no-op.
+    assert mark_claims_synthesized(tmp_db, [c1.id]) == 1
+    assert mark_claims_synthesized(tmp_db, [c1.id]) == 1
+    assert dict(unsynthesized_claim_counts_by_entity(tmp_db)).get(eid) == 1
+
+    mark_claims_synthesized(tmp_db, [c2.id])
+    assert eid not in dict(unsynthesized_claim_counts_by_entity(tmp_db))
+
+
 def test_unsynthesized_excludes_relational_claims_with_no_target(
     tmp_db: MeshConnection,
 ) -> None:

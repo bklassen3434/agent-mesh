@@ -176,6 +176,26 @@ def test_scout_respects_cooldown() -> None:
     assert [a.skill_id for a in acts] == ["scout-source"]
 
 
+def test_scout_forces_through_backlog_when_egregiously_stale() -> None:
+    """Safety valve: a persistent backlog must not starve ingestion forever. A
+    connector scouted long ago (past MESH_CONTROLLER_SCOUT_MAX_STALENESS_SEC,
+    default 1 day) scouts even while actionable work remains."""
+    scout = _tension(TensionKind.unscouted_connector, "arxiv")
+    work = _tension(TensionKind.unextracted_source, "s1")
+
+    # Scouted 2h ago (past the 600s cooldown but within the 1-day staleness): the
+    # board is busy, so it still holds off.
+    recent = _st(scout.id, attempts=1, last_attempt_at=_NOW - timedelta(hours=2))
+    assert [a.skill_id for a in plan(_state([scout, work], {scout.id: recent}))] == [
+        "extract-source"
+    ]
+
+    # Scouted 2 days ago (past staleness): it forces through despite the backlog.
+    stale = _st(scout.id, attempts=1, last_attempt_at=_NOW - timedelta(days=2))
+    skills = {a.skill_id for a in plan(_state([scout, work], {scout.id: stale}))}
+    assert skills == {"extract-source", "scout-source"}
+
+
 def test_plan_is_deterministic() -> None:
     tensions = [
         _tension(TensionKind.under_evidenced_entity, "e2"),

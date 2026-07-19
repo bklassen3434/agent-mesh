@@ -205,7 +205,13 @@ def unsynthesized_claim_counts_by_entity(
     A relational claim whose object names **no target entity** (e.g. an
     ``outperforms`` with an empty ``compared_to``) can never form an edge, so it is
     excluded too — otherwise it stays unhandled and re-fires the tension forever
-    (synthesize-belief mints a target only when one is *named*)."""
+    (synthesize-belief mints a target only when one is *named*).
+
+    Finally, a claim already recorded in ``synthesized_claims`` is excluded: it has
+    been *processed* by synthesize-belief, whether or not it became a belief member
+    (a non-leader score, a capability the belief already covers). Without this a
+    processed-but-unmembered claim re-fires the tension forever — the dominant
+    no-op churn. A genuinely new claim is unmarked, so it still re-triggers."""
     rows = conn.execute(
         """
         WITH used AS (
@@ -224,6 +230,7 @@ def unsynthesized_claim_counts_by_entity(
           AND c.status = 'active'
           AND c.claim_type NOT IN ('critique', 'reproduction', 'speculative')
           AND c.id NOT IN (SELECT claim_id FROM used)
+          AND NOT EXISTS (SELECT 1 FROM synthesized_claims sc WHERE sc.claim_id = c.id)
           AND NOT (
               c.claim_type IN ('comparison', 'attribution', 'lineage', 'evaluation')
               AND COALESCE(NULLIF(TRIM(c.object ->> CASE c.claim_type
@@ -240,6 +247,24 @@ def unsynthesized_claim_counts_by_entity(
         [field_id, field_id, field_id, field_id, max(int(limit), 0)],
     ).fetchall()
     return [(str(r[0]), int(r[1])) for r in rows]
+
+
+def mark_claims_synthesized(conn: MeshConnection, claim_ids: list[str]) -> int:
+    """Record that synthesize-belief has processed these claims (the terminal
+    state for the ``unsynthesized_claims`` tension). Idempotent — re-marking a
+    claim is a no-op. Returns the number of ids submitted (not the number newly
+    inserted). Unknown ids are ignored by the ON CONFLICT / FK."""
+    if not claim_ids:
+        return 0
+    conn.execute(
+        """
+        INSERT INTO synthesized_claims (claim_id)
+        SELECT unnest(%s::text[])
+        ON CONFLICT (claim_id) DO NOTHING
+        """,
+        [list(claim_ids)],
+    )
+    return len(claim_ids)
 
 
 def get_claims_by_ids(

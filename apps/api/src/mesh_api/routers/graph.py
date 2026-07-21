@@ -62,7 +62,7 @@ def get_graph(
     # Edges referencing entities outside the bounded node set are dropped —
     # cytoscape complains on dangling edges and they're confusing in the UI.
     nodes = [
-        GraphNode(id=e.id, label=e.canonical_name, type=e.type.value) for e in entities
+        GraphNode(id=e.id, label=e.canonical_name, type=e.type) for e in entities
     ]
     edges = [
         GraphEdge(

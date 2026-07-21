@@ -29,9 +29,10 @@ class TestEntityModel:
             e = Entity(canonical_name="x", type=t)
             assert e.type == t
 
-    def test_invalid_type(self) -> None:
-        with pytest.raises(ValidationError):
-            Entity(canonical_name="x", type="not_a_type")  # type: ignore[arg-type]
+    def test_type_is_free_form(self) -> None:
+        # Entity type is a field-agnostic free string (no enum constraint), so a
+        # non-AI vocabulary is accepted verbatim.
+        assert Entity(canonical_name="x", type="player").type == "player"
 
     def test_aliases_stored(self) -> None:
         e = Entity(canonical_name="BERT", type=EntityType.model, aliases=["bert-base", "bert"])

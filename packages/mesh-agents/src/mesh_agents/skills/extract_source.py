@@ -44,7 +44,7 @@ from mesh_models.effect import (
     Effect,
     RecordExtractionAttemptEffect,
 )
-from mesh_models.entity import Entity, EntityType
+from mesh_models.entity import FALLBACK_ENTITY_TYPE, Entity
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.arxiv_scout import ScoutedPaper
@@ -270,13 +270,14 @@ class ExtractSourceSkill:
         ``name_to_id`` so the claim loop resolves the subject."""
         out: list[Effect] = []
         for info in new_infos:
-            etype = EntityType(info.entity_type)
+            # Field-supplied type string (e.g. "model", "player"); no enum cast.
+            etype = info.entity_type or FALLBACK_ENTITY_TYPE
             entity = Entity(
                 id=info.entity_id, canonical_name=info.canonical_name, type=etype
             )
             try:
                 vec: list[float] | None = embedder.embed(
-                    [entity_embed_text(entity.canonical_name, etype.value)]
+                    [entity_embed_text(entity.canonical_name, etype)]
                 )[0]
             except Exception:  # embedding is best-effort; mint without it
                 vec = None

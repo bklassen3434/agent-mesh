@@ -367,7 +367,7 @@ def show_entities(entity_type: str | None, limit: int) -> None:
     table.add_column("Type", style="cyan")
     table.add_column("Aliases")
     for e in entities:
-        table.add_row(e.id, e.canonical_name, e.type.value, ", ".join(e.aliases))
+        table.add_row(e.id, e.canonical_name, e.type, ", ".join(e.aliases))
     console.print(table)
 
 
@@ -519,7 +519,7 @@ def inspect(id: str) -> None:
 
 def _print_entity(e: Entity) -> None:
     console.print(f"[bold]Entity[/bold] [dim]{e.id}[/dim]")
-    console.print(f"  name: {e.canonical_name}  type: [cyan]{e.type.value}[/cyan]")
+    console.print(f"  name: {e.canonical_name}  type: [cyan]{e.type}[/cyan]")
 
 
 def _print_source(s: Source) -> None:
@@ -553,7 +553,7 @@ def _print_entity_detail(e: Entity) -> None:
     lines = [
         f"[bold]ID:[/bold] {e.id}",
         f"[bold]Name:[/bold] {e.canonical_name}",
-        f"[bold]Type:[/bold] [cyan]{e.type.value}[/cyan]",
+        f"[bold]Type:[/bold] [cyan]{e.type}[/cyan]",
         f"[bold]Aliases:[/bold] {', '.join(e.aliases) or '—'}",
         f"[bold]Attributes:[/bold] {json.dumps(e.attributes, indent=2)}",
         f"[bold]Created:[/bold] {e.created_at.isoformat()}",

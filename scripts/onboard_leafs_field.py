@@ -18,6 +18,8 @@ partition, so shifting the controller simply stops it from touching ai-robotics.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from mesh_db import create_field, enable_connector, get_connection
 from mesh_db.fields import get_field_by_slug
 from mesh_models.field import Field, FieldProfile
@@ -106,13 +108,27 @@ LEAFS_PROFILE = FieldProfile(
         "Boston Bruins",
         "NHL",
     ],
+    # Field-agnostic entity vocabulary (rule 4b): hockey types, not the AI
+    # default. "concept" stays the universal fallback.
+    entity_types=[
+        "player",
+        "team",
+        "coach",
+        "executive",
+        "game",
+        "season",
+        "award",
+        "arena",
+        "league",
+        "concept",
+    ],
     extraction_examples=_LEAFS_EXAMPLES,
     topic_label="news",
 )
 
 # Connectors: news feeds that need no extra API keys, plus web_search (no-op
 # without BRAVE_API_KEY). Feeds are stable WordPress/SB-Nation RSS.
-_LEAFS_CONNECTORS: list[tuple[str, dict]] = [
+_LEAFS_CONNECTORS: list[tuple[str, dict[str, Any]]] = [
     (
         "blog",
         {

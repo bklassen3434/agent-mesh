@@ -88,7 +88,7 @@ class MergeCandidateSkill:
                 return []
             a = entity_for_match_from_claims(
                 ent_a.canonical_name,
-                ent_a.type.value,
+                ent_a.type,
                 aliases=list(ent_a.aliases),
                 claims=list_claims(
                     conn, entity_id=entity_id, limit=3, field_id=tension.field_id
@@ -96,7 +96,7 @@ class MergeCandidateSkill:
             )
             b = entity_for_match_from_claims(
                 ent_b.canonical_name,
-                ent_b.type.value,
+                ent_b.type,
                 aliases=list(ent_b.aliases),
                 claims=list_claims(
                     conn, entity_id=candidate_id, limit=3, field_id=tension.field_id

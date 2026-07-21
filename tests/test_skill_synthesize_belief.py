@@ -251,10 +251,10 @@ def test_relational_claim_yields_edge_effect(tmp_db: MeshConnection) -> None:
 
 
 def test_unknown_edge_target_is_minted_then_linked(tmp_db: MeshConnection) -> None:
-    """An edge to a not-yet-known target mints the target (typed by edge kind)
-    rather than skipping the claim — the old skip left the claim forever
-    unsynthesized, churning its tension every pass. The mint effect precedes the
-    edge that FKs it, and both land through the gateway."""
+    """An edge to a not-yet-known target mints the target rather than skipping the
+    claim — the old skip left the claim forever unsynthesized, churning its
+    tension every pass. The mint effect precedes the edge that FKs it, and both
+    land through the gateway."""
     a = _entity(tmp_db, "LoneNet")
     src = _source(tmp_db, "s6")
     _claim(tmp_db, a.id, src.id, "outperforms", {"compared_to": "GhostNet"})
@@ -265,7 +265,9 @@ def test_unknown_edge_target_is_minted_then_linked(tmp_db: MeshConnection) -> No
     edges = [e for e in effects if isinstance(e, AddRelationshipEvidenceEffect)]
     assert len(mints) == 1
     assert mints[0].entity.canonical_name == "GhostNet"
-    assert mints[0].entity.type == EntityType.model  # outperforms → a model
+    # Field-agnostic: a target we've never extracted is minted as the fallback
+    # "concept" (no edge-kind guess), not a domain-specific type.
+    assert mints[0].entity.type == "concept"
     assert mints[0].name_embedding is not None
     assert len(edges) == 1
     assert edges[0].to_entity_id == mints[0].entity.id

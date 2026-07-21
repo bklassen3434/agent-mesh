@@ -29,7 +29,7 @@ from mesh_llm.batch import BatchRequestItem
 from mesh_llm.client import LLMResponseError
 from mesh_llm.embeddings import Embedder, entity_embed_text
 from mesh_llm.protocol import LLMClient
-from mesh_models.entity import Entity, EntityType
+from mesh_models.entity import FALLBACK_ENTITY_TYPE, Entity
 from mesh_models.field import DEFAULT_FIELD_ID
 from pydantic import BaseModel, Field
 
@@ -232,7 +232,7 @@ def resolve_entity_semantic(
     llm: LLMClient | None,
     name: str,
     *,
-    type_hint: EntityType | str | None = None,
+    type_hint: str | None = None,
     config: ResolutionConfig | None = None,
     k: int = 10,
     field_id: str = DEFAULT_FIELD_ID,
@@ -257,11 +257,9 @@ def resolve_entity_semantic(
             entity_type=ctype, is_new=False,
         )
 
-    etype = (
-        type_hint if isinstance(type_hint, EntityType)
-        else (EntityType(type_hint) if type_hint else EntityType.concept)
-    )
-    etype_val = etype.value
+    # Field-supplied type string (any vocabulary); no enum cast.
+    etype = str(type_hint) if type_hint else FALLBACK_ENTITY_TYPE
+    etype_val = etype
     vec = embedder.embed([entity_embed_text(name, etype_val)])[0]
 
     attach: tuple[str, str, str] | None = None

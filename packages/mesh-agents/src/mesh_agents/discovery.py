@@ -127,7 +127,7 @@ def analyze_field(
                 kind=GapKind.under_evidenced_entity,
                 subject=entity.canonical_name,
                 rationale=(
-                    f"Entity '{entity.canonical_name}' ({entity.type.value}) has "
+                    f"Entity '{entity.canonical_name}' ({entity.type}) has "
                     f"only {claim_count} claim(s) — under-evidenced."
                 ),
                 priority=_KIND_PRIORITY["under_evidenced_entity"],

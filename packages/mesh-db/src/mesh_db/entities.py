@@ -17,7 +17,7 @@ def _row_to_entity(row: tuple[Any, ...]) -> Entity:
         id=id_,
         canonical_name=canonical_name,
         aliases=list(aliases) if aliases else [],
-        type=EntityType(type_),
+        type=str(type_),
         attributes=json.loads(attributes) if isinstance(attributes, str) else (attributes or {}),
         created_at=(
             created_at if isinstance(created_at, datetime)
@@ -45,7 +45,7 @@ def create_entity(
             field_id,
             model.canonical_name,
             model.aliases,
-            model.type.value,
+            model.type,
             Jsonb(model.attributes),
             model.created_at,
             model.last_seen_at,

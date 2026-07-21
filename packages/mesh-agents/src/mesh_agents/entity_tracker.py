@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 from mesh_a2a.card_builder import build_agent_card
 from mesh_a2a.task_server import build_task_app
 from mesh_db.connection import MeshConnection
 from mesh_db.entities import create_entity
-from mesh_models.entity import Entity, EntityType
+from mesh_models.entity import FALLBACK_ENTITY_TYPE, Entity
 from pydantic import BaseModel
 from starlette.applications import Starlette
 
@@ -20,7 +19,7 @@ from mesh_agents.base import BaseAgent
 
 class EntityTrackerInput(BaseModel):
     names: list[str]
-    type_hints: dict[str, EntityType] | None = None
+    type_hints: dict[str, str] | None = None  # name → entity-type value
 
 
 class EntityTrackerOutput(BaseModel):
@@ -53,7 +52,7 @@ class EntitySummary(BaseModel):
     entity_id: str
     canonical_name: str
     aliases: list[str] = []
-    entity_type: str = EntityType.concept.value
+    entity_type: str = FALLBACK_ENTITY_TYPE
 
 
 class ResolvedEntityInfo(BaseModel):
@@ -113,17 +112,17 @@ def resolve_entities_pure(
                 )
             )
         else:
-            etype = EntityType.concept
-            if type_hints and name in type_hints:
-                with contextlib.suppress(ValueError):
-                    etype = EntityType(type_hints[name])
+            # Field-supplied type string; no enum cast (any vocabulary is valid).
+            etype = FALLBACK_ENTITY_TYPE
+            if type_hints and name in type_hints and type_hints[name]:
+                etype = type_hints[name]
             new_entity = Entity(canonical_name=name, type=etype)
             result.append(
                 ResolvedEntityInfo(
                     name=name,
                     entity_id=new_entity.id,
                     canonical_name=name,
-                    entity_type=etype.value,
+                    entity_type=etype,
                     is_new=True,
                 )
             )
@@ -165,9 +164,9 @@ class EntityTrackerAgent(BaseAgent):
                 resolved[name] = existing_id
                 continue
 
-            entity_type = EntityType.concept
+            entity_type = FALLBACK_ENTITY_TYPE
             if input.type_hints:
-                entity_type = input.type_hints.get(name, EntityType.concept)
+                entity_type = input.type_hints.get(name) or FALLBACK_ENTITY_TYPE
 
             entity = Entity(canonical_name=name, type=entity_type)
             create_entity(self.db_conn, entity)

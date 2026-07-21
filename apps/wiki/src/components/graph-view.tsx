@@ -18,7 +18,7 @@ if (!layoutRegistered) {
   layoutRegistered = true;
 }
 
-// Spec palette: node color by entity type. Legend renders this order.
+// Fixed palette for the canonical AI/robotics types (stable legend colors).
 const TYPE_COLOR: Record<string, string> = {
   paper: '#3b82f6', // blue
   model: '#8b5cf6', // purple
@@ -26,14 +26,22 @@ const TYPE_COLOR: Record<string, string> = {
   lab: '#14b8a6', // teal
   person: '#f59e0b', // amber
   concept: '#94a3b8', // gray
-  // extra entity types the mesh may emit
   method: '#10b981',
   repo: '#0ea5e9',
 };
+// Entity types are field-agnostic (a hockey field emits player/team/coach/…), so
+// any type with no fixed color gets a deterministic one hashed from its name.
+const EXTRA_PALETTE = [
+  '#6366f1', '#ec4899', '#f97316', '#84cc16', '#06b6d4',
+  '#a855f7', '#ef4444', '#eab308', '#22c55e', '#0ea5e9',
+];
 const LEGEND_TYPES = ['paper', 'model', 'benchmark', 'lab', 'person', 'concept'];
 
 function colorFor(type: string): string {
-  return TYPE_COLOR[type] ?? '#94a3b8';
+  if (TYPE_COLOR[type]) return TYPE_COLOR[type];
+  let h = 0;
+  for (let i = 0; i < type.length; i++) h = (h * 31 + type.charCodeAt(i)) | 0;
+  return EXTRA_PALETTE[Math.abs(h) % EXTRA_PALETTE.length];
 }
 
 function scale(value: number, lo: number, hi: number, outLo: number, outHi: number): number {
@@ -326,7 +334,7 @@ export function GraphView({
             <div className="absolute bottom-3 left-3 rounded-lg border border-border bg-background/80 p-2.5 text-xs shadow-sm backdrop-blur">
               <div className="mb-1 font-medium text-muted-foreground">Entity type</div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                {LEGEND_TYPES.map((t) => (
+                {(allTypes.length ? allTypes : LEGEND_TYPES).map((t) => (
                   <div key={t} className="flex items-center gap-1.5">
                     <span
                       className="h-2.5 w-2.5 rounded-full"

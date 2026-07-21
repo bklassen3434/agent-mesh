@@ -77,11 +77,11 @@ class ExtractedClaim(BaseModel):
         "speculates",
     ]
     subject_name: str
-    # What kind of thing the subject is (EntityType values). Drives entity
-    # minting; "concept" is the safe fallback the pre-typing store was full of.
-    subject_type: Literal[
-        "model", "paper", "benchmark", "method", "person", "lab", "repo", "concept"
-    ] = "concept"
+    # What kind of thing the subject is — a free string drawn from the field's
+    # entity-type vocabulary (rule 4b of the extraction prompt). Field-agnostic:
+    # ai-robotics uses model/paper/benchmark/…, a hockey field player/team/coach.
+    # Drives entity minting; "concept" is the universal fallback.
+    subject_type: str = "concept"
     object: ClaimObject = Field(default_factory=ClaimObject)
     raw_excerpt: str
     confidence: float = Field(default=0.85, ge=0.0, le=1.0)

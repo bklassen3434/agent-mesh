@@ -114,7 +114,7 @@ def _collect_in_scope_entities(
             continue
         out.append(
             InScopeEntity(
-                entity_id=ent.id, canonical_name=ent.canonical_name, type=ent.type.value
+                entity_id=ent.id, canonical_name=ent.canonical_name, type=ent.type
             )
         )
     return out

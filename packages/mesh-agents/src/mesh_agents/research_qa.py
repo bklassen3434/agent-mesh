@@ -82,7 +82,7 @@ def _format_context(pack: ContextPack) -> str:
         lines.append("\nENTITIES:")
         for e in pack.entities:
             alias = f" (aka {', '.join(e.aliases)})" if e.aliases else ""
-            lines.append(f"[entity:{e.id}] {e.canonical_name}{alias} — {e.type.value}")
+            lines.append(f"[entity:{e.id}] {e.canonical_name}{alias} — {e.type}")
     if pack.relationships:
         lines.append("\nRELATIONSHIPS (cite the underlying claim/entity, not the edge):")
         for r in pack.relationships:

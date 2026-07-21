@@ -1169,7 +1169,11 @@ export interface components {
             canonical_name: string;
             /** Aliases */
             aliases?: string[];
-            type: components["schemas"]["EntityType"];
+            /**
+             * Type
+             * @default concept
+             */
+            type: string;
             /** Attributes */
             attributes?: {
                 [key: string]: unknown;
@@ -1195,6 +1199,14 @@ export interface components {
         };
         /**
          * EntityType
+         * @description The canonical AI/robotics entity types.
+         *
+         *     Entity types are field-agnostic: ``Entity.type`` is a free ``str`` so any
+         *     field can supply its own vocabulary (a hockey field uses player/team/coach,
+         *     etc.). This enum is no longer an enforced schema — it's the *default*
+         *     vocabulary for a field that supplies none (see ``FieldProfile.entity_types``),
+         *     the fallback bucket (``concept``), and the keys the graph legend colors.
+         *     Being a ``StrEnum``, every value doubles as a plain ``str``.
          * @enum {string}
          */
         EntityType: "model" | "paper" | "benchmark" | "method" | "person" | "lab" | "repo" | "concept";
@@ -1350,6 +1362,8 @@ export interface components {
             description: string;
             /** Entity Type Hints */
             entity_type_hints?: string[];
+            /** Entity Types */
+            entity_types?: string[];
             /**
              * Extraction Examples
              * @default

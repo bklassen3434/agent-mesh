@@ -44,7 +44,7 @@ from mesh_models.effect import (
     MarkClaimsSynthesizedEffect,
     ReviseBeliefEffect,
 )
-from mesh_models.entity import Entity, EntityType
+from mesh_models.entity import FALLBACK_ENTITY_TYPE, Entity
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.skill import register_skill
@@ -226,17 +226,6 @@ def _resolve_entity_by_name(conn: Any, name: str, *, field_id: str) -> str | Non
     return None
 
 
-# What kind of node a relational edge points at, so a minted target is typed as
-# what it is (a benchmark, a lab, another model) rather than the blanket
-# "concept" — keyed by the edge type ``edge_for_claim`` returns.
-_EDGE_TARGET_TYPE: dict[str, EntityType] = {
-    "evaluated_on": EntityType.benchmark,  # evaluation → the benchmark
-    "developed_by": EntityType.lab,        # attribution → the lab
-    "outperforms": EntityType.model,       # comparison → the compared-to model
-    "based_on": EntityType.model,          # lineage → the parent it builds on
-}
-
-
 def _edge_effects(
     conn: Any,
     entity_id: str,
@@ -271,7 +260,7 @@ def _edge_effects(
                 target_id = minted[key]
             elif embedder is not None:
                 target_id = _mint_target(
-                    target_name, edge_type, field_id, embedder, mint_effects
+                    target_name, field_id, embedder, mint_effects
                 )
                 minted[key] = target_id
             else:
@@ -293,19 +282,21 @@ def _edge_effects(
 
 def _mint_target(
     target_name: str,
-    edge_type: str,
     field_id: str,
     embedder: Embedder,
     out: list[Effect],
 ) -> str:
     """Append a ``CreateEntityEffect`` for a not-yet-known edge target and return
-    its id. Typed by edge kind; embedded (best-effort) so merge-candidate can
-    block on it — mirrors extract-source's subject minting."""
-    etype = _EDGE_TARGET_TYPE.get(edge_type, EntityType.concept)
+    its id. Embedded (best-effort) so merge-candidate can block on it — mirrors
+    extract-source's subject minting. Typed as the universal fallback: a target we
+    have not independently extracted is an unknown ``concept`` (field-agnostic —
+    guessing its kind from the edge would bake in one domain's assumptions). It
+    picks up a specific type if it later appears as an extracted subject."""
+    etype = FALLBACK_ENTITY_TYPE
     entity = Entity(canonical_name=target_name.strip(), type=etype)
     try:
         vec: list[float] | None = embedder.embed(
-            [entity_embed_text(entity.canonical_name, etype.value)]
+            [entity_embed_text(entity.canonical_name, etype)]
         )[0]
     except Exception:  # embedding is best-effort; mint without it
         vec = None

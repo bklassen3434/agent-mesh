@@ -48,6 +48,10 @@ class FieldProfile(BaseModel):
     # Entity-naming guidance surfaced to the extractor (e.g. how labs / models /
     # benchmarks are named in this field).
     entity_type_hints: list[str] = PydanticField(default_factory=list)
+    # The entity-type vocabulary the extractor may assign (rule 4b). Empty →
+    # the canonical AI default (``DEFAULT_ENTITY_TYPES``), so ai-robotics is
+    # unchanged. A hockey field sets ["player", "team", "coach", ...].
+    entity_types: list[str] = PydanticField(default_factory=list)
     # Few-shot examples block, inserted verbatim into the extraction prompt.
     extraction_examples: str = ""
     # The word used for the "state of the art" / topic framing (e.g. "sota").

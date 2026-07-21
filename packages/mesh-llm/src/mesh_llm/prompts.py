@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mesh_models.entity import DEFAULT_ENTITY_TYPES
 from mesh_models.field import AI_ROBOTICS_PROFILE, FieldProfile
 
 _LEGACY_CLAIM_EXTRACTION_SYSTEM = """\
@@ -729,13 +730,39 @@ _EXT_FOOTER = (
     "Now extract claims from the following source. "
     "Return only valid JSON matching the schema.\n"
 )
+# Rule 4b lists the field's entity-type vocabulary (the ``subject_type`` values).
+# Templated like rule 4: the quoted type list is field-supplied; an empty
+# ``FieldProfile.entity_types`` falls back to the canonical AI vocabulary, so
+# ai-robotics rebuilds byte-for-byte.
+_EXT_RULE4B_PREFIX = (
+    "4b. subject_type classifies what kind of thing the subject is — one of "
+)
+_EXT_RULE4B_SUFFIX = (
+    '. Pick the most specific that applies; use "concept" only when nothing '
+    "else fits."
+)
+
+
+def _rule4b(entity_types: list[str]) -> str:
+    quoted = ", ".join(f'"{t}"' for t in (entity_types or DEFAULT_ENTITY_TYPES))
+    return _EXT_RULE4B_PREFIX + quoted + _EXT_RULE4B_SUFFIX
+
+
+_EXT_RULE4B_LEGACY = _rule4b(DEFAULT_ENTITY_TYPES)
 
 assert _LEGACY_CLAIM_EXTRACTION_SYSTEM.startswith(_EXT_INTRO)
 _ext_rest = _LEGACY_CLAIM_EXTRACTION_SYSTEM[len(_EXT_INTRO):]
 _EXT_BEFORE_RULE4 = _ext_rest[: _ext_rest.index(_EXT_RULE4)]
 _ext_after_rule4 = _ext_rest[_ext_rest.index(_EXT_RULE4) + len(_EXT_RULE4):]
-_EXT_BEFORE_EXAMPLES = _ext_after_rule4[: _ext_after_rule4.index(_EXT_EXAMPLES_ANCHOR)]
+_ext_before_examples = _ext_after_rule4[: _ext_after_rule4.index(_EXT_EXAMPLES_ANCHOR)]
 _EXT_AFTER_EXAMPLES = _ext_after_rule4[_ext_after_rule4.rindex(_EXT_FOOTER):]
+# Split the between-rule4-and-examples block around rule 4b so it, too, is
+# field-templated.
+assert _EXT_RULE4B_LEGACY in _ext_before_examples
+_EXT_BEFORE_RULE4B = _ext_before_examples[: _ext_before_examples.index(_EXT_RULE4B_LEGACY)]
+_EXT_AFTER_RULE4B = _ext_before_examples[
+    _ext_before_examples.index(_EXT_RULE4B_LEGACY) + len(_EXT_RULE4B_LEGACY):
+]
 
 
 def build_claim_extraction_system(profile: FieldProfile | None = None) -> str:
@@ -751,7 +778,9 @@ def build_claim_extraction_system(profile: FieldProfile | None = None) -> str:
         f"{_EXT_INTRO_PREFIX}{p.description}."
         + _EXT_BEFORE_RULE4
         + rule4
-        + _EXT_BEFORE_EXAMPLES
+        + _EXT_BEFORE_RULE4B
+        + _rule4b(p.entity_types)
+        + _EXT_AFTER_RULE4B
         + p.extraction_examples
         + _EXT_AFTER_EXAMPLES
     )

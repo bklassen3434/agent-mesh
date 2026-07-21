@@ -5,15 +5,15 @@ from mesh_models.field import AI_ROBOTICS_PROFILE, FieldProfile
 _LEGACY_CLAIM_EXTRACTION_SYSTEM = """\
 You are a claim extractor for an AI/robotics research knowledge base.
 
-Given a title and a piece of source text — which may be a paper abstract, blog post, forum discussion, repository description, or leaderboard snapshot — extract ONLY the most concrete, factual claims that can be expressed using one of these predicates:
-- achieves_score: the subject entity achieved a numeric score on a benchmark
-- outperforms: the subject entity outperforms another entity on some task
-- developed_by: the subject entity was developed by a lab or team
-- evaluated_on: the subject entity was evaluated on a benchmark or dataset
-- has_capability: the subject entity can do something, or has a notable property, with no number attached (e.g. "handles 1M-token context", "is sample-efficient", "runs on a single GPU")
-- based_on: the subject entity derives from / builds on / is a variant of another entity (architecture, model, or method)
-- reproduces: the source confirms OR fails to reproduce a previously reported result for the subject entity
-- critiques: the source challenges the validity of a result, method, or comparison involving the subject entity
+Given a title and a piece of source text — which may be an article, news report, blog post, forum discussion, abstract, repository description, or data snapshot — extract ONLY the most concrete, factual claims that can be expressed using one of these predicates:
+- achieves_score: the subject entity achieved a numeric score or measured result in some context (a benchmark, test, contest, game, or metric)
+- outperforms: the subject entity outperforms, beats, or ranks ahead of another entity on some task, contest, or measure
+- developed_by: the subject entity was created, produced, or is operated by an organization, team, or person
+- evaluated_on: the subject entity was measured, tested, or assessed in some context or against some standard
+- has_capability: the subject entity can do something, or has a notable property or attribute, with no number attached (e.g. "handles long-context inputs", "is sample-efficient", "plays a physical two-way game")
+- based_on: the subject entity derives from / builds on / is a variant or successor of another entity
+- reproduces: the source confirms OR fails to reproduce or replicate a previously reported result or claim about the subject entity
+- critiques: the source challenges the validity of a result, method, claim, or comparison involving the subject entity
 - speculates: the source makes a forecast, prediction, or opinion about the subject entity's future (not a present fact)
 
 Rules:
@@ -21,16 +21,17 @@ Rules:
 2. Each claim must include a verbatim excerpt from the source text that supports it.
 3. The object carries the structured facts, shaped by the predicate. Set ONLY
    the keys listed for that predicate; leave every other key empty/unset:
-   - achieves_score: {"score": <number>, "benchmark": "<name>", "metric": "<optional>"}
-   - outperforms: {"compared_to": "<entity name>", "on": "<task/benchmark>"}
-   - developed_by: {"lab": "<lab name>"}
-   - evaluated_on: {"benchmark": "<name>"}
+   - achieves_score: {"score": <number>, "benchmark": "<the context or measure the score is on>", "metric": "<optional unit>"}
+   - outperforms: {"compared_to": "<entity name>", "on": "<task, contest, or measure>"}
+   - developed_by: {"lab": "<organization, team, or person>"}
+   - evaluated_on: {"benchmark": "<the context or standard>"}
    - has_capability: {"capability": "<short phrase, no number>"}
-   - based_on: {"parent": "<entity name it builds on>"}
+   - based_on: {"parent": "<entity name it builds on or succeeds>"}
    - reproduces / critiques / speculates: leave all object keys empty — capture
      the detail in raw_excerpt instead.
    Only emit a predicate when you can fill its key(s): a developed_by needs a named
-   lab, an achieves_score needs a number AND benchmark, a based_on needs the parent.
+   organization, team, or person; an achieves_score needs a number AND a context;
+   a based_on needs the parent.
    If the key isn't in the text, drop that claim rather than emitting an empty object.
 4. subject_name should be the canonical entity name as it appears in the source text (e.g. "GPT-4", "RoboAgent", "MMLU").
 4b. subject_type classifies what kind of thing the subject is — one of "model", "paper", "benchmark", "method", "person", "lab", "repo", "concept". Pick the most specific that applies; use "concept" only when nothing else fits.

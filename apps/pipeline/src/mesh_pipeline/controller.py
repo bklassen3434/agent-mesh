@@ -615,7 +615,13 @@ def _record_run(conn: Any, result: ControllerResult, field_id: str) -> None:
 
 
 @click.command()
-@click.option("--field", default=DEFAULT_FIELD_SLUG, show_default=True)
+@click.option(
+    "--field",
+    default=lambda: os.environ.get("MESH_PIPELINE_FIELD") or DEFAULT_FIELD_SLUG,
+    show_default=DEFAULT_FIELD_SLUG,
+    help="Field slug the controller orchestrates. Defaults to $MESH_PIPELINE_FIELD, "
+    f"else {DEFAULT_FIELD_SLUG}.",
+)
 @click.option(
     "--step-cap",
     "step_cap",

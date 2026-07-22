@@ -187,6 +187,14 @@ _LEAFS_CONNECTORS: list[tuple[str, dict[str, Any]]] = [
     ),
 ]
 
+# Enabled by default unless it needs a credential the host may not have. Disabled
+# connectors are still configured (config persisted) — flip them on once the key
+# exists. web_search floods the controller with `web_search_no_api_key` and eats a
+# dispatch slot every round without a BRAVE_API_KEY, so it ships disabled. reddit
+# stays enabled (it degrades quietly to 0 effects); add REDDIT_CLIENT_ID/SECRET to
+# actually fetch.
+_DISABLED_PENDING_CREDS = {"web_search"}
+
 
 def main() -> None:
     conn = get_connection()  # writer
@@ -204,8 +212,9 @@ def main() -> None:
             print(f"field {FIELD_SLUG!r} already exists ({field_id}) — updating connectors")
 
         for connector_id, cfg in _LEAFS_CONNECTORS:
-            enable_connector(conn, field_id, connector_id, config=cfg, enabled=True)
-            print(f"  enabled connector {connector_id!r}")
+            on = connector_id not in _DISABLED_PENDING_CREDS
+            enable_connector(conn, field_id, connector_id, config=cfg, enabled=on)
+            print(f"  {'enabled' if on else 'configured (disabled)'} connector {connector_id!r}")
 
         conn.commit()
         print("done. Set MESH_PIPELINE_FIELD=toronto-maple-leafs and restart the controller.")

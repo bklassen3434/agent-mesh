@@ -126,18 +126,55 @@ LEAFS_PROFILE = FieldProfile(
     topic_label="news",
 )
 
-# Connectors: news feeds that need no extra API keys, plus web_search (no-op
-# without BRAVE_API_KEY). Feeds are stable WordPress/SB-Nation RSS.
+# Connectors. Every URL below was verified live (HTTP 200 + fresh items) on
+# 2026-07-21. Feeds are grouped so the Leafs FIELD never ingests other teams:
+#   blog      → multi-feed RSS, Leafs-specific outlets + a Leafs-scoped Google
+#               News query. `blog` has no term filter, so only Leafs-scoped
+#               feeds go here.
+#   rss       → single feed WITH include/exclude term filters — used for a
+#               league-wide feed (Daily Faceoff) narrowed to Leafs items.
+#   rest_json → ESPN's free NHL news JSON (prose items). League-wide NHL; the
+#               Leafs-specific signal comes from the feeds above. Repoint the
+#               endpoint to any JSON source.
+#   reddit    → needs free REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET in the env;
+#               without them the scout logs "creds missing" and returns nothing.
+#   web_search→ needs BRAVE_API_KEY; a no-op without it.
+_GOOGLE_NEWS_LEAFS = (
+    'https://news.google.com/rss/search?q=%22Toronto+Maple+Leafs%22'
+    "&hl=en-CA&gl=CA&ceid=CA:en"
+)
+
 _LEAFS_CONNECTORS: list[tuple[str, dict[str, Any]]] = [
     (
         "blog",
         {
             "feeds": [
-                {"name": "Maple Leafs Hotstove", "url": "https://www.mapleleafshotstove.com/feed/"},
-                {"name": "Pension Plan Puppets", "url": "https://www.pensionplanpuppets.com/rss/index.xml"},
+                {"name": "Maple Leafs Hotstove", "url": "https://mapleleafshotstove.com/feed/"},
+                {"name": "Pension Plan Puppets", "url": "https://www.pensionplanpuppets.com/feed/"},
                 {"name": "Editor In Leaf", "url": "https://editorinleaf.com/feed"},
+                {"name": "The Leafs Nation", "url": "https://theleafsnation.com/feed"},
+                {"name": "Google News — Toronto Maple Leafs", "url": _GOOGLE_NEWS_LEAFS},
             ],
             "lookback_hours": 48,
+        },
+    ),
+    (
+        "rss",
+        {
+            "feed_url": "https://dailyfaceoff.com/feed/",
+            "include_terms": ["Maple Leafs", "Leafs", "Toronto"],
+        },
+    ),
+    (
+        "rest_json",
+        {
+            "endpoint": "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/news",
+            "query_template": "limit=25",
+            "items_path": "articles",
+            "title_path": "headline",
+            "text_path": "description",
+            "url_path": "links.web.href",
+            "published_path": "published",
         },
     ),
     (

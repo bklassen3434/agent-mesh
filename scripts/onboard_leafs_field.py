@@ -154,6 +154,9 @@ _LEAFS_CONNECTORS: list[tuple[str, dict[str, Any]]] = [
                 {"name": "Editor In Leaf", "url": "https://editorinleaf.com/feed"},
                 {"name": "The Leafs Nation", "url": "https://theleafsnation.com/feed"},
                 {"name": "Google News — Toronto Maple Leafs", "url": _GOOGLE_NEWS_LEAFS},
+                # r/leafs via Reddit's public .rss — no API app/creds needed
+                # (the credentialed `reddit` connector stays off until keys exist).
+                {"name": "r/leafs (Reddit)", "url": "https://www.reddit.com/r/leafs/.rss"},
             ],
             "lookback_hours": 48,
         },
@@ -190,10 +193,11 @@ _LEAFS_CONNECTORS: list[tuple[str, dict[str, Any]]] = [
 # Enabled by default unless it needs a credential the host may not have. Disabled
 # connectors are still configured (config persisted) — flip them on once the key
 # exists. web_search floods the controller with `web_search_no_api_key` and eats a
-# dispatch slot every round without a BRAVE_API_KEY, so it ships disabled. reddit
-# stays enabled (it degrades quietly to 0 effects); add REDDIT_CLIENT_ID/SECRET to
-# actually fetch.
-_DISABLED_PENDING_CREDS = {"web_search"}
+# dispatch slot every round without a BRAVE_API_KEY, so it ships disabled. The
+# credentialed `reddit` connector likewise returns 0 without REDDIT_CLIENT_ID/
+# SECRET, so it ships disabled too — r/leafs is covered above via Reddit's keyless
+# public .rss in `blog`. Flip either on once its key exists.
+_DISABLED_PENDING_CREDS = {"web_search", "reddit"}
 
 
 def main() -> None:

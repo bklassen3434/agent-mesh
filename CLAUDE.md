@@ -196,6 +196,7 @@ apps/wiki   (TypeScript, Next.js — consumes apps/api) # Phase 3
 | `MESH_CONTROLLER_MAX_ROUNDS` | `25` | Max sense→plan→dispatch rounds before one run stops short of quiescence (raise so a cold-start ingest drains in one run instead of spilling to the next wake-up) |
 | `MESH_CONTROLLER_IDLE_SLEEP_SEC` | `60` | Seconds the self-driving controller (`--forever`) waits after an empty pass before re-sensing. The only timing in continuous mode beyond the rules' own cooldowns |
 | `MESH_CONTROLLER_ESCALATE_AFTER` | `3` | Stalled-dispatch count past which a tension escalates to a swarm |
+| `MESH_CONTROLLER_STALL_COOLDOWN_SEC` | `3600` | Backoff before re-dispatching a tension whose last attempt produced nothing (`no_effects`/`error`). Stops board-derived gap tensions (`rising_topic`/`thin_belief`/…) the `investigate-gap` skill can't act on — e.g. investigation backlog full — from re-firing every pass forever (the daemon never idling + the `agent_invocations` ledger ballooning). Also gates re-escalation of a stalled swarm |
 | `MESH_CONTROLLER_SWARM_SIZE` | `3` | Parallel skill instances a swarm-tier dispatch (or an escalation) fans out to |
 | `MESH_CONTROLLER_SWARM_QUORUM` | `false` | Swarm reconcile: off = union the K copies' effects; on = keep only effects a majority (`⌈K/2⌉`) agree on |
 | `MESH_ADJUDICATE_MIN_CONFIDENCE` | `0.7` | Min belief confidence for a fresh contradiction to be deep-adjudicated (`contradicted_belief`) vs a routine challenge |

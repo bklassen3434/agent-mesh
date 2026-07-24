@@ -95,6 +95,24 @@ def maintenance_cooldown_seconds() -> float:
     return _float_env("MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC", 86_400.0)
 
 
+def stall_cooldown_seconds() -> float:
+    """Backoff before re-dispatching a tension whose last attempt produced nothing
+    (``no_effects`` / ``error``).
+
+    Some tensions are *board-derived* and persist until the underlying gap is
+    actually filled — e.g. a ``rising_topic`` or ``thin_belief`` the
+    ``investigate-gap`` skill can't act on because the investigation backlog is
+    already full. Without a backoff these re-fire on **every** pass forever: the
+    self-driving loop counts the no-effect dispatch as "work" so it never idles,
+    and each dispatch writes an ``agent_invocations`` row — a real incident once
+    accreted 1.6M no-effect rows in a day (2.5 GB, 94% of the DB). Deep tensions
+    are exempt from swarm escalation, so this cooldown is their only brake.
+
+    Pure arithmetic over the stored ``last_attempt_at`` vs the passed-in ``now`` —
+    no daemon, same deterministic answer whoever invokes the controller."""
+    return _float_env("MESH_CONTROLLER_STALL_COOLDOWN_SEC", 3600.0)
+
+
 # Priority tiers (lower = more urgent). Explicit and total — the whole ordering
 # of the system lives here, not in an emergent price.
 P_ESCALATE = 0  # a stalled tension pre-empts its own normal handler
@@ -195,6 +213,19 @@ def _handler_rule(
     return Rule(name=name, evaluate=evaluate)
 
 
+def _in_stall_cooldown(state: ControllerState, t: Tension) -> bool:
+    """True if ``t``'s last dispatch stalled (``no_effects`` / ``error``) and the
+    stall cooldown has not yet elapsed — so it should not be re-dispatched this
+    pass. A never-attempted tension, one that last produced effects, or one whose
+    cooldown has elapsed is *not* cooling (returns False). Mirrors the scout /
+    maintenance cooldowns: pure arithmetic over the stored ``last_attempt_at``."""
+    st = state.state_for(t.id)
+    if st is None or not st.stalled:
+        return False
+    elapsed = st.seconds_since_attempt(state.now)
+    return elapsed is not None and elapsed < stall_cooldown_seconds()
+
+
 def _escalate_stalled(state: ControllerState) -> list[Activation]:
     """A tension a skill keeps failing to resolve → re-route it to the same skill
     with ``fanout = swarm_size`` (a deep/parallel attempt). Pre-empts the normal
@@ -210,6 +241,11 @@ def _escalate_stalled(state: ControllerState) -> list[Activation]:
         # gather investigation widens or abandons on its own budget); cloning a
         # stateful skill K times would just race, not deepen.
         if t.tier is ReasoningTier.deep:
+            continue
+        # Back off a just-stalled tension: re-escalate at most once per stall
+        # cooldown, not every pass (a permanently-stuck swarm would otherwise spin
+        # the daemon and flood the ledger, same failure mode as the gap rule).
+        if _in_stall_cooldown(state, t):
             continue
         st = state.state_for(t.id)
         if st is None or st.attempts < threshold or not st.stalled:
@@ -269,6 +305,43 @@ def _scout_when_idle(state: ControllerState) -> list[Activation]:
                         else ", never scouted"
                     )
                 ),
+            )
+        )
+    return out
+
+
+# The knowledge-gap kinds all routed to the single ``investigate-gap`` skill.
+_GAP_KINDS: tuple[TensionKind, ...] = (
+    TensionKind.under_evidenced_entity,
+    TensionKind.thin_belief,
+    TensionKind.rising_topic,
+    TensionKind.missing_reciprocal_edge,
+)
+
+
+def _investigate_knowledge_gaps(state: ControllerState) -> list[Activation]:
+    """Open an investigation for a knowledge-gap tension — but skip one whose last
+    investigate attempt stalled and is still within the stall cooldown.
+
+    Unlike extract/synthesize (whose tensions vanish once handled), gap tensions
+    are re-derived from board analysis every pass and persist until the gap is
+    actually filled. When ``investigate-gap`` can't act — most commonly because the
+    open-investigation backlog is full — it returns no effects, the gap stays, and
+    without this cooldown it re-fires forever (the daemon never idles; the
+    invocation ledger balloons). Gap kinds are deep/simple, never swarm, so escalation
+    doesn't cover them — this cooldown is their brake."""
+    out: list[Activation] = []
+    for t in state.tensions_of(*_GAP_KINDS):
+        if _in_stall_cooldown(state, t):
+            continue  # investigated recently, produced nothing — back off
+        fanout = swarm_size() if t.tier is ReasoningTier.swarm else 1
+        out.append(
+            Activation(
+                tension=t,
+                skill_id=t.handler_skill,
+                priority=P_INVESTIGATE,
+                fanout=fanout,
+                reason="knowledge gap — open an investigation",
             )
         )
     return out
@@ -361,17 +434,7 @@ RULES: tuple[Rule, ...] = (
         P_CHALLENGE,
         "belief is contested or stale — re-examine it",
     ),
-    _handler_rule(
-        "investigate-knowledge-gaps",
-        (
-            TensionKind.under_evidenced_entity,
-            TensionKind.thin_belief,
-            TensionKind.rising_topic,
-            TensionKind.missing_reciprocal_edge,
-        ),
-        P_INVESTIGATE,
-        "knowledge gap — open an investigation",
-    ),
+    Rule(name="investigate-knowledge-gaps", evaluate=_investigate_knowledge_gaps),
     Rule(name="maintain-when-due", evaluate=_maintain_when_due),
     Rule(name="scout-when-idle", evaluate=_scout_when_idle),
 )

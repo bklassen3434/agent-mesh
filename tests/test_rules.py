@@ -196,6 +196,45 @@ def test_scout_forces_through_backlog_when_egregiously_stale() -> None:
     assert skills == {"extract-source", "scout-source"}
 
 
+def test_gap_backs_off_after_a_stall_within_cooldown() -> None:
+    """A knowledge-gap tension whose last investigate produced nothing (e.g. the
+    investigation backlog was full) must not re-fire every pass — it backs off for
+    the stall cooldown, or it spins the daemon and floods the invocation ledger."""
+    gap = _tension(TensionKind.under_evidenced_entity, "e1", tier=ReasoningTier.deep)
+    # Investigated 100s ago, produced nothing; default stall cooldown is 3600s.
+    cooling = _st(
+        gap.id,
+        attempts=4,
+        outcome=DispatchOutcome.no_effects,
+        last_attempt_at=_NOW - timedelta(seconds=100),
+    )
+    assert plan(_state([gap], {gap.id: cooling})) == []
+
+    # Investigated 2h ago (past the 3600s cooldown) → it retries once.
+    stale = _st(
+        gap.id,
+        attempts=4,
+        outcome=DispatchOutcome.no_effects,
+        last_attempt_at=_NOW - timedelta(hours=2),
+    )
+    acts = plan(_state([gap], {gap.id: stale}))
+    assert [a.skill_id for a in acts] == ["investigate-gap"]
+
+
+def test_gap_not_backed_off_when_last_attempt_produced_effects() -> None:
+    """The cooldown only suppresses *stalled* gaps — one that last opened an
+    investigation (produced effects) is free to fire again immediately."""
+    gap = _tension(TensionKind.under_evidenced_entity, "e1", tier=ReasoningTier.deep)
+    productive = _st(
+        gap.id,
+        attempts=1,
+        outcome=DispatchOutcome.effects,
+        last_attempt_at=_NOW - timedelta(seconds=1),
+    )
+    acts = plan(_state([gap], {gap.id: productive}))
+    assert [a.skill_id for a in acts] == ["investigate-gap"]
+
+
 def test_plan_is_deterministic() -> None:
     tensions = [
         _tension(TensionKind.under_evidenced_entity, "e2"),

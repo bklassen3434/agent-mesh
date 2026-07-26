@@ -1797,3 +1797,178 @@ def agenda_cmd(field: str, budget_usd: float, limit: int) -> None:
             title="Market clearing",
         )
     )
+
+
+def _fmt_age(hours: float | None) -> str:
+    if hours is None:
+        return "never"
+    if hours < 48:
+        return f"{hours:.0f}h"
+    return f"{hours / 24:.1f}d"
+
+
+@cli.command("eval-accuracy")
+@click.option("--field", "field_slug", default="ai-robotics", show_default=True,
+              help="Field slug to evaluate.")
+@click.option("--sample", "sample_size", default=15, show_default=True,
+              help="Held beliefs to fact-check.")
+@click.option("--strategy", type=click.Choice(["recent", "strong", "random"]),
+              default="recent", show_default=True,
+              help="Which beliefs to sample.")
+@click.option("--min-confidence", default=0.0, show_default=True,
+              help="Skip beliefs below this stored confidence.")
+@click.option("--stale-hours", default=36.0, show_default=True,
+              help="Flag a source type stale past this age.")
+@click.option("--accuracy/--no-accuracy", default=True, show_default=True,
+              help="Run the web-grounded accuracy judge (needs ANTHROPIC_API_KEY).")
+@click.option("--judge-model", default=None,
+              help="Override the judge model (default claude-haiku-4-5).")
+@click.option("--out", "out_path", default=None,
+              help="Write the full JSON report to this path.")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON instead of tables.")
+def eval_accuracy(
+    field_slug: str,
+    sample_size: int,
+    strategy: str,
+    min_confidence: float,
+    stale_hours: float,
+    accuracy: bool,
+    judge_model: str | None,
+    out_path: str | None,
+    as_json: bool,
+) -> None:
+    """Evaluate whether a field's knowledge is up-to-date (freshness) and true
+    (web-grounded accuracy).
+
+    Freshness is pure DB. Accuracy samples held beliefs and grades each against
+    the live web via an LLM judge — a repeatable score you can trend, plus the
+    list of beliefs the web contradicts.
+    """
+    from mesh_agents.eval import assess_accuracy, assess_freshness
+    from mesh_db.fields import get_field_by_slug
+    from rich.panel import Panel
+
+    conn = _get_conn()
+    try:
+        fld = get_field_by_slug(conn, field_slug)
+        field_id = fld.id if fld is not None else field_slug
+
+        fresh = assess_freshness(conn, field_id, stale_after_hours=stale_hours)
+
+        acc = None
+        judge_err: str | None = None
+        if accuracy:
+            try:
+                from mesh_agents.eval.judge import AnthropicWebSearchJudge
+
+                judge = AnthropicWebSearchJudge(model=judge_model)
+                acc = assess_accuracy(
+                    conn, field_id, judge,
+                    sample_size=sample_size,
+                    strategy=strategy,
+                    min_confidence=min_confidence,
+                )
+            except RuntimeError as exc:
+                judge_err = str(exc)
+    finally:
+        conn.close()
+
+    if as_json:
+        payload: dict[str, Any] = {"freshness": fresh.model_dump(mode="json")}
+        if acc is not None:
+            payload["accuracy"] = acc.model_dump(mode="json")
+        console.print_json(json.dumps(payload))
+    else:
+        _render_freshness(fresh, field_slug, Panel)
+        if acc is not None:
+            _render_accuracy(acc, field_slug, Panel)
+        elif judge_err:
+            console.print(f"[yellow]Accuracy skipped:[/yellow] {judge_err}")
+
+    if out_path:
+        report: dict[str, Any] = {"freshness": fresh.model_dump(mode="json")}
+        if acc is not None:
+            report["accuracy"] = acc.model_dump(mode="json")
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2, default=str)
+        console.print(f"[dim]Report written to {out_path}[/dim]")
+
+
+def _render_freshness(fresh: Any, field_slug: str, Panel: Any) -> None:
+    table = Table(title=f"Source freshness — {field_slug}")
+    table.add_column("Source type", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_column("Newest published", style="dim")
+    table.add_column("Age", justify="right")
+    table.add_column("", justify="center")
+    for row in fresh.rows:
+        pub = row.newest_published.date().isoformat() if row.newest_published else "—"
+        flag = "[red]STALE[/red]" if row.stale else "[green]ok[/green]"
+        table.add_row(row.source_type, str(row.count), pub, _fmt_age(row.age_hours), flag)
+    console.print(table)
+
+    headline = _fmt_age(fresh.newest_source_age_hours)
+    verdict = "[green]FRESH[/green]" if fresh.ok else "[red]STALE[/red]"
+    lines = [
+        f"[bold]Newest source:[/bold] {headline} old  {verdict}",
+        f"[bold]Threshold:[/bold] {fresh.stale_after_hours:.0f}h",
+    ]
+    if fresh.stale_types:
+        lines.append(f"[bold]Stale feeds:[/bold] {', '.join(fresh.stale_types)}")
+    console.print(Panel("\n".join(lines), title="Freshness"))
+
+
+_VERDICT_STYLE = {
+    "supported": "green",
+    "partially_supported": "yellow",
+    "contradicted": "red",
+    "unverifiable": "dim",
+}
+
+
+def _render_accuracy(acc: Any, field_slug: str, Panel: Any) -> None:
+    table = Table(title=f"Belief accuracy ({acc.strategy}, judge={acc.judge_model})")
+    table.add_column("Verdict", justify="center")
+    table.add_column("Conf", justify="right", style="dim")
+    table.add_column("Belief", overflow="fold")
+    for g in acc.grades:
+        style = _VERDICT_STYLE.get(g.verdict.value, "white")
+        table.add_row(
+            f"[{style}]{g.verdict.value}[/{style}]",
+            f"{g.stored_confidence:.2f}",
+            g.statement[:100],
+        )
+    console.print(table)
+
+    from mesh_agents.eval.models import Verdict
+
+    score = acc.accuracy_score
+    score_str = f"{score * 100:.0f}%" if score is not None else "n/a (nothing verifiable)"
+    unver = acc.unverifiable_rate
+    lines = [
+        f"[bold]Accuracy score:[/bold] {score_str}  "
+        f"(supported + ½·partial over {acc.verifiable} verifiable)",
+        f"[bold]Breakdown:[/bold] "
+        f"{acc.count(Verdict.supported)} supported / "
+        f"{acc.count(Verdict.partially_supported)} partial / "
+        f"[red]{acc.count(Verdict.contradicted)} contradicted[/red] / "
+        f"{acc.count(Verdict.unverifiable)} unverifiable",
+    ]
+    if unver is not None:
+        lines.append(f"[bold]Unverifiable rate:[/bold] {unver * 100:.0f}%")
+    if acc.judge_tokens:
+        lines.append(f"[bold]Judge tokens:[/bold] {acc.judge_tokens:,}")
+    console.print(Panel("\n".join(lines), title="Accuracy"))
+
+    if acc.contradicted:
+        fix = Table(title="[red]Contradicted by the web — fix these[/red]")
+        fix.add_column("Belief", overflow="fold")
+        fix.add_column("Why", overflow="fold")
+        fix.add_column("Evidence", style="dim", overflow="fold")
+        for g in acc.contradicted:
+            fix.add_row(
+                g.statement[:80],
+                g.rationale[:120],
+                (g.evidence_urls[0] if g.evidence_urls else "—"),
+            )
+        console.print(fix)

@@ -144,6 +144,29 @@ def count_sources(
     return int(row[0]) if row else 0
 
 
+def source_freshness(
+    conn: MeshConnection, field_id: str
+) -> list[tuple[str, int, datetime | None, datetime | None]]:
+    """Per source-type freshness for a field: ``(type, count, newest_published,
+    newest_fetched)``, freshest-published first.
+
+    Read-only aggregate backing the freshness eval — a silently-dead connector
+    shows up here as a source type whose ``newest_published`` has stopped
+    advancing.
+    """
+    rows = conn.execute(
+        """
+        SELECT type, COUNT(*), MAX(published_at), MAX(fetched_at)
+        FROM sources
+        WHERE field_id = %s
+        GROUP BY type
+        ORDER BY MAX(published_at) DESC NULLS LAST
+        """,
+        [field_id],
+    ).fetchall()
+    return [(str(t), int(c), pub, fet) for t, c, pub, fet in rows]
+
+
 def unextracted_sources(
     conn: MeshConnection,
     *,

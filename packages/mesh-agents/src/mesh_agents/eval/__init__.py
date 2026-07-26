@@ -18,6 +18,13 @@ Both are read-only. The CLI entry point is ``mesh.cli eval-accuracy``.
 from __future__ import annotations
 
 from mesh_agents.eval.accuracy import assess_accuracy
+from mesh_agents.eval.extraction import (
+    DatasetScore,
+    ExtractionDataset,
+    LLMExtractionJudge,
+    evaluate_prompt,
+    load_dataset,
+)
 from mesh_agents.eval.freshness import assess_freshness
 from mesh_agents.eval.judge import AnthropicWebSearchJudge, BeliefJudge
 from mesh_agents.eval.models import (
@@ -33,9 +40,14 @@ __all__ = [
     "AnthropicWebSearchJudge",
     "BeliefGrade",
     "BeliefJudge",
+    "DatasetScore",
+    "ExtractionDataset",
     "FreshnessReport",
     "FreshnessRow",
+    "LLMExtractionJudge",
     "Verdict",
     "assess_accuracy",
     "assess_freshness",
+    "evaluate_prompt",
+    "load_dataset",
 ]

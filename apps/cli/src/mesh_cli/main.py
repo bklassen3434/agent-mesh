@@ -1972,3 +1972,78 @@ def _render_accuracy(acc: Any, field_slug: str, Panel: Any) -> None:
                 (g.evidence_urls[0] if g.evidence_urls else "—"),
             )
         console.print(fix)
+
+
+@cli.command("eval-extraction")
+@click.option("--dataset", "dataset_name", default="toronto-maple-leafs",
+              show_default=True,
+              help="Frozen dataset name (datasets/extraction_<name>.json) or a path.")
+@click.option("--prompt-file", default=None,
+              help="Score this candidate system prompt instead of the field's live one.")
+@click.option("--out", "out_path", default=None, help="Write the JSON score to this path.")
+def eval_extraction(dataset_name: str, prompt_file: str | None, out_path: str | None) -> None:
+    """Score the extract-source prompt on a frozen dataset (the optimizer's loss).
+
+    Offline and web-free: runs the extractor over real source texts, checks each
+    claim's well-formedness (deterministic) + grounding vs the source (LLM judge),
+    and reports F1 of precision and coverage. With no --prompt-file it scores the
+    field's current live prompt — your baseline to beat.
+    """
+    from mesh_agents.eval import (
+        LLMExtractionJudge,
+        evaluate_prompt,
+        load_dataset,
+    )
+    from mesh_llm import make_llm_client
+    from rich.panel import Panel
+
+    dataset = load_dataset(dataset_name)
+    system_prompt = None
+    label = "live prompt (baseline)"
+    if prompt_file:
+        with open(prompt_file, encoding="utf-8") as fh:
+            system_prompt = fh.read()
+        label = f"candidate: {prompt_file}"
+
+    try:
+        llm = make_llm_client()
+        judge = LLMExtractionJudge()
+    except Exception as exc:
+        console.print(f"[red]LLM unavailable:[/red] {exc}")
+        return
+
+    console.print(
+        f"[dim]Scoring {label} on {len(dataset.examples)} examples "
+        f"({dataset.field_id})…[/dim]"
+    )
+    score = evaluate_prompt(llm, judge, dataset, system_prompt=system_prompt)
+
+    table = Table(title=f"extract-source eval — {label}")
+    table.add_column("Example", overflow="fold")
+    table.add_column("Claims", justify="right")
+    table.add_column("Well-formed", justify="right")
+    table.add_column("Grounded", justify="right")
+    table.add_column("Cover", justify="right")
+    table.add_column("F1", justify="right")
+    for s in score.per_example:
+        table.add_row(
+            s.example_id[:40], str(s.n_claims), str(s.n_well_formed),
+            str(s.n_grounded), f"{s.coverage:.2f}", f"{s.f1:.2f}",
+        )
+    console.print(table)
+    console.print(
+        Panel(
+            "\n".join([
+                f"[bold]Mean F1:[/bold] {score.mean_f1:.3f}   "
+                f"(precision {score.mean_precision:.3f} · coverage {score.mean_coverage:.3f})",
+                f"[bold]Well-formed rate:[/bold] {score.mean_well_formed_rate:.3f}",
+                f"[bold]Examples:[/bold] {score.n_examples}",
+            ]),
+            title="extract-source score",
+        )
+    )
+
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(score.model_dump(mode="json"), fh, indent=2, default=str)
+        console.print(f"[dim]Score written to {out_path}[/dim]")

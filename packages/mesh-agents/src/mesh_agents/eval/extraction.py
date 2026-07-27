@@ -206,6 +206,11 @@ class ExtractionScore(BaseModel):
     n_well_formed: int
     n_grounded: int  # well-formed AND grounded
     coverage: float
+    # Diagnostics — the per-example failure signal the optimizer turns into a
+    # textual gradient. All optional/defaulted so scoring stays backward-compatible.
+    malformed_predicates: list[str] = Field(default_factory=list)  # dropped: missing keys
+    ungrounded_excerpts: list[str] = Field(default_factory=list)  # said but not in source
+    missed_facts: list[str] = Field(default_factory=list)  # judge: a good extractor'd get these
 
     @property
     def precision(self) -> float:
@@ -248,13 +253,35 @@ def score_extraction(
     n_grounded = sum(
         1 for i, c in enumerate(claims) if i in grounded_idx and is_well_formed(c)
     )
+    # Failure signal for the optimizer: what the extraction got wrong here.
+    malformed = [str(c.predicate) for c in claims if not is_well_formed(c)]
+    ungrounded = [
+        c.raw_excerpt[:160]
+        for i, c in enumerate(claims)
+        if is_well_formed(c) and i not in grounded_idx
+    ]
     return ExtractionScore(
         example_id=example.id,
         n_claims=len(claims),
         n_well_formed=len(well_formed),
         n_grounded=n_grounded,
         coverage=verdict.coverage,
+        malformed_predicates=malformed,
+        ungrounded_excerpts=ungrounded,
+        missed_facts=list(verdict.missed),
     )
+
+
+def _resolve_prompt(system_prompt: str | None, field_id: str | None) -> str:
+    """The concrete system prompt to run: an explicit override, or the field's
+    live prompt (``build_claim_extraction_system``) when ``system_prompt`` is None.
+    Factored out so the optimizer can materialize the baseline's real text."""
+    if system_prompt is not None:
+        return system_prompt
+    from mesh_agents.profiles import load_profile
+
+    profile = load_profile(field_id) if field_id else None
+    return build_claim_extraction_system(profile)
 
 
 def run_extraction(
@@ -268,11 +295,7 @@ def run_extraction(
     prompt-override seam the optimizer drives. With ``system_prompt=None`` it uses
     the field's live prompt (``build_claim_extraction_system``), i.e. today's
     baseline."""
-    if system_prompt is None:
-        from mesh_agents.profiles import load_profile
-
-        profile = load_profile(field_id) if field_id else None
-        system_prompt = build_claim_extraction_system(profile)
+    system_prompt = _resolve_prompt(system_prompt, field_id)
     user = format_extraction_user(title=example.title, abstract=example.abstract)
     try:
         result, _latency, _usage = llm.complete_with_usage(

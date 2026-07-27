@@ -2047,3 +2047,100 @@ def eval_extraction(dataset_name: str, prompt_file: str | None, out_path: str | 
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(score.model_dump(mode="json"), fh, indent=2, default=str)
         console.print(f"[dim]Score written to {out_path}[/dim]")
+
+
+@cli.command("optimize-extraction-prompt")
+@click.option("--dataset", "dataset_name", default="toronto-maple-leafs",
+              show_default=True,
+              help="Frozen dataset name (datasets/extraction_<name>.json) or a path.")
+@click.option("--max-iters", default=6, show_default=True,
+              help="Max proposal rounds.")
+@click.option("--min-delta", default=0.01, show_default=True,
+              help="Min F1 gain over best-so-far to accept a candidate.")
+@click.option("--patience", default=3, show_default=True,
+              help="Stop after this many consecutive non-improving rounds.")
+@click.option("--out", "out_path", default=None,
+              help="Write the winning prompt to this path (plus <path>.json report).")
+def optimize_extraction_prompt(
+    dataset_name: str, max_iters: int, min_delta: float, patience: int,
+    out_path: str | None,
+) -> None:
+    """Prompt-gradient-descent on the extract-source prompt (the full loop).
+
+    Scores the live prompt as a baseline, then repeatedly asks an LLM proposer to
+    revise it — guided by the critique (empty attribution / hallucination / missed
+    coverage) and the score trajectory so far — keeping a candidate only when it
+    beats the best F1 by --min-delta. Writes nothing to the live prompt; --out
+    saves the winner for you to install.
+    """
+    from mesh_agents.eval import (
+        LLMExtractionJudge,
+        LLMPromptProposer,
+        load_dataset,
+        optimize_prompt,
+    )
+    from mesh_llm import make_llm_client
+    from rich.panel import Panel
+
+    dataset = load_dataset(dataset_name)
+    try:
+        llm = make_llm_client()
+        judge = LLMExtractionJudge()
+        proposer = LLMPromptProposer()
+    except Exception as exc:
+        console.print(f"[red]LLM unavailable:[/red] {exc}")
+        return
+
+    console.print(
+        f"[dim]Optimizing extract-source prompt on {len(dataset.examples)} examples "
+        f"({dataset.field_id}), up to {max_iters} rounds…[/dim]"
+    )
+    result = optimize_prompt(
+        llm, judge, proposer, dataset,
+        max_iters=max_iters, min_delta=min_delta, patience=patience,
+    )
+
+    table = Table(title=f"prompt-gradient-descent — {dataset.field_id}")
+    table.add_column("Iter", justify="right")
+    table.add_column("F1", justify="right")
+    table.add_column("Prec", justify="right")
+    table.add_column("Cover", justify="right")
+    table.add_column("Kept", justify="center")
+    table.add_column("Rationale", overflow="fold")
+    for step in result.history:
+        table.add_row(
+            str(step.iteration), f"{step.f1:.3f}", f"{step.precision:.2f}",
+            f"{step.coverage:.2f}", "✓" if step.accepted else "",
+            step.rationale[:80],
+        )
+    console.print(table)
+    verdict = (
+        f"[green]improved +{result.gain:.3f}[/green]" if result.improved
+        else "[yellow]no improvement over baseline[/yellow]"
+    )
+    console.print(
+        Panel(
+            "\n".join([
+                f"[bold]Baseline F1:[/bold] {result.baseline_f1:.3f}   "
+                f"[bold]Best F1:[/bold] {result.best_f1:.3f}   ({verdict})",
+                f"[bold]Rounds run:[/bold] {result.iterations}   "
+                f"[bold]Proposer tokens:[/bold] {result.proposer_tokens}",
+            ]),
+            title="optimization result",
+        )
+    )
+
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(result.best_prompt)
+        report_path = f"{out_path}.json"
+        with open(report_path, "w", encoding="utf-8") as fh:
+            json.dump(result.model_dump(mode="json"), fh, indent=2, default=str)
+        console.print(
+            f"[dim]Winning prompt → {out_path}   full report → {report_path}[/dim]"
+        )
+        if result.improved:
+            console.print(
+                "[dim]Review it, then install by updating the field's extraction "
+                "prompt/profile.[/dim]"
+            )

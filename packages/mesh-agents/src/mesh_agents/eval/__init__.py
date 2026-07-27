@@ -34,6 +34,16 @@ from mesh_agents.eval.models import (
     FreshnessRow,
     Verdict,
 )
+from mesh_agents.eval.optimizer import (
+    LLMPromptProposer,
+    OptimizationResult,
+    OptimizationStep,
+    PromptCandidate,
+    PromptProposer,
+    TrajectoryPoint,
+    build_critique,
+    optimize_prompt,
+)
 
 __all__ = [
     "AccuracyReport",
@@ -45,9 +55,17 @@ __all__ = [
     "FreshnessReport",
     "FreshnessRow",
     "LLMExtractionJudge",
+    "LLMPromptProposer",
+    "OptimizationResult",
+    "OptimizationStep",
+    "PromptCandidate",
+    "PromptProposer",
+    "TrajectoryPoint",
     "Verdict",
     "assess_accuracy",
     "assess_freshness",
+    "build_critique",
     "evaluate_prompt",
     "load_dataset",
+    "optimize_prompt",
 ]

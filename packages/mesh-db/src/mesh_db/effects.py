@@ -43,6 +43,7 @@ from mesh_models.effect import (
     OpenInvestigationEffect,
     RecordConcernEffect,
     RecordExtractionAttemptEffect,
+    RecordGradeEffect,
     RejectEntityMergeEffect,
     ResolveConcernsEffect,
     ReviseBeliefEffect,
@@ -55,6 +56,7 @@ from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from pydantic import BaseModel, Field
 
+from mesh_db.belief_grades import record_grade
 from mesh_db.beliefs import (
     create_belief,
     get_belief_by_id,
@@ -115,6 +117,7 @@ class ApplyReport(BaseModel):
     sources_exhausted: int = 0
     claims_marked_synthesized: int = 0
     prompt_versions_installed: int = 0
+    grades_recorded: int = 0
     concerns_recorded: int = 0
     concerns_resolved: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
@@ -285,6 +288,10 @@ def _apply_one(
         create_heuristic(conn, effect.heuristic, field_id=effect.field_id)
         create_heuristic_revision(conn, effect.genesis_revision)
         report.heuristics_written += 1
+
+    elif isinstance(effect, RecordGradeEffect):
+        record_grade(conn, effect.grade)
+        report.grades_recorded += 1
 
     elif isinstance(effect, RecordConcernEffect):
         # Append-only fault-attribution; the gateway de-dupes an already-open

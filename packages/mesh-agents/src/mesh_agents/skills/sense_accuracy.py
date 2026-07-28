@@ -1,13 +1,16 @@
 """Skill: ``sense-accuracy`` — grade the field against the web, accumulate concerns.
 
 The barometer of the self-improvement loop. A cooldown-gated ``evaluate_accuracy``
-tension (one per field, on its own long timer — the eval is expensive) routes here.
-The skill samples held beliefs, grades each against the live web (the accuracy
-judge), measures source freshness, and attributes every non-supported belief's
-fault to ONE component (the attribution engine). Each attribution becomes an
-append-only ``RecordConcernEffect`` — **the skill only accumulates evidence, it
-never edits the system.** Concerns pile up across eval passes; a separate derived
-tension fires the actual A/B fix once one component's concerns cross a threshold.
+tension routes here. Each pass grades the ``MESH_EVAL_SAMPLE_SIZE`` *least-recently-
+graded* held beliefs against the live web (a rolling sweep — over successive passes
+**every** belief is graded, then re-graded oldest-first; the grade ledger is the
+cursor), measures source freshness, and attributes every non-supported belief's
+fault to ONE component (the attribution engine).
+
+It emits two append-only effects and **edits nothing**: a ``RecordGradeEffect`` for
+*every* belief graded (supported ones too — the ledger is a coverage record + an
+accuracy time-series) and a ``RecordConcernEffect`` per fault. Concerns pile up
+across passes; a separate tension fires the actual fix once they cross a threshold.
 
 Degrades to no effect (retry next cooldown) when the field holds no beliefs or the
 web judge is unavailable (no ANTHROPIC_API_KEY) — sensing must never break the run.
@@ -18,10 +21,20 @@ import asyncio
 import os
 from typing import Any
 
-from mesh_models.effect import RecordConcernEffect
+from mesh_models.belief_grade import BeliefGradeRow
+from mesh_models.effect import RecordConcernEffect, RecordGradeEffect
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.skill import register_skill
+
+# Accuracy weight per verdict (mirrors AccuracyReport.accuracy_score): the ledger
+# stores it so windowed accuracy is a plain average.
+_VERDICT_WEIGHT = {
+    "supported": 1.0,
+    "partially_supported": 0.5,
+    "contradicted": 0.0,
+    "unverifiable": 0.0,
+}
 
 
 @register_skill
@@ -50,13 +63,28 @@ class SenseAccuracySkill:
             return []  # no web judge available — retry next cooldown
 
         diagnoser = self._diagnoser or LLMFaultDiagnoser()
-        sample_size = max(1, int(os.environ.get("MESH_EVAL_SAMPLE_SIZE", "15")))
+        batch = max(1, int(os.environ.get("MESH_EVAL_SAMPLE_SIZE", "15")))
 
         def _work() -> list[Any]:
-            report = assess_accuracy(conn, field_id, judge, sample_size=sample_size)
+            report = assess_accuracy(
+                conn, field_id, judge, sample_size=batch, strategy="coverage"
+            )
             freshness = assess_freshness(conn, field_id)
+            effects: list[Any] = [
+                RecordGradeEffect(
+                    grade=BeliefGradeRow(
+                        field_id=report.field_id,
+                        belief_id=g.belief_id,
+                        verdict=g.verdict.value,
+                        judge_confidence=g.judge_confidence,
+                        weight=_VERDICT_WEIGHT.get(g.verdict.value, 0.0),
+                    )
+                )
+                for g in report.grades
+            ]
             concerns = attribute_report(conn, report, diagnoser, freshness=freshness)
-            return [RecordConcernEffect(concern=c) for c in concerns]
+            effects.extend(RecordConcernEffect(concern=c) for c in concerns)
+            return effects
 
         try:
             return await asyncio.to_thread(_work)

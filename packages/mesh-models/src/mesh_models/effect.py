@@ -24,6 +24,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 from mesh_models.belief import Belief
+from mesh_models.belief_grade import BeliefGradeRow
 from mesh_models.claim import Claim
 from mesh_models.entity import Entity
 from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
@@ -256,6 +257,15 @@ class WriteHeuristicEffect(BaseModel):
     genesis_revision: AgentHeuristicRevision
 
 
+class RecordGradeEffect(BaseModel):
+    """Persist one accuracy grade (append-only). Emitted by ``sense-accuracy`` for
+    every belief it grades — supported ones too — so the ledger is a complete
+    coverage record + accuracy time-series."""
+
+    kind: Literal["record_grade"] = "record_grade"
+    grade: BeliefGradeRow
+
+
 class RecordConcernEffect(BaseModel):
     """Persist one accumulated fault-attribution (append-only). Emitted by the
     ``sense-accuracy`` skill for each fault it attributes from an accuracy/freshness
@@ -310,6 +320,7 @@ Effect = Annotated[
     | MarkClaimsSynthesizedEffect
     | WriteHeuristicEffect
     | WriteFieldBriefEffect
+    | RecordGradeEffect
     | RecordConcernEffect
     | ResolveConcernsEffect
     | InstallPromptVersionEffect,

@@ -54,6 +54,14 @@ def sample_beliefs(
         candidates.sort(key=lambda b: b.confidence, reverse=True)
     elif strategy == "random":
         (rng or random.Random()).shuffle(candidates)
+    elif strategy == "coverage":
+        # Rolling "grade every belief" sweep: least-recently-graded first (never
+        # graded ranks first), so successive passes cover the whole corpus and then
+        # re-grade oldest-first — the grade ledger is the cursor.
+        from mesh_db.belief_grades import last_graded_at
+
+        graded = last_graded_at(conn, field_id)
+        candidates.sort(key=lambda b: (graded.get(b.id) is not None, graded.get(b.id)))
     else:  # "recent" — list_beliefs already returns last_revised_at DESC
         strategy = "recent"
     return candidates[:sample_size]

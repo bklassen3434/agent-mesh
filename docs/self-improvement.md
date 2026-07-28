@@ -41,33 +41,47 @@ belief+component, so a re-eval doesn't double-count.
 
 The eval only *writes concerns*. It never edits the system.
 
-## Threshold → A/B → promote (all on the board)
+## Grade all beliefs, over time (the barometer)
 
-- **Sense** — a cooldown-gated `evaluate_accuracy` tension (`MESH_CONTROLLER_EVAL_COOLDOWN_SEC`,
-  default 3 days) routes to the `sense-accuracy` skill, which grades a sample,
-  attributes faults, and emits `RecordConcernEffect`s.
-- **Activate** — `improvement_tensions` counts open concerns per component; when they
-  cross `MESH_IMPROVE_CONCERN_THRESHOLD` (or summed severity
-  `MESH_IMPROVE_SEVERITY_THRESHOLD`), it *derives* an `improvable_component` tension —
-  exactly like `thin_belief` firing when a belief's evidence is too thin.
-- **Act** — the `improve-component` skill reads the accumulated concerns (the
-  gradient), seeds the prompt optimizer with them (`run_improvement(..., extra_guidance=...)`),
-  and runs a **held-out A/B**: hill-climb on a train split, then compare the winner
-  vs the live prompt on unseen examples.
-- **Promote** — only if the candidate *actually beats* the live prompt does it emit
-  `InstallPromptVersionEffect` (append-only `catalog.prompt_versions`, which the
-  extractor reads via `resolve_extraction_system`) + `ResolveConcernsEffect` to close
-  the concerns it acted on. If the A/B loses, no effects — the controller's stall
-  cooldown backs the tension off until more concerns accrue.
+The `sense-accuracy` skill grades against the web on a cooldown
+(`MESH_CONTROLLER_EVAL_COOLDOWN_SEC`, default 3 days). Each pass grades the
+`MESH_EVAL_SAMPLE_SIZE` **least-recently-graded** beliefs — a rolling cursor
+(`agents.belief_grades`) so every belief is covered over successive passes, then
+re-graded oldest-first. Every grade is persisted (supported ones too), giving both a
+coverage record and an **accuracy time-series** — the signal a shadow experiment
+reads. It emits a `RecordGradeEffect` per belief + a `RecordConcernEffect` per fault,
+and edits nothing.
 
-Every write goes through the effects gateway; the skills-never-write invariant holds.
+## Threshold → shadow A/B → promote (all on the board)
+
+- **Activate** — `improvement_tensions` counts open concerns per component; crossing
+  `MESH_IMPROVE_CONCERN_THRESHOLD` (or summed severity `MESH_IMPROVE_SEVERITY_THRESHOLD`)
+  *derives* an `improvable_component` tension, like `thin_belief` on thin evidence.
+- **Draft + pre-filter** — `improve-component` reads the concerns (the gradient),
+  seeds the prompt optimizer with them, and runs the **frozen held-out A/B as a cheap
+  pre-filter** so we only spend a live window on a candidate that at least beats the
+  live prompt offline. It does **not** install — it emits an `OpenExperimentEffect`.
+- **Shadow test beside prod** — while an experiment runs, a `running_experiment`
+  tension routes to `advance-experiment`, which takes real already-ingested sources
+  and runs **both** the live prompt (control) and the candidate (treatment) on each,
+  grades both against the source, and records the two scores
+  (`RecordExperimentSampleEffect`). The candidate's claims are **discarded** — nothing
+  it produces enters the KB. Sampling is paced by `MESH_CONTROLLER_EXPERIMENT_COOLDOWN_SEC`.
+- **Windowed decide** — once both arms have `MESH_EXPERIMENT_MIN_SAMPLE` samples,
+  `advance-experiment` compares them: treatment beats control by `MESH_EXPERIMENT_MARGIN`
+  → promote (`InstallPromptVersionEffect` + `ResolveConcernsEffect`); else reject.
+  Either way `DecideExperimentEffect` closes the experiment.
+
+So a change goes live only after **winning on real inputs over a window**, never on a
+single frozen-set score. Every write goes through the effects gateway.
 
 ## Actuator coverage
 
-Today the wired auto-actuator is **extraction** (the extract-source prompt has a
-frozen-dataset A/B). Concerns for the other components accumulate and are visible but
-don't auto-fire yet — the gradient is general, the actuators grow over time
-(synthesis eval, connector toggles, confidence-weight search).
+Today the wired auto-actuator is **extraction** (its shadow arm re-runs the
+extract-source prompt on live sources). Attribution already spans the whole pipeline
+(scout → extraction → entity_resolution → synthesis → challenge → confidence → decay),
+so concerns for the other stages accumulate and are visible; their shadow actuators
+grow over time (synthesis prompt, connector toggles, confidence-weight search).
 
 ## Manual entry point
 

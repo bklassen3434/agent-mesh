@@ -59,6 +59,7 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.stale_field_brief: 0.02,  # one narrative call per field
     TensionKind.evaluate_accuracy: 0.30,  # sample beliefs, web-ground each, attribute
     TensionKind.improvable_component: 0.50,  # an A/B improve pass (many calls)
+    TensionKind.running_experiment: 0.20,  # a shadow-eval sampling batch (or a decision)
     TensionKind.contradicted_belief: 0.08,  # gather corroboration + weigh both sides
 }
 
@@ -80,6 +81,7 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.stale_field_brief: "write-field-brief",
     TensionKind.evaluate_accuracy: "sense-accuracy",
     TensionKind.improvable_component: "improve-component",
+    TensionKind.running_experiment: "advance-experiment",
     TensionKind.contradicted_belief: "adjudicate-contradiction",
 }
 
@@ -108,6 +110,7 @@ _KIND_TIER: dict[TensionKind, ReasoningTier] = {
     TensionKind.stale_field_brief: ReasoningTier.simple,
     TensionKind.evaluate_accuracy: ReasoningTier.simple,
     TensionKind.improvable_component: ReasoningTier.simple,
+    TensionKind.running_experiment: ReasoningTier.simple,
     TensionKind.contradicted_belief: ReasoningTier.deep,
 }
 
@@ -368,6 +371,43 @@ def improvement_tensions(conn: Any, field_id: str) -> list[Tension]:
                 tier=resolve_tier(kind, {}),
                 target_ref={"component": g.component, "target": target},
                 signals={"open_concerns": g.count, "severity": g.severity},
+            )
+        )
+    return out
+
+
+def experiment_tensions(conn: Any, field_id: str) -> list[Tension]:
+    """One ``running_experiment`` tension per open shadow A/B — either to gather more
+    samples on both arms or (when both arms have enough) to decide. Board-state
+    driven: the tension exists exactly while an experiment is running. ``ready`` in
+    the signals tells the rule whether it's a decision (fire now) or more sampling
+    (cooldown-gated)."""
+    from mesh_db.improvement_experiments import list_running_experiments
+
+    kind = TensionKind.running_experiment
+    out: list[Tension] = []
+    for exp in list_running_experiments(conn, field_id):
+        out.append(
+            Tension(
+                id=f"{kind.value}:{exp.id}",
+                field_id=field_id,
+                kind=kind,
+                subject=f"{exp.component} experiment {exp.id[:8]}",
+                rationale=(
+                    f"shadow A/B: control {exp.control_n}/{exp.min_sample}, "
+                    f"treatment {exp.treatment_n}/{exp.min_sample}"
+                    + (" — ready to decide" if exp.ready else " — gathering samples")
+                ),
+                value=0.35 if exp.ready else 0.2,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
+                target_ref={
+                    "experiment_id": exp.id,
+                    "component": exp.component,
+                    "target": exp.target,
+                },
+                signals={"ready": exp.ready},
             )
         )
     return out

@@ -1,31 +1,32 @@
-"""Skill: ``improve-component`` — A/B a fix for a component, promote iff it wins.
+"""Skill: ``improve-component`` — draft a fix and OPEN a shadow experiment for it.
 
 The actuator of the self-improvement loop. A derived ``improvable_component``
 tension fires here only once one component's accumulated fault-attribution concerns
 crossed the activation threshold — so this runs on *evidence*, not a timer. The
-skill reads those concerns (the accuracy gradient), drafts a fix, and validates it
-with a held-out A/B before promoting.
+skill reads those concerns (the accuracy gradient), drafts a candidate fix, cheaply
+pre-filters it, and — crucially — **does not install it**. It opens a shadow A/B
+experiment (``OpenExperimentEffect``) so the candidate is tested beside the live
+pipeline on real inputs over a window before anything goes live (the
+``advance-experiment`` skill runs and decides it).
 
 Today the wired actuator is **extraction**: the concern summaries seed the prompt
 optimizer (``run_improvement``), which hill-climbs a revised extract-source prompt
-on a training split and A/Bs it on held-out examples. It promotes — installs the
-new prompt (``InstallPromptVersionEffect``) and resolves the concerns
-(``ResolveConcernsEffect``) — **only if the candidate actually beats the live
-prompt** on the holdout. If it doesn't, the skill returns no effects; the
-controller's stall cooldown backs the tension off until more concerns accrue.
+and held-out-A/Bs it on the frozen dataset — a **cheap pre-filter** so we only spend
+a live shadow window on a candidate that at least beats the live prompt offline. If
+it doesn't clear the pre-filter (or an experiment is already running for this
+component), the skill returns no effects.
 
-Concerns for other components (synthesis / freshness / coverage / confidence) still
-accumulate and surface, but don't auto-fire yet — their A/B actuators aren't built.
-The gradient is general; the actuators grow over time.
+Concerns for other components (synthesis / freshness / …) still accumulate but don't
+auto-fire yet — their actuators aren't built. The gradient is general; actuators grow.
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from mesh_models.effect import InstallPromptVersionEffect, ResolveConcernsEffect
+from mesh_models.effect import OpenExperimentEffect
 from mesh_models.improvement_concern import ConcernComponent
-from mesh_models.prompt_version import PromptVersion
+from mesh_models.improvement_experiment import ImprovementExperiment
 from mesh_models.tension import Tension, TensionKind
 
 from mesh_agents.skill import register_skill
@@ -54,8 +55,12 @@ class ImproveComponentSkill:
             return []  # no wired actuator for this component yet
 
         from mesh_db.improvement_concerns import list_open_concerns
+        from mesh_db.improvement_experiments import get_running_experiment
 
         field_id = tension.field_id
+        if get_running_experiment(conn, field_id, component, skill_key) is not None:
+            return []  # already under test — don't stack a second experiment
+
         concerns = list_open_concerns(conn, field_id, component, limit=50)
         if not concerns:
             return []
@@ -82,27 +87,23 @@ class ImproveComponentSkill:
         except Exception:
             return []
         if not run.promote:
-            return []  # A/B didn't beat the live prompt — stall cooldown backs off
+            return []  # didn't clear the offline pre-filter — not worth a live window
 
-        version = PromptVersion(
+        import os
+
+        # Open a shadow experiment — the candidate is tested beside prod, not
+        # installed. It goes live only if advance-experiment promotes it.
+        experiment = ImprovementExperiment(
             field_id=field_id,
-            skill_key=skill_key,
-            prompt=run.best_prompt,
-            dataset_field=run.dataset_field,
-            baseline_f1=run.optimization.baseline_f1,
-            best_f1=run.optimization.best_f1,
-            holdout_baseline_f1=run.holdout_baseline_f1,
-            holdout_best_f1=run.holdout_best_f1,
-            holdout_gain=run.holdout_gain,
-            rationale=f"accuracy concerns → {run.reason}",
-            proposer_tokens=run.proposer_tokens,
+            component=component,
+            target=skill_key,
+            treatment_prompt=run.best_prompt,
+            concern_ids=[c.id for c in concerns],
+            min_sample=max(1, int(os.environ.get("MESH_EXPERIMENT_MIN_SAMPLE", "20"))),
+            margin=float(os.environ.get("MESH_EXPERIMENT_MARGIN", "0.02")),
+            rationale=f"accuracy concerns → offline pre-filter {run.reason}",
         )
-        return [
-            InstallPromptVersionEffect(version=version),
-            ResolveConcernsEffect(
-                concern_ids=[c.id for c in concerns], resolved_by=version.id
-            ),
-        ]
+        return [OpenExperimentEffect(experiment=experiment)]
 
     def _load_dataset(self, conn: Any, field_id: str) -> Any | None:
         from mesh_agents.eval import load_dataset

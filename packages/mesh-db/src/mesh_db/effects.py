@@ -36,12 +36,15 @@ from mesh_models.effect import (
     CreateClaimEffect,
     CreateEntityEffect,
     CreateSourceEffect,
+    DecideExperimentEffect,
     InstallPromptVersionEffect,
     MarkClaimsSynthesizedEffect,
     MergeBeliefsEffect,
     MergeEntitiesEffect,
+    OpenExperimentEffect,
     OpenInvestigationEffect,
     RecordConcernEffect,
+    RecordExperimentSampleEffect,
     RecordExtractionAttemptEffect,
     RecordGradeEffect,
     RejectEntityMergeEffect,
@@ -74,6 +77,11 @@ from mesh_db.entities import (
 )
 from mesh_db.heuristics import create_heuristic, create_heuristic_revision
 from mesh_db.improvement_concerns import record_concern, resolve_concerns
+from mesh_db.improvement_experiments import (
+    decide_experiment,
+    open_experiment,
+    record_sample,
+)
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     create_investigation,
@@ -120,6 +128,9 @@ class ApplyReport(BaseModel):
     grades_recorded: int = 0
     concerns_recorded: int = 0
     concerns_resolved: int = 0
+    experiments_opened: int = 0
+    experiment_samples_recorded: int = 0
+    experiments_decided: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -308,6 +319,21 @@ def _apply_one(
             resolved_by=effect.resolved_by,
             status=ConcernStatus.dismissed if effect.dismissed else ConcernStatus.resolved,
         )
+
+    elif isinstance(effect, OpenExperimentEffect):
+        if open_experiment(conn, effect.experiment) is not None:
+            report.experiments_opened += 1
+
+    elif isinstance(effect, RecordExperimentSampleEffect):
+        record_sample(conn, effect.experiment_id, effect.arm, effect.score)
+        report.experiment_samples_recorded += 1
+
+    elif isinstance(effect, DecideExperimentEffect):
+        decide_experiment(
+            conn, effect.experiment_id,
+            promoted=effect.promoted, rationale=effect.rationale,
+        )
+        report.experiments_decided += 1
 
     elif isinstance(effect, InstallPromptVersionEffect):
         # Append-only prompt install: deactivate the prior active version, insert

@@ -181,19 +181,21 @@ async def test_improve_component_skill_no_op_without_actuator() -> None:
 
 
 @pytest.mark.asyncio
-async def test_improve_component_skill_promotes_and_resolves_when_ab_wins(
+async def test_improve_component_opens_a_shadow_experiment_when_prefilter_passes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import mesh_agents.eval as eval_pkg
     import mesh_db.improvement_concerns as concerns_mod
+    import mesh_db.improvement_experiments as exp_mod
     from mesh_agents.skills.improve_component import ImproveComponentSkill
-    from mesh_models.effect import InstallPromptVersionEffect, ResolveConcernsEffect
+    from mesh_models.effect import OpenExperimentEffect
 
     concerns = [
         SimpleNamespace(id="c1", severity=0.9, verdict="contradicted", summary="overreached"),
         SimpleNamespace(id="c2", severity=0.4, verdict="partially_supported", summary="thin"),
     ]
     monkeypatch.setattr(concerns_mod, "list_open_concerns", lambda *a, **k: concerns)
+    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: None)
 
     fake_run = SimpleNamespace(
         promote=True, best_prompt="NEW EXTRACTION PROMPT", dataset_field="fld",
@@ -223,28 +225,45 @@ async def test_improve_component_skill_promotes_and_resolves_when_ab_wins(
     )
     effects = await skill.run(None, t, budget_usd=1.0)
 
-    kinds = [type(e) for e in effects]
-    assert kinds == [InstallPromptVersionEffect, ResolveConcernsEffect]
-    install, resolve = effects
-    assert install.version.skill_key == "extract-source"
-    assert install.version.prompt == "NEW EXTRACTION PROMPT"
-    assert install.version.holdout_gain == 0.3
-    assert resolve.concern_ids == ["c1", "c2"]
-    assert resolve.resolved_by == install.version.id
-    # the accuracy gradient was passed down to the optimizer
-    assert "overreached" in captured["guidance"]
+    # It OPENS an experiment — it does NOT install anything.
+    assert [type(e) for e in effects] == [OpenExperimentEffect]
+    exp = effects[0].experiment
+    assert exp.component == "extraction" and exp.target == "extract-source"
+    assert exp.treatment_prompt == "NEW EXTRACTION PROMPT"
+    assert exp.concern_ids == ["c1", "c2"]
+    assert "overreached" in captured["guidance"]  # gradient passed down
 
 
 @pytest.mark.asyncio
-async def test_improve_component_skill_no_effects_when_ab_loses(
+async def test_improve_component_skips_when_an_experiment_is_already_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mesh_db.improvement_experiments as exp_mod
+    from mesh_agents.skills.improve_component import ImproveComponentSkill
+
+    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: object())
+    skill = ImproveComponentSkill(llm=object(), judge=object(), proposer=object())
+    t = Tension(
+        id="improvable_component:extraction", field_id="fld",
+        kind=TensionKind.improvable_component, subject="extraction", rationale="t",
+        value=0.5, est_cost_usd=0.5, handler_skill="improve-component",
+        target_ref={"component": "extraction", "target": "extract-source"},
+    )
+    assert await skill.run(None, t, budget_usd=1.0) == []  # already under test
+
+
+@pytest.mark.asyncio
+async def test_improve_component_skill_no_effects_when_prefilter_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import mesh_agents.eval as eval_pkg
     import mesh_db.improvement_concerns as concerns_mod
+    import mesh_db.improvement_experiments as exp_mod
     from mesh_agents.skills.improve_component import ImproveComponentSkill
 
     one = [SimpleNamespace(id="c1", severity=0.5, verdict="contradicted", summary="x")]
     monkeypatch.setattr(concerns_mod, "list_open_concerns", lambda *a, **k: one)
+    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: None)
     monkeypatch.setattr(
         eval_pkg, "run_improvement",
         lambda *a, **k: SimpleNamespace(promote=False, reason="did not generalize"),

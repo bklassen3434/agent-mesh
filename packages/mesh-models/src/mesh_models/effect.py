@@ -29,6 +29,7 @@ from mesh_models.claim import Claim
 from mesh_models.entity import Entity
 from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
 from mesh_models.improvement_concern import ImprovementConcern
+from mesh_models.improvement_experiment import ExperimentArm, ImprovementExperiment
 from mesh_models.investigation import Investigation
 from mesh_models.prompt_version import PromptVersion
 from mesh_models.source import Source
@@ -286,6 +287,36 @@ class ResolveConcernsEffect(BaseModel):
     dismissed: bool = False  # True → dismissed (not actionable) instead of resolved
 
 
+class OpenExperimentEffect(BaseModel):
+    """Open a shadow A/B experiment (append-only; de-duped by the running-unique
+    index). Emitted by ``improve-component`` with a candidate variant — the KB is
+    NOT changed; the candidate only starts being tested beside the live pipeline."""
+
+    kind: Literal["open_experiment"] = "open_experiment"
+    experiment: ImprovementExperiment
+
+
+class RecordExperimentSampleEffect(BaseModel):
+    """Fold one graded shadow sample into an experiment arm's running mean. Emitted
+    by the shadow-eval skill for each real input it scored on both arms."""
+
+    kind: Literal["record_experiment_sample"] = "record_experiment_sample"
+    experiment_id: str
+    arm: ExperimentArm
+    score: float
+
+
+class DecideExperimentEffect(BaseModel):
+    """Close a running experiment as promoted or rejected. On promote the skill also
+    emits the actuating effects (InstallPromptVersion + ResolveConcerns); this only
+    flips the experiment's status."""
+
+    kind: Literal["decide_experiment"] = "decide_experiment"
+    experiment_id: str
+    promoted: bool
+    rationale: str = ""
+
+
 class InstallPromptVersionEffect(BaseModel):
     """Install a system-prompt version won by the autonomous improvement loop as a
     field/skill's active prompt (append-only: the prior active row is deactivated,
@@ -323,6 +354,9 @@ Effect = Annotated[
     | RecordGradeEffect
     | RecordConcernEffect
     | ResolveConcernsEffect
+    | OpenExperimentEffect
+    | RecordExperimentSampleEffect
+    | DecideExperimentEffect
     | InstallPromptVersionEffect,
     Field(discriminator="kind"),
 ]

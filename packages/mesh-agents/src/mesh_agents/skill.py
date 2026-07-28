@@ -97,6 +97,7 @@ def load_builtin_skills() -> list[Skill]:
     appending an import here (append-only, conflict-trivial)."""
     from mesh_agents.skills import (  # noqa: F401
         adjudicate_contradiction,
+        advance_experiment,
         challenge_belief,
         consolidate_beliefs,
         consolidate_memory,

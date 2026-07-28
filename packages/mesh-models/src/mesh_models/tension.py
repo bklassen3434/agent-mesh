@@ -55,6 +55,7 @@ class TensionKind(StrEnum):
     # Self-improvement — derived from accumulated fault-attribution concerns, not a
     # timer: enough open concerns for one component crossed the activation threshold.
     improvable_component = "improvable_component"  # a component has enough concerns to A/B-fix
+    running_experiment = "running_experiment"  # a shadow A/B needs samples gathered or a decision
     # A load-bearing held belief contradicted by fresh evidence — the flagship
     # deep-reasoning case: gather corroboration, weigh both sides, then decide.
     contradicted_belief = "contradicted_belief"

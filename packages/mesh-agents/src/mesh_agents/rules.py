@@ -95,6 +95,13 @@ def maintenance_cooldown_seconds() -> float:
     return _float_env("MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC", 86_400.0)
 
 
+def experiment_sample_cooldown_seconds() -> float:
+    """Min seconds between shadow-eval sampling batches for one running experiment.
+    Sampling re-runs both prompt arms on real sources (LLM-heavy), so it's paced;
+    the decision itself (once both arms have enough samples) is cheap and not paced."""
+    return _float_env("MESH_CONTROLLER_EXPERIMENT_COOLDOWN_SEC", 3600.0)
+
+
 def evaluate_cooldown_seconds() -> float:
     """Minimum seconds between web-grounded accuracy evaluations of a field. The
     eval is expensive (a web-search judge per sampled belief), so its own cooldown
@@ -373,6 +380,7 @@ _NON_ESCALATING_KINDS: tuple[TensionKind, ...] = (
     *_MAINTENANCE_KINDS,
     TensionKind.evaluate_accuracy,
     TensionKind.improvable_component,
+    TensionKind.running_experiment,
 )
 
 
@@ -433,6 +441,30 @@ def _evaluate_when_due(state: ControllerState) -> list[Activation]:
                         else ", never graded"
                     )
                 ),
+            )
+        )
+    return out
+
+
+def _advance_experiments(state: ControllerState) -> list[Activation]:
+    """Drive each running shadow A/B. When both arms have enough samples (``ready``),
+    fire immediately to decide (cheap, no LLM). Otherwise pace sampling on the
+    experiment cooldown — each batch re-runs both prompt arms on real sources, which
+    is LLM-heavy — so we don't burn tokens every round."""
+    cooldown = experiment_sample_cooldown_seconds()
+    out: list[Activation] = []
+    for t in state.tensions_of(TensionKind.running_experiment):
+        if not t.signals.get("ready"):
+            st = state.state_for(t.id)
+            elapsed = st.seconds_since_attempt(state.now) if st else None
+            if elapsed is not None and elapsed < cooldown:
+                continue  # sampled too recently
+        out.append(
+            Activation(
+                tension=t,
+                skill_id=t.handler_skill,
+                priority=P_IMPROVE,
+                reason="decide shadow A/B" if t.signals.get("ready") else "gather shadow samples",
             )
         )
     return out
@@ -507,6 +539,7 @@ RULES: tuple[Rule, ...] = (
         "belief is contested or stale — re-examine it",
     ),
     Rule(name="investigate-knowledge-gaps", evaluate=_investigate_knowledge_gaps),
+    Rule(name="advance-experiments", evaluate=_advance_experiments),
     Rule(name="improve-components", evaluate=_improve_components),
     Rule(name="maintain-when-due", evaluate=_maintain_when_due),
     Rule(name="evaluate-accuracy-when-due", evaluate=_evaluate_when_due),

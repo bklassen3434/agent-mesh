@@ -42,6 +42,7 @@ import click
 import structlog
 from mesh_agents.agenda import (
     compute_agenda,
+    experiment_tensions,
     improvement_tensions,
     investigation_tensions,
     maintenance_tensions,
@@ -223,6 +224,7 @@ def _sense(conn: Any, field_id: str, field_slug: str) -> list[Tension]:
         + investigation_tensions(conn, field_id)
         + maintenance_tensions(conn, field_id)
         + improvement_tensions(conn, field_id)
+        + experiment_tensions(conn, field_id)
         + agenda.tensions
     )
 

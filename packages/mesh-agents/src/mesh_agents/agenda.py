@@ -57,6 +57,9 @@ _KIND_COST_USD: dict[TensionKind, float] = {
     TensionKind.aging_belief: 0.001,  # LLM-free corpus scan
     TensionKind.consolidatable_memory: 0.04,  # one sync distil call per target
     TensionKind.stale_field_brief: 0.02,  # one narrative call per field
+    TensionKind.evaluate_accuracy: 0.30,  # sample beliefs, web-ground each, attribute
+    TensionKind.improvable_component: 0.50,  # an A/B improve pass (many calls)
+    TensionKind.running_experiment: 0.20,  # a shadow-eval sampling batch (or a decision)
     TensionKind.contradicted_belief: 0.08,  # gather corroboration + weigh both sides
 }
 
@@ -76,6 +79,9 @@ _KIND_SKILL: dict[TensionKind, str] = {
     TensionKind.aging_belief: "maintain-belief",
     TensionKind.consolidatable_memory: "consolidate-memory",
     TensionKind.stale_field_brief: "write-field-brief",
+    TensionKind.evaluate_accuracy: "sense-accuracy",
+    TensionKind.improvable_component: "improve-component",
+    TensionKind.running_experiment: "advance-experiment",
     TensionKind.contradicted_belief: "adjudicate-contradiction",
 }
 
@@ -102,6 +108,9 @@ _KIND_TIER: dict[TensionKind, ReasoningTier] = {
     TensionKind.aging_belief: ReasoningTier.simple,
     TensionKind.consolidatable_memory: ReasoningTier.simple,
     TensionKind.stale_field_brief: ReasoningTier.simple,
+    TensionKind.evaluate_accuracy: ReasoningTier.simple,
+    TensionKind.improvable_component: ReasoningTier.simple,
+    TensionKind.running_experiment: ReasoningTier.simple,
     TensionKind.contradicted_belief: ReasoningTier.deep,
 }
 
@@ -292,6 +301,109 @@ def maintenance_tensions(conn: Any, field_id: str) -> list[Tension]:
                 tier=resolve_tier(kind, {}),
                 target_ref={"field_id": field_id},
                 signals={},
+            )
+        )
+
+    if list_beliefs(conn, currently_held=True, limit=1, field_id=field_id):
+        kind = TensionKind.evaluate_accuracy
+        out.append(
+            Tension(
+                id=f"{kind.value}:{field_id}",
+                field_id=field_id,
+                kind=kind,
+                subject="accuracy eval",
+                rationale=(
+                    "Periodic web-grounded accuracy + freshness grading; "
+                    "accumulate fault-attribution concerns (no edits)."
+                ),
+                value=0.25,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
+                target_ref={"field_id": field_id},
+                signals={},
+            )
+        )
+    return out
+
+
+def improvement_tensions(conn: Any, field_id: str) -> list[Tension]:
+    """Derive an ``improvable_component`` tension for each component whose OPEN
+    fault-attribution concerns have crossed the activation threshold — the
+    self-improvement analog of ``analyze_field``'s gap tensions.
+
+    Board-state driven, not timed: the trigger is accumulated evidence (concern
+    count or summed severity), exactly like ``thin_belief`` firing when a belief's
+    evidence is too thin. Only components with a wired A/B actuator emit; the rest
+    keep accumulating visibly until one is built."""
+    from mesh_db.improvement_concerns import open_concern_groups
+
+    from mesh_agents.actuators import actuatable_components
+
+    min_count = max(1, int(os.environ.get("MESH_IMPROVE_CONCERN_THRESHOLD", "5")))
+    min_severity = float(os.environ.get("MESH_IMPROVE_SEVERITY_THRESHOLD", "3.0"))
+    actuatable = actuatable_components()
+    out: list[Tension] = []
+    for g in open_concern_groups(conn, field_id):
+        if g.component not in actuatable:
+            continue
+        if g.count < min_count and g.severity < min_severity:
+            continue
+        kind = TensionKind.improvable_component
+        target = g.target or g.component
+        out.append(
+            Tension(
+                id=f"{kind.value}:{g.component}:{target}",
+                field_id=field_id,
+                kind=kind,
+                subject=f"{g.component} → {target}",
+                rationale=(
+                    f"{g.count} open concern(s) (severity {g.severity:.1f}) attribute "
+                    f"accuracy loss to {g.component}; A/B a fix and promote iff it wins."
+                ),
+                value=min(1.0, 0.3 + 0.1 * g.severity),
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
+                target_ref={"component": g.component, "target": target},
+                signals={"open_concerns": g.count, "severity": g.severity},
+            )
+        )
+    return out
+
+
+def experiment_tensions(conn: Any, field_id: str) -> list[Tension]:
+    """One ``running_experiment`` tension per open shadow A/B — either to gather more
+    samples on both arms or (when both arms have enough) to decide. Board-state
+    driven: the tension exists exactly while an experiment is running. ``ready`` in
+    the signals tells the rule whether it's a decision (fire now) or more sampling
+    (cooldown-gated)."""
+    from mesh_db.improvement_experiments import list_running_experiments
+
+    kind = TensionKind.running_experiment
+    out: list[Tension] = []
+    for exp in list_running_experiments(conn, field_id):
+        out.append(
+            Tension(
+                id=f"{kind.value}:{exp.id}",
+                field_id=field_id,
+                kind=kind,
+                subject=f"{exp.component} experiment {exp.id[:8]}",
+                rationale=(
+                    f"shadow A/B: control {exp.control_n}/{exp.min_sample}, "
+                    f"treatment {exp.treatment_n}/{exp.min_sample}"
+                    + (" — ready to decide" if exp.ready else " — gathering samples")
+                ),
+                value=0.35 if exp.ready else 0.2,
+                est_cost_usd=_KIND_COST_USD[kind],
+                handler_skill=_KIND_SKILL[kind],
+                tier=resolve_tier(kind, {}),
+                target_ref={
+                    "experiment_id": exp.id,
+                    "component": exp.component,
+                    "target": exp.target,
+                },
+                signals={"ready": exp.ready},
             )
         )
     return out

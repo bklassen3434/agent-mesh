@@ -95,6 +95,21 @@ def maintenance_cooldown_seconds() -> float:
     return _float_env("MESH_CONTROLLER_MAINTAIN_COOLDOWN_SEC", 86_400.0)
 
 
+def experiment_sample_cooldown_seconds() -> float:
+    """Min seconds between shadow-eval sampling batches for one running experiment.
+    Sampling re-runs both prompt arms on real sources (LLM-heavy), so it's paced;
+    the decision itself (once both arms have enough samples) is cheap and not paced."""
+    return _float_env("MESH_CONTROLLER_EXPERIMENT_COOLDOWN_SEC", 3600.0)
+
+
+def evaluate_cooldown_seconds() -> float:
+    """Minimum seconds between web-grounded accuracy evaluations of a field. The
+    eval is expensive (a web-search judge per sampled belief), so its own cooldown
+    is longer than routine maintenance — the deterministic form of "grade accuracy
+    every few days". Pure arithmetic over the stored last-attempt timestamp."""
+    return _float_env("MESH_CONTROLLER_EVAL_COOLDOWN_SEC", 259_200.0)  # 3 days
+
+
 def stall_cooldown_seconds() -> float:
     """Backoff before re-dispatching a tension whose last attempt produced nothing
     (``no_effects`` / ``error``).
@@ -124,7 +139,9 @@ P_SYNTHESIZE = 30  # turn claims into beliefs
 P_DISPATCH_INV = 35  # gather evidence for open investigations
 P_CHALLENGE = 40  # re-examine contested / stale beliefs
 P_INVESTIGATE = 50  # open investigations for knowledge gaps
+P_IMPROVE = 70  # A/B-fix a component with enough accuracy concerns (evidence-gated)
 P_MAINTAIN = 80  # periodic LLM-free housekeeping (belief aging, memory) when due
+P_EVALUATE = 85  # periodic web-grounded accuracy grading (accumulate concerns)
 P_SCOUT = 90  # acquire new material only when otherwise idle
 
 
@@ -235,8 +252,8 @@ def _escalate_stalled(state: ControllerState) -> list[Activation]:
     k = swarm_size()
     out: list[Activation] = []
     for t in state.tensions:
-        if t.kind is TensionKind.unscouted_connector or t.kind in _MAINTENANCE_KINDS:
-            continue  # cheap + idempotent housekeeping; never worth a swarm
+        if t.kind is TensionKind.unscouted_connector or t.kind in _NON_ESCALATING_KINDS:
+            continue  # housekeeping / meta-work; never worth a swarm
         # Deep tensions progress across rounds via their own state machine (the
         # gather investigation widens or abandons on its own budget); cloning a
         # stateful skill K times would just race, not deepen.
@@ -355,6 +372,17 @@ _MAINTENANCE_KINDS: tuple[TensionKind, ...] = (
     TensionKind.stale_field_brief,
 )
 
+# Kinds a swarm escalation never applies to: the maintenance housekeeping plus the
+# self-improvement meta-work (a periodic accuracy grade and a single A/B improve
+# pass — cloning either K times just races, it doesn't deepen). Their own cooldowns
+# (evaluate / stall) are their brake, not escalation.
+_NON_ESCALATING_KINDS: tuple[TensionKind, ...] = (
+    *_MAINTENANCE_KINDS,
+    TensionKind.evaluate_accuracy,
+    TensionKind.improvable_component,
+    TensionKind.running_experiment,
+)
+
 
 def _maintain_when_due(state: ControllerState) -> list[Activation]:
     """Fire a periodic maintenance tension only once its cooldown has elapsed —
@@ -382,6 +410,82 @@ def _maintain_when_due(state: ControllerState) -> list[Activation]:
                         else ", never run"
                     )
                 ),
+            )
+        )
+    return out
+
+
+def _evaluate_when_due(state: ControllerState) -> list[Activation]:
+    """Fire the field's accuracy eval once its (long) cooldown has elapsed — the
+    barometer that grades held beliefs against the web and accumulates
+    fault-attribution concerns. Cooldown-gated like maintenance, but on its own
+    longer timer (the eval is expensive) and it never edits — it only writes
+    concerns, which the ``improve-component`` rule later acts on once they build up."""
+    cooldown = evaluate_cooldown_seconds()
+    out: list[Activation] = []
+    for t in state.tensions_of(TensionKind.evaluate_accuracy):
+        st = state.state_for(t.id)
+        elapsed = st.seconds_since_attempt(state.now) if st else None
+        if elapsed is not None and elapsed < cooldown:
+            continue
+        out.append(
+            Activation(
+                tension=t,
+                skill_id=t.handler_skill,
+                priority=P_EVALUATE,
+                reason=(
+                    "accuracy eval due"
+                    + (
+                        f", {int(elapsed)}s since last grade"
+                        if elapsed is not None
+                        else ", never graded"
+                    )
+                ),
+            )
+        )
+    return out
+
+
+def _advance_experiments(state: ControllerState) -> list[Activation]:
+    """Drive each running shadow A/B. When both arms have enough samples (``ready``),
+    fire immediately to decide (cheap, no LLM). Otherwise pace sampling on the
+    experiment cooldown — each batch re-runs both prompt arms on real sources, which
+    is LLM-heavy — so we don't burn tokens every round."""
+    cooldown = experiment_sample_cooldown_seconds()
+    out: list[Activation] = []
+    for t in state.tensions_of(TensionKind.running_experiment):
+        if not t.signals.get("ready"):
+            st = state.state_for(t.id)
+            elapsed = st.seconds_since_attempt(state.now) if st else None
+            if elapsed is not None and elapsed < cooldown:
+                continue  # sampled too recently
+        out.append(
+            Activation(
+                tension=t,
+                skill_id=t.handler_skill,
+                priority=P_IMPROVE,
+                reason="decide shadow A/B" if t.signals.get("ready") else "gather shadow samples",
+            )
+        )
+    return out
+
+
+def _improve_components(state: ControllerState) -> list[Activation]:
+    """Fire an A/B improve pass for a component whose accumulated concerns crossed
+    the activation threshold (the tension only exists when they have). Gated by the
+    stall cooldown so a pass that fails to promote — the A/B didn't beat the live
+    prompt — backs off instead of re-running the expensive optimization every round;
+    it re-fires once more concerns accrue or the cooldown elapses."""
+    out: list[Activation] = []
+    for t in state.tensions_of(TensionKind.improvable_component):
+        if _in_stall_cooldown(state, t):
+            continue
+        out.append(
+            Activation(
+                tension=t,
+                skill_id=t.handler_skill,
+                priority=P_IMPROVE,
+                reason="enough accuracy concerns — A/B a fix and promote iff it wins",
             )
         )
     return out
@@ -435,7 +539,10 @@ RULES: tuple[Rule, ...] = (
         "belief is contested or stale — re-examine it",
     ),
     Rule(name="investigate-knowledge-gaps", evaluate=_investigate_knowledge_gaps),
+    Rule(name="advance-experiments", evaluate=_advance_experiments),
+    Rule(name="improve-components", evaluate=_improve_components),
     Rule(name="maintain-when-due", evaluate=_maintain_when_due),
+    Rule(name="evaluate-accuracy-when-due", evaluate=_evaluate_when_due),
     Rule(name="scout-when-idle", evaluate=_scout_when_idle),
 )
 

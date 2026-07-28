@@ -1797,3 +1797,486 @@ def agenda_cmd(field: str, budget_usd: float, limit: int) -> None:
             title="Market clearing",
         )
     )
+
+
+def _fmt_age(hours: float | None) -> str:
+    if hours is None:
+        return "never"
+    if hours < 48:
+        return f"{hours:.0f}h"
+    return f"{hours / 24:.1f}d"
+
+
+@cli.command("eval-accuracy")
+@click.option("--field", "field_slug", default="ai-robotics", show_default=True,
+              help="Field slug to evaluate.")
+@click.option("--sample", "sample_size", default=15, show_default=True,
+              help="Held beliefs to fact-check.")
+@click.option("--strategy", type=click.Choice(["recent", "strong", "random"]),
+              default="recent", show_default=True,
+              help="Which beliefs to sample.")
+@click.option("--min-confidence", default=0.0, show_default=True,
+              help="Skip beliefs below this stored confidence.")
+@click.option("--stale-hours", default=36.0, show_default=True,
+              help="Flag a source type stale past this age.")
+@click.option("--accuracy/--no-accuracy", default=True, show_default=True,
+              help="Run the web-grounded accuracy judge (needs ANTHROPIC_API_KEY).")
+@click.option("--judge-model", default=None,
+              help="Override the judge model (default claude-haiku-4-5).")
+@click.option("--out", "out_path", default=None,
+              help="Write the full JSON report to this path.")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON instead of tables.")
+def eval_accuracy(
+    field_slug: str,
+    sample_size: int,
+    strategy: str,
+    min_confidence: float,
+    stale_hours: float,
+    accuracy: bool,
+    judge_model: str | None,
+    out_path: str | None,
+    as_json: bool,
+) -> None:
+    """Evaluate whether a field's knowledge is up-to-date (freshness) and true
+    (web-grounded accuracy).
+
+    Freshness is pure DB. Accuracy samples held beliefs and grades each against
+    the live web via an LLM judge — a repeatable score you can trend, plus the
+    list of beliefs the web contradicts.
+    """
+    from mesh_agents.eval import assess_accuracy, assess_freshness
+    from mesh_db.fields import get_field_by_slug
+    from rich.panel import Panel
+
+    conn = _get_conn()
+    try:
+        fld = get_field_by_slug(conn, field_slug)
+        field_id = fld.id if fld is not None else field_slug
+
+        fresh = assess_freshness(conn, field_id, stale_after_hours=stale_hours)
+
+        acc = None
+        judge_err: str | None = None
+        if accuracy:
+            try:
+                from mesh_agents.eval.judge import AnthropicWebSearchJudge
+
+                judge = AnthropicWebSearchJudge(model=judge_model)
+                acc = assess_accuracy(
+                    conn, field_id, judge,
+                    sample_size=sample_size,
+                    strategy=strategy,
+                    min_confidence=min_confidence,
+                )
+            except RuntimeError as exc:
+                judge_err = str(exc)
+    finally:
+        conn.close()
+
+    if as_json:
+        payload: dict[str, Any] = {"freshness": fresh.model_dump(mode="json")}
+        if acc is not None:
+            payload["accuracy"] = acc.model_dump(mode="json")
+        console.print_json(json.dumps(payload))
+    else:
+        _render_freshness(fresh, field_slug, Panel)
+        if acc is not None:
+            _render_accuracy(acc, field_slug, Panel)
+        elif judge_err:
+            console.print(f"[yellow]Accuracy skipped:[/yellow] {judge_err}")
+
+    if out_path:
+        report: dict[str, Any] = {"freshness": fresh.model_dump(mode="json")}
+        if acc is not None:
+            report["accuracy"] = acc.model_dump(mode="json")
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2, default=str)
+        console.print(f"[dim]Report written to {out_path}[/dim]")
+
+
+def _render_freshness(fresh: Any, field_slug: str, Panel: Any) -> None:
+    table = Table(title=f"Source freshness — {field_slug}")
+    table.add_column("Source type", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_column("Newest published", style="dim")
+    table.add_column("Age", justify="right")
+    table.add_column("", justify="center")
+    for row in fresh.rows:
+        pub = row.newest_published.date().isoformat() if row.newest_published else "—"
+        flag = "[red]STALE[/red]" if row.stale else "[green]ok[/green]"
+        table.add_row(row.source_type, str(row.count), pub, _fmt_age(row.age_hours), flag)
+    console.print(table)
+
+    headline = _fmt_age(fresh.newest_source_age_hours)
+    verdict = "[green]FRESH[/green]" if fresh.ok else "[red]STALE[/red]"
+    lines = [
+        f"[bold]Newest source:[/bold] {headline} old  {verdict}",
+        f"[bold]Threshold:[/bold] {fresh.stale_after_hours:.0f}h",
+    ]
+    if fresh.stale_types:
+        lines.append(f"[bold]Stale feeds:[/bold] {', '.join(fresh.stale_types)}")
+    console.print(Panel("\n".join(lines), title="Freshness"))
+
+
+_VERDICT_STYLE = {
+    "supported": "green",
+    "partially_supported": "yellow",
+    "contradicted": "red",
+    "unverifiable": "dim",
+}
+
+
+def _render_accuracy(acc: Any, field_slug: str, Panel: Any) -> None:
+    table = Table(title=f"Belief accuracy ({acc.strategy}, judge={acc.judge_model})")
+    table.add_column("Verdict", justify="center")
+    table.add_column("Conf", justify="right", style="dim")
+    table.add_column("Belief", overflow="fold")
+    for g in acc.grades:
+        style = _VERDICT_STYLE.get(g.verdict.value, "white")
+        table.add_row(
+            f"[{style}]{g.verdict.value}[/{style}]",
+            f"{g.stored_confidence:.2f}",
+            g.statement[:100],
+        )
+    console.print(table)
+
+    from mesh_agents.eval.models import Verdict
+
+    score = acc.accuracy_score
+    score_str = f"{score * 100:.0f}%" if score is not None else "n/a (nothing verifiable)"
+    unver = acc.unverifiable_rate
+    lines = [
+        f"[bold]Accuracy score:[/bold] {score_str}  "
+        f"(supported + ½·partial over {acc.verifiable} verifiable)",
+        f"[bold]Breakdown:[/bold] "
+        f"{acc.count(Verdict.supported)} supported / "
+        f"{acc.count(Verdict.partially_supported)} partial / "
+        f"[red]{acc.count(Verdict.contradicted)} contradicted[/red] / "
+        f"{acc.count(Verdict.unverifiable)} unverifiable",
+    ]
+    if unver is not None:
+        lines.append(f"[bold]Unverifiable rate:[/bold] {unver * 100:.0f}%")
+    if acc.judge_tokens:
+        lines.append(f"[bold]Judge tokens:[/bold] {acc.judge_tokens:,}")
+    console.print(Panel("\n".join(lines), title="Accuracy"))
+
+    if acc.contradicted:
+        fix = Table(title="[red]Contradicted by the web — fix these[/red]")
+        fix.add_column("Belief", overflow="fold")
+        fix.add_column("Why", overflow="fold")
+        fix.add_column("Evidence", style="dim", overflow="fold")
+        for g in acc.contradicted:
+            fix.add_row(
+                g.statement[:80],
+                g.rationale[:120],
+                (g.evidence_urls[0] if g.evidence_urls else "—"),
+            )
+        console.print(fix)
+
+
+@cli.command("eval-extraction")
+@click.option("--dataset", "dataset_name", default="toronto-maple-leafs",
+              show_default=True,
+              help="Frozen dataset name (datasets/extraction_<name>.json) or a path.")
+@click.option("--prompt-file", default=None,
+              help="Score this candidate system prompt instead of the field's live one.")
+@click.option("--out", "out_path", default=None, help="Write the JSON score to this path.")
+def eval_extraction(dataset_name: str, prompt_file: str | None, out_path: str | None) -> None:
+    """Score the extract-source prompt on a frozen dataset (the optimizer's loss).
+
+    Offline and web-free: runs the extractor over real source texts, checks each
+    claim's well-formedness (deterministic) + grounding vs the source (LLM judge),
+    and reports F1 of precision and coverage. With no --prompt-file it scores the
+    field's current live prompt — your baseline to beat.
+    """
+    from mesh_agents.eval import (
+        LLMExtractionJudge,
+        evaluate_prompt,
+        load_dataset,
+    )
+    from mesh_llm import make_llm_client
+    from rich.panel import Panel
+
+    dataset = load_dataset(dataset_name)
+    system_prompt = None
+    label = "live prompt (baseline)"
+    if prompt_file:
+        with open(prompt_file, encoding="utf-8") as fh:
+            system_prompt = fh.read()
+        label = f"candidate: {prompt_file}"
+
+    try:
+        llm = make_llm_client()
+        judge = LLMExtractionJudge()
+    except Exception as exc:
+        console.print(f"[red]LLM unavailable:[/red] {exc}")
+        return
+
+    console.print(
+        f"[dim]Scoring {label} on {len(dataset.examples)} examples "
+        f"({dataset.field_id})…[/dim]"
+    )
+    score = evaluate_prompt(llm, judge, dataset, system_prompt=system_prompt)
+
+    table = Table(title=f"extract-source eval — {label}")
+    table.add_column("Example", overflow="fold")
+    table.add_column("Claims", justify="right")
+    table.add_column("Well-formed", justify="right")
+    table.add_column("Grounded", justify="right")
+    table.add_column("Cover", justify="right")
+    table.add_column("F1", justify="right")
+    for s in score.per_example:
+        table.add_row(
+            s.example_id[:40], str(s.n_claims), str(s.n_well_formed),
+            str(s.n_grounded), f"{s.coverage:.2f}", f"{s.f1:.2f}",
+        )
+    console.print(table)
+    console.print(
+        Panel(
+            "\n".join([
+                f"[bold]Mean F1:[/bold] {score.mean_f1:.3f}   "
+                f"(precision {score.mean_precision:.3f} · coverage {score.mean_coverage:.3f})",
+                f"[bold]Well-formed rate:[/bold] {score.mean_well_formed_rate:.3f}",
+                f"[bold]Examples:[/bold] {score.n_examples}",
+            ]),
+            title="extract-source score",
+        )
+    )
+
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(score.model_dump(mode="json"), fh, indent=2, default=str)
+        console.print(f"[dim]Score written to {out_path}[/dim]")
+
+
+@cli.command("optimize-extraction-prompt")
+@click.option("--dataset", "dataset_name", default="toronto-maple-leafs",
+              show_default=True,
+              help="Frozen dataset name (datasets/extraction_<name>.json) or a path.")
+@click.option("--max-iters", default=6, show_default=True,
+              help="Max proposal rounds.")
+@click.option("--min-delta", default=0.01, show_default=True,
+              help="Min F1 gain over best-so-far to accept a candidate.")
+@click.option("--patience", default=3, show_default=True,
+              help="Stop after this many consecutive non-improving rounds.")
+@click.option("--out", "out_path", default=None,
+              help="Write the winning prompt to this path (plus <path>.json report).")
+def optimize_extraction_prompt(
+    dataset_name: str, max_iters: int, min_delta: float, patience: int,
+    out_path: str | None,
+) -> None:
+    """Prompt-gradient-descent on the extract-source prompt (the full loop).
+
+    Scores the live prompt as a baseline, then repeatedly asks an LLM proposer to
+    revise it — guided by the critique (empty attribution / hallucination / missed
+    coverage) and the score trajectory so far — keeping a candidate only when it
+    beats the best F1 by --min-delta. Writes nothing to the live prompt; --out
+    saves the winner for you to install.
+    """
+    from mesh_agents.eval import (
+        LLMExtractionJudge,
+        LLMPromptProposer,
+        load_dataset,
+        optimize_prompt,
+    )
+    from mesh_llm import make_llm_client
+    from rich.panel import Panel
+
+    dataset = load_dataset(dataset_name)
+    try:
+        llm = make_llm_client()
+        judge = LLMExtractionJudge()
+        proposer = LLMPromptProposer()
+    except Exception as exc:
+        console.print(f"[red]LLM unavailable:[/red] {exc}")
+        return
+
+    console.print(
+        f"[dim]Optimizing extract-source prompt on {len(dataset.examples)} examples "
+        f"({dataset.field_id}), up to {max_iters} rounds…[/dim]"
+    )
+    result = optimize_prompt(
+        llm, judge, proposer, dataset,
+        max_iters=max_iters, min_delta=min_delta, patience=patience,
+    )
+
+    table = Table(title=f"prompt-gradient-descent — {dataset.field_id}")
+    table.add_column("Iter", justify="right")
+    table.add_column("F1", justify="right")
+    table.add_column("Prec", justify="right")
+    table.add_column("Cover", justify="right")
+    table.add_column("Kept", justify="center")
+    table.add_column("Rationale", overflow="fold")
+    for step in result.history:
+        table.add_row(
+            str(step.iteration), f"{step.f1:.3f}", f"{step.precision:.2f}",
+            f"{step.coverage:.2f}", "✓" if step.accepted else "",
+            step.rationale[:80],
+        )
+    console.print(table)
+    verdict = (
+        f"[green]improved +{result.gain:.3f}[/green]" if result.improved
+        else "[yellow]no improvement over baseline[/yellow]"
+    )
+    console.print(
+        Panel(
+            "\n".join([
+                f"[bold]Baseline F1:[/bold] {result.baseline_f1:.3f}   "
+                f"[bold]Best F1:[/bold] {result.best_f1:.3f}   ({verdict})",
+                f"[bold]Rounds run:[/bold] {result.iterations}   "
+                f"[bold]Proposer tokens:[/bold] {result.proposer_tokens}",
+            ]),
+            title="optimization result",
+        )
+    )
+
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(result.best_prompt)
+        report_path = f"{out_path}.json"
+        with open(report_path, "w", encoding="utf-8") as fh:
+            json.dump(result.model_dump(mode="json"), fh, indent=2, default=str)
+        console.print(
+            f"[dim]Winning prompt → {out_path}   full report → {report_path}[/dim]"
+        )
+        if result.improved:
+            console.print(
+                "[dim]Review it, then install by updating the field's extraction "
+                "prompt/profile.[/dim]"
+            )
+
+
+@cli.command("improve-extraction-prompt")
+@click.option("--dataset", "dataset_name", default="toronto-maple-leafs",
+              show_default=True,
+              help="Frozen dataset name (datasets/extraction_<name>.json) or a path.")
+@click.option("--field", "field_slug", default=None,
+              help="Field to install the winning prompt into (default: the "
+                   "dataset's field). Only used with --apply.")
+@click.option("--holdout-fraction", default=0.3, show_default=True,
+              help="Fraction of the dataset held out for the A/B test.")
+@click.option("--seed", default=0, show_default=True,
+              help="Split seed — fixes which examples are held out (reproducible).")
+@click.option("--promote-delta", default=0.02, show_default=True,
+              help="Min held-out F1 gain over baseline required to promote.")
+@click.option("--max-iters", default=6, show_default=True, help="Max proposal rounds.")
+@click.option("--apply", "do_apply", is_flag=True, default=False,
+              help="Install the winner into the prompt_versions store IFF it wins "
+                   "the held-out A/B. Default is a dry run (decides, writes nothing).")
+def improve_extraction_prompt(
+    dataset_name: str, field_slug: str | None, holdout_fraction: float, seed: int,
+    promote_delta: float, max_iters: int, do_apply: bool,
+) -> None:
+    """Autonomous, overfitting-safe prompt improvement — the closed loop.
+
+    Splits the frozen dataset into train/holdout, hill-climbs the extract-source
+    prompt on TRAIN only, then A/Bs the winner vs today's live prompt on the
+    HELD-OUT examples the optimizer never saw. Promotes IFF the winner beats the
+    baseline on holdout by --promote-delta without regressing well-formedness — the
+    eval decides, no human. With --apply, the promoted winner is installed as the
+    field's active extract-source prompt (append-only; the live extractor picks it
+    up on its next run). Without --apply it only reports the decision.
+    """
+    from mesh_agents.eval import (
+        LLMExtractionJudge,
+        LLMPromptProposer,
+        load_dataset,
+        run_improvement,
+    )
+    from mesh_llm import make_llm_client
+    from rich.panel import Panel
+
+    dataset = load_dataset(dataset_name)
+    try:
+        llm = make_llm_client()
+        judge = LLMExtractionJudge()
+        proposer = LLMPromptProposer()
+    except Exception as exc:
+        console.print(f"[red]LLM unavailable:[/red] {exc}")
+        return
+
+    console.print(
+        f"[dim]Improving extract-source on {len(dataset.examples)} examples "
+        f"({dataset.field_id}) — train/holdout split (seed={seed}), up to "
+        f"{max_iters} rounds…[/dim]"
+    )
+    run = run_improvement(
+        llm, judge, proposer, dataset,
+        holdout_fraction=holdout_fraction, seed=seed,
+        promote_delta=promote_delta, max_iters=max_iters,
+    )
+
+    table = Table(title=f"train hill-climb — {run.dataset_field} ({run.n_train} ex)")
+    table.add_column("Iter", justify="right")
+    table.add_column("F1", justify="right")
+    table.add_column("Kept", justify="center")
+    table.add_column("Rationale", overflow="fold")
+    for step in run.optimization.history:
+        table.add_row(
+            str(step.iteration), f"{step.f1:.3f}",
+            "✓" if step.accepted else "", step.rationale[:80],
+        )
+    console.print(table)
+
+    verdict = (
+        "[green]PROMOTE[/green]" if run.promote else "[yellow]KEEP BASELINE[/yellow]"
+    )
+    console.print(
+        Panel(
+            "\n".join([
+                f"[bold]Held-out A/B[/bold] ({run.n_holdout} unseen examples):",
+                f"  baseline F1 {run.holdout_baseline_f1:.3f}  →  "
+                f"winner F1 {run.holdout_best_f1:.3f}   "
+                f"({run.holdout_gain:+.3f})",
+                f"  well-formed {run.holdout_baseline_wf_rate:.3f} → "
+                f"{run.holdout_best_wf_rate:.3f}",
+                "",
+                f"[bold]Decision:[/bold] {verdict} — {run.reason}",
+            ]),
+            title="improvement result",
+        )
+    )
+
+    if not do_apply:
+        if run.promote:
+            console.print("[dim]Dry run — re-run with --apply to install.[/dim]")
+        return
+    if not run.promote:
+        console.print("[dim]Not promoted; nothing installed.[/dim]")
+        return
+
+    from mesh_db.connection import get_connection
+    from mesh_db.fields import get_field, get_field_by_slug
+    from mesh_db.prompt_versions import install_prompt_version
+    from mesh_models.prompt_version import PromptVersion
+
+    target_slug = field_slug or dataset.field_id
+    conn = get_connection()
+    try:
+        field = get_field(conn, target_slug) or get_field_by_slug(conn, target_slug)
+        if field is None:
+            console.print(f"[red]Unknown field:[/red] {target_slug} — cannot install.")
+            return
+        version = install_prompt_version(
+            conn,
+            PromptVersion(
+                field_id=field.id,
+                skill_key="extract-source",
+                prompt=run.best_prompt,
+                dataset_field=run.dataset_field,
+                baseline_f1=run.optimization.baseline_f1,
+                best_f1=run.optimization.best_f1,
+                holdout_baseline_f1=run.holdout_baseline_f1,
+                holdout_best_f1=run.holdout_best_f1,
+                holdout_gain=run.holdout_gain,
+                rationale=run.reason,
+                proposer_tokens=run.proposer_tokens,
+            ),
+        )
+    finally:
+        conn.close()
+    console.print(
+        f"[green]Installed[/green] extract-source prompt version "
+        f"[bold]{version.id}[/bold] for field [bold]{field.slug}[/bold]. "
+        "The live extractor will use it on its next run."
+    )

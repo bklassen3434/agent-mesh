@@ -42,6 +42,8 @@ import click
 import structlog
 from mesh_agents.agenda import (
     compute_agenda,
+    experiment_tensions,
+    improvement_tensions,
     investigation_tensions,
     maintenance_tensions,
     scout_tensions,
@@ -67,14 +69,22 @@ from pydantic import BaseModel, Field
 log = structlog.get_logger()
 
 
-def _make_confidence_fn() -> Any:
+def _make_confidence_fn(field_id: str) -> Any:
     """A confidence recompute the gateway applies after a belief's claim links are
     written — the evidence-derived score the coordinator's synthesize node uses
     (Phase 14d), so controller-synthesized / consolidated beliefs match
-    coordinator quality instead of keeping the skill's prior."""
-    weights = ConfidenceWeights.from_env()
+    coordinator quality instead of keeping the skill's prior.
+
+    Weights are resolved per field (env defaults overlaid with any promoted
+    config-A/B override), cached for the run — so a promoted confidence tuning
+    takes effect on the controller's next run."""
+    cache: dict[str, ConfidenceWeights] = {}
 
     def confidence_fn(conn: MeshConnection, belief_id: str) -> float:
+        weights = cache.get(field_id)
+        if weights is None:
+            weights = ConfidenceWeights.resolve(conn, field_id)
+            cache[field_id] = weights
         return compute_confidence(
             BeliefSignals.from_row(get_belief_signals(conn, belief_id)), weights
         )
@@ -221,6 +231,8 @@ def _sense(conn: Any, field_id: str, field_slug: str) -> list[Tension]:
         scout_tensions(conn, field_id)
         + investigation_tensions(conn, field_id)
         + maintenance_tensions(conn, field_id)
+        + improvement_tensions(conn, field_id)
+        + experiment_tensions(conn, field_id)
         + agenda.tensions
     )
 
@@ -259,7 +271,7 @@ async def run_controller(
         step_cap=cap,
     )
     semaphore = asyncio.Semaphore(_get_concurrency())
-    confidence_fn = _make_confidence_fn()
+    confidence_fn = _make_confidence_fn(field_id)
     # Once-per-run guard: a tension dispatched this run is not re-planned in a
     # later round of the same run (tension ids are stable), so the loop reaches
     # quiescence. Cross-run escalation/cooldown lives in the persistent counters.

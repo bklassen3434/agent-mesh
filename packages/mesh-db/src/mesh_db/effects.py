@@ -36,13 +36,21 @@ from mesh_models.effect import (
     CreateClaimEffect,
     CreateEntityEffect,
     CreateSourceEffect,
+    DecideExperimentEffect,
+    InstallPromptVersionEffect,
     MarkClaimsSynthesizedEffect,
     MergeBeliefsEffect,
     MergeEntitiesEffect,
+    OpenExperimentEffect,
     OpenInvestigationEffect,
+    RecordConcernEffect,
+    RecordExperimentSampleEffect,
     RecordExtractionAttemptEffect,
+    RecordGradeEffect,
     RejectEntityMergeEffect,
+    ResolveConcernsEffect,
     ReviseBeliefEffect,
+    SetFieldConfigEffect,
     SupersedeClaimEffect,
     UpdateInvestigationEffect,
     WriteFieldBriefEffect,
@@ -52,6 +60,7 @@ from mesh_models.investigation import InvestigationStatus
 from mesh_models.revision import BeliefRevision
 from pydantic import BaseModel, Field
 
+from mesh_db.belief_grades import record_grade
 from mesh_db.beliefs import (
     create_belief,
     get_belief_by_id,
@@ -67,13 +76,21 @@ from mesh_db.entities import (
     record_merge_rejection,
     set_entity_embedding,
 )
+from mesh_db.field_config import set_field_config
 from mesh_db.heuristics import create_heuristic, create_heuristic_revision
+from mesh_db.improvement_concerns import record_concern, resolve_concerns
+from mesh_db.improvement_experiments import (
+    decide_experiment,
+    open_experiment,
+    record_sample,
+)
 from mesh_db.investigations import (
     attach_claim_to_investigation,
     create_investigation,
     get_investigation_by_id,
     update_investigation,
 )
+from mesh_db.prompt_versions import install_prompt_version
 from mesh_db.relationships import add_relationship_evidence
 from mesh_db.revisions import create_revision
 from mesh_db.sources import create_source, record_extraction_attempt
@@ -109,6 +126,14 @@ class ApplyReport(BaseModel):
     extraction_attempts_recorded: int = 0
     sources_exhausted: int = 0
     claims_marked_synthesized: int = 0
+    prompt_versions_installed: int = 0
+    grades_recorded: int = 0
+    concerns_recorded: int = 0
+    concerns_resolved: int = 0
+    experiments_opened: int = 0
+    experiment_samples_recorded: int = 0
+    experiments_decided: int = 0
+    field_config_set: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -277,6 +302,51 @@ def _apply_one(
         create_heuristic(conn, effect.heuristic, field_id=effect.field_id)
         create_heuristic_revision(conn, effect.genesis_revision)
         report.heuristics_written += 1
+
+    elif isinstance(effect, RecordGradeEffect):
+        record_grade(conn, effect.grade)
+        report.grades_recorded += 1
+
+    elif isinstance(effect, RecordConcernEffect):
+        # Append-only fault-attribution; the gateway de-dupes an already-open
+        # concern for the same belief+component (returns None → not counted).
+        if record_concern(conn, effect.concern) is not None:
+            report.concerns_recorded += 1
+
+    elif isinstance(effect, ResolveConcernsEffect):
+        from mesh_models.improvement_concern import ConcernStatus
+
+        report.concerns_resolved += resolve_concerns(
+            conn,
+            effect.concern_ids,
+            resolved_by=effect.resolved_by,
+            status=ConcernStatus.dismissed if effect.dismissed else ConcernStatus.resolved,
+        )
+
+    elif isinstance(effect, OpenExperimentEffect):
+        if open_experiment(conn, effect.experiment) is not None:
+            report.experiments_opened += 1
+
+    elif isinstance(effect, RecordExperimentSampleEffect):
+        record_sample(conn, effect.experiment_id, effect.arm, effect.score)
+        report.experiment_samples_recorded += 1
+
+    elif isinstance(effect, DecideExperimentEffect):
+        decide_experiment(
+            conn, effect.experiment_id,
+            promoted=effect.promoted, rationale=effect.rationale,
+        )
+        report.experiments_decided += 1
+
+    elif isinstance(effect, InstallPromptVersionEffect):
+        # Append-only prompt install: deactivate the prior active version, insert
+        # this one active. The improvement loop already gated it on a held-out A/B.
+        install_prompt_version(conn, effect.version)
+        report.prompt_versions_installed += 1
+
+    elif isinstance(effect, SetFieldConfigEffect):
+        set_field_config(conn, effect.field_id, effect.values, rationale=effect.rationale)
+        report.field_config_set += len(effect.values)
 
     else:  # pragma: no cover — guards against an unrouted Effect kind
         raise TypeError(f"No gateway branch for effect: {type(effect).__name__}")

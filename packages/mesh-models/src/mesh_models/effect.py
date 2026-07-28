@@ -24,10 +24,14 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 from mesh_models.belief import Belief
+from mesh_models.belief_grade import BeliefGradeRow
 from mesh_models.claim import Claim
 from mesh_models.entity import Entity
 from mesh_models.heuristic import AgentHeuristic, AgentHeuristicRevision
+from mesh_models.improvement_concern import ImprovementConcern
+from mesh_models.improvement_experiment import ExperimentArm, ImprovementExperiment
 from mesh_models.investigation import Investigation
+from mesh_models.prompt_version import PromptVersion
 from mesh_models.source import Source
 
 
@@ -254,6 +258,90 @@ class WriteHeuristicEffect(BaseModel):
     genesis_revision: AgentHeuristicRevision
 
 
+class RecordGradeEffect(BaseModel):
+    """Persist one accuracy grade (append-only). Emitted by ``sense-accuracy`` for
+    every belief it grades — supported ones too — so the ledger is a complete
+    coverage record + accuracy time-series."""
+
+    kind: Literal["record_grade"] = "record_grade"
+    grade: BeliefGradeRow
+
+
+class RecordConcernEffect(BaseModel):
+    """Persist one accumulated fault-attribution (append-only). Emitted by the
+    ``sense-accuracy`` skill for each fault it attributes from an accuracy/freshness
+    eval — the loop's ONLY write during sensing. The gateway de-dupes an already-open
+    concern for the same belief+component, so a re-eval doesn't double-count."""
+
+    kind: Literal["record_concern"] = "record_concern"
+    concern: ImprovementConcern
+
+
+class ResolveConcernsEffect(BaseModel):
+    """Close a set of open concerns (open → resolved/dismissed) at the end of an
+    improve pass that acted on them. Append-only: rows are kept, only status flips."""
+
+    kind: Literal["resolve_concerns"] = "resolve_concerns"
+    concern_ids: list[str]
+    resolved_by: str = ""
+    dismissed: bool = False  # True → dismissed (not actionable) instead of resolved
+
+
+class OpenExperimentEffect(BaseModel):
+    """Open a shadow A/B experiment (append-only; de-duped by the running-unique
+    index). Emitted by ``improve-component`` with a candidate variant — the KB is
+    NOT changed; the candidate only starts being tested beside the live pipeline."""
+
+    kind: Literal["open_experiment"] = "open_experiment"
+    experiment: ImprovementExperiment
+
+
+class RecordExperimentSampleEffect(BaseModel):
+    """Fold one graded shadow sample into an experiment arm's running mean. Emitted
+    by the shadow-eval skill for each real input it scored on both arms."""
+
+    kind: Literal["record_experiment_sample"] = "record_experiment_sample"
+    experiment_id: str
+    arm: ExperimentArm
+    score: float
+
+
+class DecideExperimentEffect(BaseModel):
+    """Close a running experiment as promoted or rejected. On promote the skill also
+    emits the actuating effects (InstallPromptVersion + ResolveConcerns); this only
+    flips the experiment's status."""
+
+    kind: Literal["decide_experiment"] = "decide_experiment"
+    experiment_id: str
+    promoted: bool
+    rationale: str = ""
+
+
+class SetFieldConfigEffect(BaseModel):
+    """Install winning numeric config for a field (confidence weights, decay
+    thresholds, …) — the config-kind analog of InstallPromptVersion. Emitted by a
+    config actuator's ``promote_effects`` when its shadow A/B won. Append-only; the
+    live pipeline overlays these onto env defaults per field. Keys are namespaced by
+    component (e.g. ``confidence.attack_weight``)."""
+
+    kind: Literal["set_field_config"] = "set_field_config"
+    field_id: str
+    values: dict[str, float]
+    rationale: str = ""
+
+
+class InstallPromptVersionEffect(BaseModel):
+    """Install a system-prompt version won by the autonomous improvement loop as a
+    field/skill's active prompt (append-only: the prior active row is deactivated,
+    never deleted, so any version can be re-activated to roll back). Emitted by the
+    ``improve-prompt`` skill ONLY when a candidate beat the live prompt on a
+    held-out A/B; the gateway inserts it and the live extractor picks it up on its
+    next run. The A/B evidence rides on the ``PromptVersion`` for audit."""
+
+    kind: Literal["install_prompt_version"] = "install_prompt_version"
+    version: PromptVersion
+
+
 # Discriminated union — match on ``.kind`` in the gateway; JSON-safe for
 # checkpoint state. Extend here (and add a branch to apply_effects) when a new
 # kind of write is needed; that is the one coordination point across skill
@@ -275,6 +363,14 @@ Effect = Annotated[
     | RecordExtractionAttemptEffect
     | MarkClaimsSynthesizedEffect
     | WriteHeuristicEffect
-    | WriteFieldBriefEffect,
+    | WriteFieldBriefEffect
+    | RecordGradeEffect
+    | RecordConcernEffect
+    | ResolveConcernsEffect
+    | OpenExperimentEffect
+    | RecordExperimentSampleEffect
+    | DecideExperimentEffect
+    | InstallPromptVersionEffect
+    | SetFieldConfigEffect,
     Field(discriminator="kind"),
 ]

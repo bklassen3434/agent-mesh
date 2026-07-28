@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,14 @@ class ConfidenceWeights:
     skeptic_cap: float = 4.0
     severe_cap: float = 3.0
 
+    # The env var each weight reads / the field_config key the confidence actuator
+    # writes (namespaced "confidence.<field>"), so from_env and a promoted A/B agree
+    # on the tunable set.
+    _FIELDS: ClassVar[tuple[str, ...]] = (
+        "base", "support_weight", "attack_weight", "source_diversity_cap",
+        "reproduction_cap", "claim_count_cap", "skeptic_cap", "severe_cap",
+    )
+
     @classmethod
     def from_env(cls) -> ConfidenceWeights:
         return cls(
@@ -76,6 +85,30 @@ class ConfidenceWeights:
             skeptic_cap=_env_float("MESH_CONFIDENCE_SKEPTIC_CAP", 4.0),
             severe_cap=_env_float("MESH_CONFIDENCE_SEVERE_CAP", 3.0),
         )
+
+    def overlay(self, config: dict[str, float]) -> ConfidenceWeights:
+        """Return a copy with any ``confidence.<field>`` keys in ``config`` applied —
+        how a promoted config-A/B takes effect over the env defaults."""
+        import dataclasses
+
+        updates = {
+            f: config[f"confidence.{f}"]
+            for f in self._FIELDS
+            if f"confidence.{f}" in config
+        }
+        return dataclasses.replace(self, **updates) if updates else self
+
+    @classmethod
+    def resolve(cls, conn: Any, field_id: str) -> ConfidenceWeights:
+        """The field's live weights: env defaults overlaid with any promoted
+        per-field config. Best-effort — a store read must not break confidence."""
+        base = cls.from_env()
+        try:
+            from mesh_db.field_config import get_active_config
+
+            return base.overlay(get_active_config(conn, field_id))
+        except Exception:
+            return base
 
 
 def _saturate(value: float, cap: float) -> float:

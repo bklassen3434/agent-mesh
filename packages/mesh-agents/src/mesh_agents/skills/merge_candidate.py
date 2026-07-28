@@ -68,7 +68,7 @@ class MergeCandidateSkill:
         except (TypeError, ValueError):
             return []
 
-        cfg = ResolutionConfig.from_env()
+        cfg = ResolutionConfig.resolve(conn, tension.field_id)
         decision = classify_pair(similarity, cfg)
         if decision == "reject":
             # A definitive verdict, so make it durable — otherwise the scan

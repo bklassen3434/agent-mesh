@@ -166,7 +166,7 @@ def reconcile_entities(
     batch_poll_seconds: float = 10.0,
     field_id: str = DEFAULT_FIELD_ID,
 ) -> ReconciliationReport:
-    cfg = config or ResolutionConfig.from_env()
+    cfg = config or ResolutionConfig.resolve(conn, field_id)
     report = ReconciliationReport(dry_run=dry_run)
 
     ents = _load_entities(conn, field_id)

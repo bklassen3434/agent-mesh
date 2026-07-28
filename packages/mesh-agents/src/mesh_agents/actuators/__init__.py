@@ -13,7 +13,11 @@ Importing this package registers every built-in actuator (their modules call
 from __future__ import annotations
 
 # Import side-effect: register the built-in actuators.
-from mesh_agents.actuators import confidence, extraction  # noqa: F401
+from mesh_agents.actuators import (  # noqa: F401
+    confidence,
+    entity_resolution,
+    extraction,
+)
 from mesh_agents.actuators.base import (
     Actuator,
     actuatable_components,

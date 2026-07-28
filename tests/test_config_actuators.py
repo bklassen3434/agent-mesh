@@ -129,3 +129,83 @@ def test_confidence_promote_writes_field_config() -> None:
     assert [type(e) for e in effects] == [SetFieldConfigEffect]
     assert effects[0].values == {"confidence.attack_weight": 0.7}
     assert effects[0].field_id == "fld"
+
+
+# --------------------------------------------------------------------------
+# the entity-resolution actuator (config kind — thresholds; LLM-oracle shadow)
+# --------------------------------------------------------------------------
+
+
+def test_resolution_resolve_overlays_the_store_on_env(tmp_db: Any) -> None:
+    from mesh_agents.entity_resolution import ResolutionConfig
+    from mesh_db.field_config import set_field_config
+
+    fid = _reset(tmp_db)
+    assert ResolutionConfig.resolve(tmp_db, fid).high == 0.93  # env default
+    set_field_config(tmp_db, fid, {"entity_resolution.high": 0.97})
+    assert ResolutionConfig.resolve(tmp_db, fid).high == 0.97  # overlaid
+    _reset(tmp_db)
+
+
+def test_resolution_draft_nudges_high_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mesh_agents.actuators.entity_resolution import EntityResolutionActuator
+
+    act = EntityResolutionActuator()
+    # enough real candidate pairs → draft a stricter (higher) auto-merge band
+    monkeypatch.setattr(act, "_candidate_pairs", lambda *a, **k: [("a", "b", 0.94)] * 5)
+    concerns: list[Any] = [SimpleNamespace(severity=0.8)]
+    treatment = act.draft(None, "fld", concerns)
+    assert treatment == {"config": {"entity_resolution.high": 0.95}}  # 0.93 + 0.02
+
+
+def test_resolution_draft_declines_without_enough_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mesh_agents.actuators.entity_resolution import EntityResolutionActuator
+
+    act = EntityResolutionActuator()
+    monkeypatch.setattr(act, "_candidate_pairs", lambda *a, **k: [("a", "b", 0.94)] * 2)
+    few: list[Any] = [SimpleNamespace(severity=0.8)]
+    assert act.draft(None, "fld", few) is None
+
+
+def test_resolution_shadow_scores_band_agreement_per_arm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mesh_agents.actuators.entity_resolution import EntityResolutionActuator
+    from mesh_models.improvement_experiment import ExperimentArm, ImprovementExperiment
+
+    act = EntityResolutionActuator()
+    # A pair sitting between control.high (0.93) and treatment.high (0.95): control
+    # auto-MERGES it, treatment DEFERS it to the oracle.
+    monkeypatch.setattr(act, "_candidate_pairs", lambda *a, **k: [("a", "b", 0.94)] * 6)
+    monkeypatch.setattr(act, "_llm", lambda: object())
+    # oracle says these are DIFFERENT entities → the control auto-merge is a false merge.
+    monkeypatch.setattr(act, "_oracle_same", lambda *a, **k: False)
+    exp = ImprovementExperiment(
+        field_id="fld", component="entity_resolution", target="merge-candidate",
+        treatment={"config": {"entity_resolution.high": 0.95}},
+    )
+    samples = act.shadow_sample(None, "fld", exp)
+    assert len(samples) == 12  # 6 pairs, 2 arms
+    control = [s for a, s in samples if a is ExperimentArm.control]
+    treatment = [s for a, s in samples if a is ExperimentArm.treatment]
+    # control auto-merges (wrong → 0.0); treatment defers to the oracle (correct → 1.0)
+    assert sum(control) == 0.0
+    assert sum(treatment) == 6.0
+
+
+def test_resolution_promote_writes_field_config() -> None:
+    from mesh_agents.actuators.entity_resolution import EntityResolutionActuator
+    from mesh_models.effect import SetFieldConfigEffect
+    from mesh_models.improvement_experiment import ImprovementExperiment
+
+    exp = ImprovementExperiment(
+        field_id="fld", component="entity_resolution", target="merge-candidate",
+        treatment={"config": {"entity_resolution.high": 0.95}},
+        control_n=6, control_score_sum=3.0, treatment_n=6, treatment_score_sum=6.0,
+    )
+    effects = EntityResolutionActuator().promote_effects(exp)
+    assert [type(e) for e in effects] == [SetFieldConfigEffect]
+    assert effects[0].values == {"entity_resolution.high": 0.95}
+    assert effects[0].field_id == "fld"

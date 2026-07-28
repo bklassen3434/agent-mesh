@@ -13,8 +13,8 @@ it is unsure or its response fails to parse.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, replace
+from typing import Any, ClassVar, Literal
 
 from mesh_db.claims import list_claims
 from mesh_db.connection import MeshConnection
@@ -53,6 +53,11 @@ class ResolutionConfig:
     high: float = _DEFAULT_HIGH
     low: float = _DEFAULT_LOW
 
+    # The tunable knobs / the field_config keys the entity-resolution actuator
+    # writes (namespaced ``entity_resolution.<field>``), so from_env and a promoted
+    # config-A/B agree on the tunable set — mirrors ``ConfidenceWeights._FIELDS``.
+    _FIELDS: ClassVar[tuple[str, ...]] = ("high", "low")
+
     @classmethod
     def from_env(cls) -> ResolutionConfig:
         def _f(name: str, default: float) -> float:
@@ -66,6 +71,28 @@ class ResolutionConfig:
             high=_f("MESH_ENTITY_MERGE_HIGH", _DEFAULT_HIGH),
             low=_f("MESH_ENTITY_MERGE_LOW", _DEFAULT_LOW),
         )
+
+    def overlay(self, config: dict[str, float]) -> ResolutionConfig:
+        """Return a copy with any ``entity_resolution.<field>`` keys in ``config``
+        applied — how a promoted config-A/B takes effect over the env defaults."""
+        updates = {
+            f: config[f"entity_resolution.{f}"]
+            for f in self._FIELDS
+            if f"entity_resolution.{f}" in config
+        }
+        return replace(self, **updates) if updates else self
+
+    @classmethod
+    def resolve(cls, conn: Any, field_id: str) -> ResolutionConfig:
+        """The field's live thresholds: env defaults overlaid with any promoted
+        per-field config. Best-effort — a store read must not break resolution."""
+        base = cls.from_env()
+        try:
+            from mesh_db.field_config import get_active_config
+
+            return base.overlay(get_active_config(conn, field_id))
+        except Exception:
+            return base
 
 
 def classify_pair(similarity: float, config: ResolutionConfig | None = None) -> MatchDecision:
@@ -247,7 +274,7 @@ def resolve_entity_semantic(
 
     All reads/writes are scoped to ``field_id``: blocking, the string fast-path,
     and entity creation never cross fields (Phase 17a)."""
-    cfg = config or ResolutionConfig.from_env()
+    cfg = config or ResolutionConfig.resolve(conn, field_id)
 
     fast = _find_by_name_or_alias(conn, name, field_id=field_id)
     if fast is not None:

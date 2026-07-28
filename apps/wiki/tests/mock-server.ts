@@ -17,6 +17,7 @@ const PORT = Number(process.env.MOCK_API_PORT ?? 8787);
 const iso = (d: Date) => d.toISOString();
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * 86_400_000));
 const hoursFromNow = (n: number) => iso(new Date(Date.now() + n * 3_600_000));
+const secondsAgo = (n: number) => iso(new Date(Date.now() - n * 1000));
 
 function page<T>(items: T[]) {
   return { items, total: items.length, limit: 50, offset: 0 };
@@ -290,6 +291,31 @@ const invocationsByAgent: Record<string, typeof claimExtractorInvocations> = {
   arxiv_scout: [],
 };
 
+// Cross-agent activity firehose (Live page). Newest-first; each row carries the
+// output_summary the controller writes (outcome / effects / kind / tier).
+const activityFeed = [
+  { id: 'act-1', skill: 'scout-source', created_at: secondsAgo(4), cost_usd: 0.0, outcome: 'effects', effects: 6, kind: 'unscouted_connector', tier: 'simple' },
+  { id: 'act-2', skill: 'extract-source', created_at: secondsAgo(9), cost_usd: 0.004, outcome: 'effects', effects: 3, kind: 'unextracted_source', tier: 'simple' },
+  { id: 'act-3', skill: 'synthesize-belief', created_at: secondsAgo(16), cost_usd: 0.0, outcome: 'effects', effects: 2, kind: 'unsynthesized_claims', tier: 'simple' },
+  { id: 'act-4', skill: 'challenge-belief', created_at: secondsAgo(23), cost_usd: 0.006, outcome: 'no_effects', effects: 0, kind: 'stale_belief', tier: 'deep' },
+  { id: 'act-5', skill: 'investigate-gap', created_at: secondsAgo(31), cost_usd: 0.05, outcome: 'error', effects: 0, kind: 'rising_topic', tier: 'simple' },
+  { id: 'act-6', skill: 'maintain-belief', created_at: secondsAgo(48), cost_usd: 0.0, outcome: 'effects', effects: 1, kind: 'aging_belief', tier: 'simple' },
+].map((a) => ({
+  id: a.id,
+  run_id: 'run-controller-1',
+  field_id: 'ai-robotics',
+  agent: a.skill,
+  skill: a.skill,
+  status: a.outcome === 'error' ? 'error' : 'ok',
+  model: 'claude-haiku-4-5',
+  latency_ms: 120,
+  input_tokens: 300,
+  output_tokens: 60,
+  cost_usd: a.cost_usd,
+  output_summary: { outcome: a.outcome, effects: a.effects, kind: a.kind, tier: a.tier, fanout: 1 },
+  created_at: a.created_at,
+}));
+
 const isDefaultField = (req: Request) => {
   const f = req.query.field;
   return f === undefined || f === 'ai-robotics';
@@ -410,6 +436,17 @@ app.get('/api/v1/briefing', (_req, res) => {
 // Agent observability (Phase 23). Field-scoped: a non-default field is empty.
 app.get('/api/v1/agents', (req: Request, res: Response) => {
   res.json(isDefaultField(req) ? agentRoster : []);
+});
+
+// Static path registered before the dynamic /:agent/* routes.
+app.get('/api/v1/agents/activity', (req: Request, res: Response) => {
+  if (!isDefaultField(req)) {
+    res.json([]);
+    return;
+  }
+  const since = typeof req.query.since === 'string' ? req.query.since : null;
+  const rows = since ? activityFeed.filter((a) => a.created_at > since) : activityFeed;
+  res.json(rows);
 });
 
 app.get('/api/v1/agents/graph', (req: Request, res: Response) => {

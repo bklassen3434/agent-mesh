@@ -88,10 +88,12 @@ def list_agent_invocations(
     field_id: str = DEFAULT_FIELD_ID,
     agent: str | None = None,
     run_id: str | None = None,
+    since: datetime | None = None,
     limit: int = 50,
 ) -> list[AgentInvocation]:
     """Recent invocations for a field, newest first. Optionally narrowed to one
-    agent and/or one run."""
+    agent and/or one run, and/or to rows strictly newer than ``since`` (the
+    incremental-poll cursor for the live activity feed)."""
     limit = min(max(limit, 0), MAX_LIMIT)
     if limit == 0:
         return []
@@ -103,6 +105,9 @@ def list_agent_invocations(
     if run_id is not None:
         where.append("run_id = %s")
         params.append(run_id)
+    if since is not None:
+        where.append("created_at > %s")
+        params.append(since)
     params.append(limit)
     rows = conn.execute(
         f"""

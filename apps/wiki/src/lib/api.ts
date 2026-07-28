@@ -222,6 +222,10 @@ export const api = {
     apiGet<AgentRosterEntry[]>('/api/v1/agents', { query: { field } }),
   agentGraph: (field?: string) =>
     apiGet<AgentGraph>('/api/v1/agents/graph', { query: { field } }),
+  agentActivity: (field?: string, since?: string, limit = 60) =>
+    apiGet<AgentInvocation[]>('/api/v1/agents/activity', {
+      query: { field, since, limit },
+    }),
   agentInvocations: (agent: string, field?: string, limit = 50) =>
     apiGet<AgentInvocation[]>(
       `/api/v1/agents/${encodeURIComponent(agent)}/invocations`,

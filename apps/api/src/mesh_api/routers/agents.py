@@ -10,6 +10,7 @@ agent-interaction graph. Mirrors the other routers — ``mesh_reader`` connectio
 from __future__ import annotations
 
 import os
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from mesh_db.agent_invocations import (
@@ -29,6 +30,7 @@ from mesh_api.deps import ConnDep
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 _FIELD = Query("ai-robotics", description="Field slug to scope results to")
+_SINCE = Query(None, description="ISO-8601 cursor: return only invocations created after it")
 
 
 class ResolvedHeuristic(BaseModel):
@@ -77,6 +79,26 @@ def _langfuse_trace_url(trace_id: str | None) -> str | None:
 )
 def get_roster(conn: ConnDep, field: str = _FIELD) -> list[AgentRosterEntry]:
     return agent_roster(conn, field_id=field)
+
+
+@router.get(
+    "/activity",
+    response_model=list[AgentInvocation],
+    summary="Cross-agent activity feed",
+    description=(
+        "Recent invocations across ALL agents in a field, newest first — the "
+        "live firehose that drives the real-time visualization. Pass ``since`` "
+        "(an ISO-8601 timestamp) to fetch only rows created after it, for "
+        "incremental polling."
+    ),
+)
+def get_activity(
+    conn: ConnDep,
+    field: str = _FIELD,
+    since: datetime | None = _SINCE,
+    limit: int = Query(60, ge=1, le=200),
+) -> list[AgentInvocation]:
+    return list_agent_invocations(conn, field_id=field, since=since, limit=limit)
 
 
 @router.get(

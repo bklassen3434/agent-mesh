@@ -149,6 +149,7 @@ def run_improvement(
     max_iters: int = 6,
     min_delta: float = 0.01,
     patience: int = 3,
+    extra_guidance: str | None = None,
 ) -> ImprovementRun:
     """Optimize the extract-source prompt on a training split, then decide by a
     held-out A/B whether the winner actually beats today's prompt.
@@ -156,7 +157,9 @@ def run_improvement(
     ``baseline_prompt=None`` optimizes against the field's live prompt. Promotion
     requires the winner to (a) win the train hill-climb, (b) beat the baseline's
     holdout F1 by ``promote_delta``, and (c) not regress the holdout well-formed
-    rate. Writes nothing; the caller installs iff ``promote``.
+    rate. Writes nothing; the caller installs iff ``promote``. ``extra_guidance``
+    (optional) seeds the proposer with the accuracy gradient — the accumulated
+    fault-attributions the improve-component skill passes down.
     """
     baseline_text = _resolve_prompt(baseline_prompt, dataset.field_id)
     train, holdout = split_dataset(
@@ -185,6 +188,7 @@ def run_improvement(
         max_iters=max_iters,
         min_delta=min_delta,
         patience=patience,
+        extra_guidance=extra_guidance,
     )
 
     # The A/B: score both prompts on the untouched holdout slice.

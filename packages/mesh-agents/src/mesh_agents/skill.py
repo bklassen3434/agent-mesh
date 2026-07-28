@@ -102,10 +102,12 @@ def load_builtin_skills() -> list[Skill]:
         consolidate_memory,
         dispatch_investigation,
         extract_source,
+        improve_component,
         investigate_gap,
         maintain_belief,
         merge_candidate,
         scout_source,
+        sense_accuracy,
         synthesize_belief,
         write_field_brief,
     )

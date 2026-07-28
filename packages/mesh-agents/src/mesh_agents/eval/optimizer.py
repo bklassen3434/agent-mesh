@@ -277,6 +277,7 @@ def optimize_prompt(
     max_iters: int = 6,
     min_delta: float = 0.01,
     patience: int = 3,
+    extra_guidance: str | None = None,
 ) -> OptimizationResult:
     """Hill-climb the extraction system prompt against ``dataset``.
 
@@ -285,7 +286,12 @@ def optimize_prompt(
     and keeps it only when its ``mean_f1`` beats the best-so-far by ``min_delta``.
     Stops at ``max_iters`` proposal rounds or after ``patience`` consecutive
     non-improving rounds. Returns the winner and the full trajectory; writes
-    nothing to the live prompt."""
+    nothing to the live prompt.
+
+    ``extra_guidance`` (optional) is prepended to the critique every round — the
+    seam the self-improvement loop uses to pass the *accuracy* gradient down: the
+    real-world fault-attributions ("this predicate overreached its source") that the
+    frozen-set F1 critique alone wouldn't surface."""
     baseline_score = evaluate_prompt(
         llm, judge, dataset, system_prompt=baseline_prompt
     )
@@ -316,6 +322,8 @@ def optimize_prompt(
     stale = 0
     for i in range(1, max_iters + 1):
         critique = build_critique(best_score)
+        if extra_guidance:
+            critique = f"{extra_guidance.strip()}\n\n{critique}"
         candidate = proposer.propose(best_prompt, critique, trajectory)
         cand_score = evaluate_prompt(
             llm, judge, dataset, system_prompt=candidate.prompt

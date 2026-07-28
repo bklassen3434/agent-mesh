@@ -2144,3 +2144,139 @@ def optimize_extraction_prompt(
                 "[dim]Review it, then install by updating the field's extraction "
                 "prompt/profile.[/dim]"
             )
+
+
+@cli.command("improve-extraction-prompt")
+@click.option("--dataset", "dataset_name", default="toronto-maple-leafs",
+              show_default=True,
+              help="Frozen dataset name (datasets/extraction_<name>.json) or a path.")
+@click.option("--field", "field_slug", default=None,
+              help="Field to install the winning prompt into (default: the "
+                   "dataset's field). Only used with --apply.")
+@click.option("--holdout-fraction", default=0.3, show_default=True,
+              help="Fraction of the dataset held out for the A/B test.")
+@click.option("--seed", default=0, show_default=True,
+              help="Split seed — fixes which examples are held out (reproducible).")
+@click.option("--promote-delta", default=0.02, show_default=True,
+              help="Min held-out F1 gain over baseline required to promote.")
+@click.option("--max-iters", default=6, show_default=True, help="Max proposal rounds.")
+@click.option("--apply", "do_apply", is_flag=True, default=False,
+              help="Install the winner into the prompt_versions store IFF it wins "
+                   "the held-out A/B. Default is a dry run (decides, writes nothing).")
+def improve_extraction_prompt(
+    dataset_name: str, field_slug: str | None, holdout_fraction: float, seed: int,
+    promote_delta: float, max_iters: int, do_apply: bool,
+) -> None:
+    """Autonomous, overfitting-safe prompt improvement — the closed loop.
+
+    Splits the frozen dataset into train/holdout, hill-climbs the extract-source
+    prompt on TRAIN only, then A/Bs the winner vs today's live prompt on the
+    HELD-OUT examples the optimizer never saw. Promotes IFF the winner beats the
+    baseline on holdout by --promote-delta without regressing well-formedness — the
+    eval decides, no human. With --apply, the promoted winner is installed as the
+    field's active extract-source prompt (append-only; the live extractor picks it
+    up on its next run). Without --apply it only reports the decision.
+    """
+    from mesh_agents.eval import (
+        LLMExtractionJudge,
+        LLMPromptProposer,
+        load_dataset,
+        run_improvement,
+    )
+    from mesh_llm import make_llm_client
+    from rich.panel import Panel
+
+    dataset = load_dataset(dataset_name)
+    try:
+        llm = make_llm_client()
+        judge = LLMExtractionJudge()
+        proposer = LLMPromptProposer()
+    except Exception as exc:
+        console.print(f"[red]LLM unavailable:[/red] {exc}")
+        return
+
+    console.print(
+        f"[dim]Improving extract-source on {len(dataset.examples)} examples "
+        f"({dataset.field_id}) — train/holdout split (seed={seed}), up to "
+        f"{max_iters} rounds…[/dim]"
+    )
+    run = run_improvement(
+        llm, judge, proposer, dataset,
+        holdout_fraction=holdout_fraction, seed=seed,
+        promote_delta=promote_delta, max_iters=max_iters,
+    )
+
+    table = Table(title=f"train hill-climb — {run.dataset_field} ({run.n_train} ex)")
+    table.add_column("Iter", justify="right")
+    table.add_column("F1", justify="right")
+    table.add_column("Kept", justify="center")
+    table.add_column("Rationale", overflow="fold")
+    for step in run.optimization.history:
+        table.add_row(
+            str(step.iteration), f"{step.f1:.3f}",
+            "✓" if step.accepted else "", step.rationale[:80],
+        )
+    console.print(table)
+
+    verdict = (
+        "[green]PROMOTE[/green]" if run.promote else "[yellow]KEEP BASELINE[/yellow]"
+    )
+    console.print(
+        Panel(
+            "\n".join([
+                f"[bold]Held-out A/B[/bold] ({run.n_holdout} unseen examples):",
+                f"  baseline F1 {run.holdout_baseline_f1:.3f}  →  "
+                f"winner F1 {run.holdout_best_f1:.3f}   "
+                f"({run.holdout_gain:+.3f})",
+                f"  well-formed {run.holdout_baseline_wf_rate:.3f} → "
+                f"{run.holdout_best_wf_rate:.3f}",
+                "",
+                f"[bold]Decision:[/bold] {verdict} — {run.reason}",
+            ]),
+            title="improvement result",
+        )
+    )
+
+    if not do_apply:
+        if run.promote:
+            console.print("[dim]Dry run — re-run with --apply to install.[/dim]")
+        return
+    if not run.promote:
+        console.print("[dim]Not promoted; nothing installed.[/dim]")
+        return
+
+    from mesh_db.connection import get_connection
+    from mesh_db.fields import get_field, get_field_by_slug
+    from mesh_db.prompt_versions import install_prompt_version
+    from mesh_models.prompt_version import PromptVersion
+
+    target_slug = field_slug or dataset.field_id
+    conn = get_connection()
+    try:
+        field = get_field(conn, target_slug) or get_field_by_slug(conn, target_slug)
+        if field is None:
+            console.print(f"[red]Unknown field:[/red] {target_slug} — cannot install.")
+            return
+        version = install_prompt_version(
+            conn,
+            PromptVersion(
+                field_id=field.id,
+                skill_key="extract-source",
+                prompt=run.best_prompt,
+                dataset_field=run.dataset_field,
+                baseline_f1=run.optimization.baseline_f1,
+                best_f1=run.optimization.best_f1,
+                holdout_baseline_f1=run.holdout_baseline_f1,
+                holdout_best_f1=run.holdout_best_f1,
+                holdout_gain=run.holdout_gain,
+                rationale=run.reason,
+                proposer_tokens=run.proposer_tokens,
+            ),
+        )
+    finally:
+        conn.close()
+    console.print(
+        f"[green]Installed[/green] extract-source prompt version "
+        f"[bold]{version.id}[/bold] for field [bold]{field.slug}[/bold]. "
+        "The live extractor will use it on its next run."
+    )

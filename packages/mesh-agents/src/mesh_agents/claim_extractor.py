@@ -130,22 +130,63 @@ class ExtractClaimsSkillOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def resolve_extraction_system(
+    field_id: str,
+    profile: FieldProfile | None,
+    conn: Any | None = None,
+) -> str:
+    """The extraction system prompt to run for ``field_id``: the active installed
+    version from the ``prompt_versions`` store (the autonomous improvement loop's
+    output) when one exists, else the built-in prompt for the field's profile.
+
+    Best-effort and never raises — a store read must not break a skill, matching
+    ``load_profile``. Read per extraction (not cached) so a freshly-installed
+    prompt takes effect on the daemon's next extraction; the value is per-field
+    stable, so it preserves the ``cache_control`` prefix that keys prompt caching.
+    """
+    override = _active_extraction_prompt(field_id, conn)
+    return override if override else build_claim_extraction_system(profile)
+
+
+def _active_extraction_prompt(field_id: str, conn: Any | None) -> str | None:
+    try:
+        from mesh_db.prompt_versions import get_active_prompt
+
+        if conn is not None:
+            return get_active_prompt(conn, field_id, "extract-source")
+        from mesh_db.connection import get_connection
+
+        own = get_connection(read_only=True)
+        try:
+            return get_active_prompt(own, field_id, "extract-source")
+        finally:
+            own.close()
+    except Exception as exc:  # no DSN / unreachable / not migrated — degrade
+        logger.debug(
+            "extraction_prompt_override_load_failed",
+            extra={"field_id": field_id, "error": str(exc)},
+        )
+        return None
+
+
 def _extract_sync(
     llm: Any,
     paper: ScoutedPaper,
     memory_block: str = "",
+    system: str | None = None,
     profile: FieldProfile | None = None,
 ) -> tuple[list[ExtractedClaim], int, LLMUsage, str]:
     user_prompt = format_extraction_user(title=paper.title, abstract=paper.abstract)
     # Phase 16a/d: fold the extractor's applicable heuristics + recent history
     # into the USER message, before the task content but after the cached system
     # prefix (cache-prefix stability). Phase 17b: the system prefix is built from
-    # the active field's profile (per-field-stable; never per-item).
+    # the active field's profile (per-field-stable; never per-item). It may be an
+    # installed override (``system`` passed in); else build from the profile.
     if memory_block:
         user_prompt = f"{memory_block}\n\n{user_prompt}"
     result, latency_ms, usage = llm.complete_with_usage(
         name="extract_claims",
-        system=build_claim_extraction_system(profile),
+        system=system if system is not None else build_claim_extraction_system(profile),
         user=user_prompt,
         response_model=ClaimExtractionResult,
     )
@@ -177,16 +218,22 @@ def extract_claims_with_memory(
     observability ``debug`` envelope (the memory it injected) for the coordinator
     to record (Phase 23a)."""
     profile = load_profile(field_id)
+    # The system prompt may be an installed override from the improvement loop;
+    # resolve it once so the run and its observability envelope agree on the exact
+    # prompt used.
+    system = resolve_extraction_system(field_id, profile, conn)
     memory_block, heuristic_ids = build_memory_capture(
         agent_name, "extract_claims", conn=conn,
         source=paper.source.type.value, field_id=field_id,
     )
-    claims, latency_ms, usage, model = _extract_sync(llm, paper, memory_block, profile)
+    claims, latency_ms, usage, model = _extract_sync(
+        llm, paper, memory_block, system
+    )
     debug = debug_envelope(
         agent=agent_name,
         memory_block=memory_block,
         applied_heuristic_ids=heuristic_ids,
-        system_prefix=build_claim_extraction_system(profile),
+        system_prefix=system,
     )
     return claims, latency_ms, usage, model, debug
 

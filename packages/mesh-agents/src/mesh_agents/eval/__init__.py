@@ -26,6 +26,7 @@ from mesh_agents.eval.extraction import (
     load_dataset,
 )
 from mesh_agents.eval.freshness import assess_freshness
+from mesh_agents.eval.improve import ImprovementRun, run_improvement, split_dataset
 from mesh_agents.eval.judge import AnthropicWebSearchJudge, BeliefJudge
 from mesh_agents.eval.models import (
     AccuracyReport,
@@ -54,6 +55,7 @@ __all__ = [
     "ExtractionDataset",
     "FreshnessReport",
     "FreshnessRow",
+    "ImprovementRun",
     "LLMExtractionJudge",
     "LLMPromptProposer",
     "OptimizationResult",
@@ -68,4 +70,6 @@ __all__ = [
     "evaluate_prompt",
     "load_dataset",
     "optimize_prompt",
+    "run_improvement",
+    "split_dataset",
 ]

@@ -75,13 +75,30 @@ and edits nothing.
 So a change goes live only after **winning on real inputs over a window**, never on a
 single frozen-set score. Every write goes through the effects gateway.
 
-## Actuator coverage
+## Actuators — one pluggable interface per stage
 
-Today the wired auto-actuator is **extraction** (its shadow arm re-runs the
-extract-source prompt on live sources). Attribution already spans the whole pipeline
-(scout → extraction → entity_resolution → synthesis → challenge → confidence → decay),
-so concerns for the other stages accumulate and are visible; their shadow actuators
-grow over time (synthesis prompt, connector toggles, confidence-weight search).
+Fixing a stage is an **actuator** (`mesh_agents/actuators/`): `draft` a candidate
+`treatment` from the concerns → `shadow_sample` control vs treatment on real data →
+`promote_effects` when it wins. The `improve-component` / `advance-experiment` skills
+are generic over the registry, so making a stage auto-fix is *registering an
+actuator*. Actuators come in three kinds:
+
+- **prompt A/B** — re-run the stage's prompt on real inputs, grade the output.
+  Wired: **extraction** (candidate extract-source prompt → grade claims vs source →
+  install a `prompt_versions` row). Same template fits synthesis / challenge / scout-query.
+- **config A/B** (often no LLM) — recompute a formula/threshold over the grade
+  ledger and compare. Wired: **confidence** (candidate evidence weights → recompute
+  each graded belief's confidence → score calibration `1 − |confidence − verdict|` →
+  install a `field_config` row the live `confidence_fn` overlays). Same template fits
+  decay / entity-resolution thresholds.
+- **action, not an A/B** — freshness / coverage: the fix is "scout more / open an
+  investigation," which is always safe, so it routes to the existing scout/investigate
+  skills rather than a shadow experiment.
+
+Attribution already spans the whole pipeline, so every stage's concerns accumulate
+and are visible; a stage auto-fixes as soon as its actuator is registered. Today
+**extraction** (prompt) and **confidence** (config) are wired end-to-end; the rest
+are templated follow-ons.
 
 ## Manual entry point
 

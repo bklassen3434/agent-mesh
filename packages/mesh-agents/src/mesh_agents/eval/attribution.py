@@ -43,9 +43,13 @@ _VERDICT_WEIGHT: dict[Verdict, float] = {
 # The routable actuator each component defaults to when the diagnoser doesn't name
 # a more specific target.
 _DEFAULT_TARGET: dict[ConcernComponent, str] = {
+    ConcernComponent.scout: "scout-source",
     ConcernComponent.extraction: "extract-source",
+    ConcernComponent.entity_resolution: "merge-candidate",
     ConcernComponent.synthesis: "synthesize-belief",
+    ConcernComponent.challenge: "challenge-belief",
     ConcernComponent.confidence: "",
+    ConcernComponent.decay: "",
     ConcernComponent.freshness: "",
     ConcernComponent.coverage: "",
     ConcernComponent.other: "",
@@ -76,42 +80,80 @@ def severity_of(grade: BeliefGrade) -> float:
 
 
 def _provenance(conn: Any, grade: BeliefGrade, freshness: FreshnessReport | None) -> dict[str, Any]:
-    """Best-effort provenance for a belief: its supporting claims' excerpts +
-    predicates and the source (type, url, published age) each rests on, plus the
-    field's per-source-type freshness. Never raises — a bad read yields {}."""
-    prov: dict[str, Any] = {"claims": [], "sources": [], "stale_source_types": []}
+    """Best-effort **execution trace** for a belief — enough for the diagnoser to
+    attribute the fault to *any* pipeline stage, not just a prompt:
+
+    - the belief's confidence + how many times it's been revised/challenged (a wrong
+      belief that was never challenged → `challenge`; a stale one still held → `decay`);
+    - each supporting claim's predicate, excerpt, and which agent extracted it
+      (`extraction`);
+    - the source each rests on: type, url, age (`scout` / `freshness`);
+    - the field's stale source types + the live confidence weights.
+
+    Never raises — a bad read yields the partial trace gathered so far."""
+    prov: dict[str, Any] = {
+        "belief": {}, "claims": [], "sources": [], "stale_source_types": [],
+    }
     try:
         from mesh_db.beliefs import get_belief_by_id
         from mesh_db.claims import get_claim_by_id
+        from mesh_db.revisions import list_revisions
         from mesh_db.sources import get_source_by_id
 
         belief = get_belief_by_id(conn, grade.belief_id) if grade.belief_id else None
         if belief is None:
             return prov
+        revs = list_revisions(conn, belief_id=belief.id, limit=20)
+        challengers = {
+            r.revised_by_agent for r in revs
+            if "skeptic" in (r.revised_by_agent or "").lower()
+            or "challenge" in (r.revised_by_agent or "").lower()
+        }
+        prov["belief"] = {
+            "stored_confidence": round(belief.confidence, 3),
+            "n_supporting_claims": len(belief.supporting_claim_ids),
+            "n_contradicting_claims": len(belief.contradicting_claim_ids),
+            "n_revisions": len(revs),
+            "ever_challenged": bool(challengers),
+            "last_revised_at": str(getattr(belief, "last_revised_at", "") or ""),
+        }
         seen_sources: set[str] = set()
         for cid in list(belief.supporting_claim_ids)[:8]:
             claim = get_claim_by_id(conn, cid)
             if claim is None:
                 continue
-            prov["claims"].append(
-                {"predicate": claim.predicate, "excerpt": (claim.raw_excerpt or "")[:240]}
-            )
+            prov["claims"].append({
+                "predicate": claim.predicate,
+                "excerpt": (claim.raw_excerpt or "")[:240],
+                "extracted_by": getattr(claim, "extracted_by_agent", "") or "",
+            })
             if claim.source_id and claim.source_id not in seen_sources:
                 seen_sources.add(claim.source_id)
                 src = get_source_by_id(conn, claim.source_id)
                 if src is not None:
-                    prov["sources"].append(
-                        {
-                            "type": getattr(src.type, "value", str(src.type)),
-                            "url": src.url,
-                            "published_at": str(getattr(src, "published_at", "") or ""),
-                        }
-                    )
+                    prov["sources"].append({
+                        "type": getattr(src.type, "value", str(src.type)),
+                        "url": src.url,
+                        "published_at": str(getattr(src, "published_at", "") or ""),
+                    })
         if freshness is not None:
             prov["stale_source_types"] = list(freshness.stale_types)
+        prov["confidence_weights"] = _confidence_weights()
     except Exception:
         return prov
     return prov
+
+
+def _confidence_weights() -> dict[str, float]:
+    """The live confidence weighting — so the diagnoser can flag a `confidence`
+    calibration fault (KB confident on a belief the web contradicts)."""
+    try:
+        from mesh_agents.confidence import ConfidenceWeights
+
+        w = ConfidenceWeights.from_env()
+        return {"support_weight": w.support_weight, "attack_weight": w.attack_weight}
+    except Exception:
+        return {}
 
 
 def attribute_report(
@@ -158,29 +200,41 @@ def attribute_report(
 # --------------------------------------------------------------------------
 
 _DIAGNOSER_SYSTEM = """\
-You do ROOT-CAUSE attribution for a knowledge base that extracts factual claims
-from sources and synthesizes them into beliefs. You are given ONE belief the
-knowledge base holds, an external judge's verdict on it (with web evidence), and
-the belief's provenance (the claims + sources it rests on, and which source types
-are stale). Decide which ONE component is most responsible for the belief being
-wrong / unverifiable, and give a one-line fix direction.
+You do ROOT-CAUSE attribution for a knowledge base whose pipeline is:
+scout (pull sources) → extract (claims from a source) → resolve (merge entities) →
+synthesize (claims → a belief) → challenge (skeptic re-examines) → age (decay/archive
+stale beliefs). You are given ONE belief the KB holds, an external judge's verdict on
+it (with web evidence), and the belief's execution trace (its confidence + revision/
+challenge history, the supporting claims + who extracted them, the sources + their
+age, stale source types, and the live confidence weights). Decide which ONE pipeline
+stage is MOST responsible for the belief being wrong / unverifiable, and give a
+one-line fix direction. An inaccurate belief can be any stage's fault — do not
+default to the prompt.
 
-Components:
+Stages:
+- scout: the wrong or low-quality sources were pulled in the first place (an
+  unreliable source type, an off-topic feed). Fix: connector config / query.
 - extraction: a supporting claim misreads or overreaches its source excerpt (the
-  excerpt doesn't actually say what the claim says). Fix: the extraction prompt.
+  excerpt doesn't say what the claim says). Fix: the extraction prompt.
+- entity_resolution: the belief conflates two different entities or split one (a
+  bad merge). Fix: resolution thresholds.
 - synthesis: the claims are individually fine but the belief overstates,
-  mis-aggregates, or mis-generalizes them. Fix: the synthesis prompt.
-- freshness: the belief WAS right but its sources are stale and the world moved
-  on (a stale source type / a connector that stopped delivering). Fix: scout more.
-- coverage: nothing in the sources actually covers this claim, so it's unverifiable
-  or unfounded. Fix: gather new evidence.
+  mis-aggregates, or over-generalizes them. Fix: the synthesis prompt.
+- challenge: the belief is plainly wrong yet was never challenged (ever_challenged
+  is false and confidence stayed high). Fix: the skeptic/challenge prompt or cadence.
 - confidence: the belief is wrong yet the KB holds it confidently — a calibration
-  problem more than a content one.
+  problem (the confidence weights), not a content one.
+- decay: the belief WAS right but is old and should have been aged out, and wasn't.
+  Fix: decay/archival thresholds.
+- freshness: the belief's sources are stale and the world moved on (a stale source
+  type / a connector that stopped delivering). Fix: scout more often.
+- coverage: nothing in the sources actually covers this claim — unverifiable or
+  unfounded. Fix: gather new evidence.
 
-Prefer the component the provenance actually supports. If the excerpts don't back
-the belief -> extraction; if they back narrower claims than the belief states ->
-synthesis; if sources are old / a stale type is flagged -> freshness; if there are
-no real supporting sources -> coverage. Return only valid JSON."""
+Use the trace: excerpts don't back the belief -> extraction; they back narrower
+claims than stated -> synthesis; sources old / stale type flagged -> freshness;
+no real supporting sources -> coverage; wrong + high confidence + never challenged
+-> challenge or confidence. Return only valid JSON."""
 
 
 class LLMFaultDiagnoser:

@@ -85,6 +85,22 @@ def test_non_supported_beliefs_become_concerns_with_default_target() -> None:
     assert concerns[0].evidence_urls == ["https://example.com/x"]
 
 
+def test_full_pipeline_components_route_to_their_actuators() -> None:
+    # The fault can be any stage, not just a prompt — each maps to its actuator.
+    cases = {
+        ConcernComponent.scout: "scout-source",
+        ConcernComponent.entity_resolution: "merge-candidate",
+        ConcernComponent.challenge: "challenge-belief",
+        ConcernComponent.synthesis: "synthesize-belief",
+    }
+    for component, target in cases.items():
+        concerns = attribute_report(
+            None, _report(_grade(Verdict.contradicted)), _StubDiagnoser(component)
+        )
+        assert concerns[0].component is component
+        assert concerns[0].target == target
+
+
 def test_severity_tracks_verdict_and_judge_certainty() -> None:
     # contradicted @ certainty 1.0 -> full loss; partially_supported -> half.
     assert severity_of(_grade(Verdict.contradicted, jc=1.0)) == 1.0

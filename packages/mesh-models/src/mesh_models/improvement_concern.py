@@ -8,15 +8,21 @@ from pydantic import BaseModel, Field
 
 
 class ConcernComponent(StrEnum):
-    """Which part of the system a fault is attributed to — the actuator the
-    improvement loop would change to fix it. Kept small and routable; ``other``
-    is the fallback for a fault that doesn't map to a known actuator yet."""
+    """Which pipeline stage a fault is attributed to — the actuator the improvement
+    loop would change to fix it. Spans the whole pipeline (scout → extract → resolve
+    → synthesize → challenge → age), because an inaccurate belief can be *any*
+    stage's fault, not just a prompt's. ``other`` is the fallback for a fault that
+    doesn't map to a known actuator yet."""
 
+    scout = "scout"  # wrong/low-quality sources pulled → connector config / query
     extraction = "extraction"  # a claim misreads its source → extract-source prompt
+    entity_resolution = "entity_resolution"  # wrong merge/split → resolution thresholds
     synthesis = "synthesis"  # claims fine, belief overstates → synthesize-belief prompt
+    challenge = "challenge"  # a wrong belief went unchallenged → challenge/skeptic prompt
+    confidence = "confidence"  # KB confident on wrong beliefs → calibration weights
+    decay = "decay"  # a stale belief wasn't aged out → decay/archival thresholds
     freshness = "freshness"  # source/connector stale → the belief is outdated
     coverage = "coverage"  # nothing sourced covers the topic → un(der)verifiable
-    confidence = "confidence"  # KB confident on wrong beliefs → calibration weights
     other = "other"
 
 

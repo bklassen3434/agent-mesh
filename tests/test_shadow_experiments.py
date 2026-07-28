@@ -19,7 +19,7 @@ _REF = {"component": "extraction", "target": "extract-source"}
 def _exp(**kw: Any) -> ImprovementExperiment:
     return ImprovementExperiment(
         field_id=DEFAULT_FIELD_ID, component="extraction", target="extract-source",
-        treatment_prompt="CANDIDATE", concern_ids=["c1"], min_sample=2, margin=0.05, **kw,
+        treatment={"prompt": "CANDIDATE"}, concern_ids=["c1"], min_sample=2, margin=0.05, **kw,
     )
 
 
@@ -231,37 +231,21 @@ async def test_advance_decides_reject_when_treatment_does_not_win(
 
 
 @pytest.mark.asyncio
-async def test_advance_samples_both_arms_when_not_ready(
+async def test_advance_samples_via_the_actuator_when_not_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import mesh_agents.actuators as actuators
     import mesh_db.improvement_experiments as exp_mod
-    from mesh_agents.eval.extraction import ExtractionExample
     from mesh_agents.skills.advance_experiment import AdvanceExperimentSkill
     from mesh_models.effect import RecordExperimentSampleEffect
 
     running = _exp(control_n=0, treatment_n=0)  # not ready
     monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: running)
-
-    # one stub judge/llm; sampler returns one real-ish source example
-    class _LLM:
-        def complete_with_usage(self, *a: Any, **k: Any) -> Any:
-            from mesh_agents.claim_extractor import ClaimExtractionResult
-            return ClaimExtractionResult(claims=[]), 1, object()
-
-    class _Judge:
-        def judge(self, *a: Any, **k: Any) -> Any:
-            from mesh_agents.eval.extraction import ExtractionVerdict
-            return ExtractionVerdict(coverage=0.0)
-
-    skill = AdvanceExperimentSkill(llm=_LLM(), judge=_Judge())
+    # the actuator returns per-arm shadow scores (its LLM work is its own concern)
+    act = actuators.get_actuator("extraction")
     monkeypatch.setattr(
-        skill, "_sample_sources",
-        lambda conn, fid: [ExtractionExample(id="s1", source_type="blog", title="T", abstract="A")],
-    )
-    # avoid a live DB read for the control prompt
-    monkeypatch.setattr(
-        "mesh_agents.claim_extractor.resolve_extraction_system",
-        lambda *a, **k: "LIVE PROMPT",
+        act, "shadow_sample",
+        lambda conn, fid, exp: [(ExperimentArm.control, 0.5), (ExperimentArm.treatment, 0.7)],
     )
 
     t = Tension(
@@ -271,7 +255,11 @@ async def test_advance_samples_both_arms_when_not_ready(
         target_ref={"experiment_id": running.id, **_REF},
         signals={"ready": False},
     )
-    effects = await skill.run(None, t, budget_usd=1.0)
-    # one source → one control sample + one treatment sample
-    arms = sorted(e.arm.value for e in effects if isinstance(e, RecordExperimentSampleEffect))
-    assert arms == ["control", "treatment"]
+    effects = await skill_run(AdvanceExperimentSkill(), t)
+    samples = [e for e in effects if isinstance(e, RecordExperimentSampleEffect)]
+    assert sorted(e.arm.value for e in samples) == ["control", "treatment"]
+    assert {e.score for e in samples} == {0.5, 0.7}
+
+
+async def skill_run(skill: Any, tension: Any) -> Any:
+    return await skill.run(None, tension, budget_usd=1.0)

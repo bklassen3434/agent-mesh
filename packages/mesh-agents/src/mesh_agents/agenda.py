@@ -327,13 +327,6 @@ def maintenance_tensions(conn: Any, field_id: str) -> list[Tension]:
     return out
 
 
-# Components whose fault-attribution concerns have a wired auto-actuator today.
-# Concerns for every component still accumulate + surface; only these fire an A/B
-# improve pass. The actuator set grows as more components get an A/B path (synthesis
-# eval, connector toggles, confidence-weight search, …).
-_ACTUATABLE_COMPONENTS: frozenset[str] = frozenset({"extraction"})
-
-
 def improvement_tensions(conn: Any, field_id: str) -> list[Tension]:
     """Derive an ``improvable_component`` tension for each component whose OPEN
     fault-attribution concerns have crossed the activation threshold — the
@@ -345,11 +338,14 @@ def improvement_tensions(conn: Any, field_id: str) -> list[Tension]:
     keep accumulating visibly until one is built."""
     from mesh_db.improvement_concerns import open_concern_groups
 
+    from mesh_agents.actuators import actuatable_components
+
     min_count = max(1, int(os.environ.get("MESH_IMPROVE_CONCERN_THRESHOLD", "5")))
     min_severity = float(os.environ.get("MESH_IMPROVE_SEVERITY_THRESHOLD", "3.0"))
+    actuatable = actuatable_components()
     out: list[Tension] = []
     for g in open_concern_groups(conn, field_id):
-        if g.component not in _ACTUATABLE_COMPONENTS:
+        if g.component not in actuatable:
             continue
         if g.count < min_count and g.severity < min_severity:
             continue

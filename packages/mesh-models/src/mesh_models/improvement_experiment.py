@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -34,8 +35,9 @@ class ImprovementExperiment(BaseModel):
     field_id: str
     component: str  # e.g. "extraction"
     target: str  # the actuator handle, e.g. "extract-source"
-    # The candidate under test (for prompt components, the treatment prompt text).
-    treatment_prompt: str = ""
+    # The candidate under test — an opaque config blob the component's actuator
+    # interprets: {"prompt": "..."} for a prompt, {"attack_weight": ..} for a config.
+    treatment: dict[str, Any] = Field(default_factory=dict)
     # The concerns this experiment set out to fix — resolved iff it promotes.
     concern_ids: list[str] = Field(default_factory=list)
 

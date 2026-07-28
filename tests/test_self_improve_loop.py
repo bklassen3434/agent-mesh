@@ -162,119 +162,101 @@ def test_improve_component_fires_then_backs_off_under_stall_cooldown() -> None:
 
 
 # --------------------------------------------------------------------------
-# skill (stubs): promote iff the A/B wins; no-op without an actuator
+# skill (stubs): generic over the actuator registry
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_improve_component_skill_no_op_without_actuator() -> None:
-    from mesh_agents.skills.improve_component import ImproveComponentSkill
+class _StubActuator:
+    """A drop-in actuator whose draft returns a canned treatment (or None)."""
 
-    t = Tension(
-        id="improvable_component:synthesis", field_id="f",
-        kind=TensionKind.improvable_component, subject="synthesis", rationale="t",
-        value=0.3, est_cost_usd=0.5, handler_skill="improve-component",
-        target_ref={"component": "synthesis", "target": "synthesize-belief"},
-    )
-    effects = await ImproveComponentSkill().run(None, t, budget_usd=1.0)
-    assert effects == []  # synthesis has no wired A/B actuator → nothing
+    component = "extraction"
+    target = "extract-source"
+    uses_llm = True
+
+    def __init__(self, treatment: dict[str, Any] | None) -> None:
+        self._treatment = treatment
+        self.seen_concerns: Any = None
+
+    def draft(self, conn: Any, field_id: str, concerns: Any) -> dict[str, Any] | None:
+        self.seen_concerns = concerns
+        return self._treatment
 
 
-@pytest.mark.asyncio
-async def test_improve_component_opens_a_shadow_experiment_when_prefilter_passes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import mesh_agents.eval as eval_pkg
-    import mesh_db.improvement_concerns as concerns_mod
-    import mesh_db.improvement_experiments as exp_mod
-    from mesh_agents.skills.improve_component import ImproveComponentSkill
-    from mesh_models.effect import OpenExperimentEffect
-
-    concerns = [
-        SimpleNamespace(id="c1", severity=0.9, verdict="contradicted", summary="overreached"),
-        SimpleNamespace(id="c2", severity=0.4, verdict="partially_supported", summary="thin"),
-    ]
-    monkeypatch.setattr(concerns_mod, "list_open_concerns", lambda *a, **k: concerns)
-    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: None)
-
-    fake_run = SimpleNamespace(
-        promote=True, best_prompt="NEW EXTRACTION PROMPT", dataset_field="fld",
-        holdout_baseline_f1=0.3, holdout_best_f1=0.6, holdout_gain=0.3,
-        reason="held-out F1 0.30 → 0.60", proposer_tokens=42,
-        optimization=SimpleNamespace(baseline_f1=0.3, best_f1=0.65),
-    )
-    captured: dict[str, Any] = {}
-
-    def _fake_run_improvement(
-        llm: Any, judge: Any, proposer: Any, dataset: Any,
-        *, extra_guidance: str | None = None, **kw: Any,
-    ) -> Any:
-        captured["guidance"] = extra_guidance
-        return fake_run
-
-    monkeypatch.setattr(eval_pkg, "run_improvement", _fake_run_improvement)
-
-    skill = ImproveComponentSkill(llm=object(), judge=object(), proposer=object())
-    monkeypatch.setattr(skill, "_load_dataset", lambda conn, fid: object())
-
-    t = Tension(
+def _imp_tension() -> Tension:
+    return Tension(
         id="improvable_component:extraction", field_id="fld",
         kind=TensionKind.improvable_component, subject="extraction", rationale="t",
         value=0.5, est_cost_usd=0.5, handler_skill="improve-component",
         target_ref={"component": "extraction", "target": "extract-source"},
     )
-    effects = await skill.run(None, t, budget_usd=1.0)
+
+
+@pytest.mark.asyncio
+async def test_improve_component_skill_no_op_without_actuator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mesh_agents.actuators as actuators
+    from mesh_agents.skills.improve_component import ImproveComponentSkill
+
+    monkeypatch.setattr(actuators, "get_actuator", lambda component: None)
+    t = _imp_tension()
+    t.target_ref["component"] = "synthesis"
+    assert await ImproveComponentSkill().run(None, t, budget_usd=1.0) == []
+
+
+@pytest.mark.asyncio
+async def test_improve_component_opens_a_shadow_experiment_when_actuator_drafts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mesh_agents.actuators as actuators
+    import mesh_db.improvement_concerns as concerns_mod
+    import mesh_db.improvement_experiments as exp_mod
+    from mesh_agents.skills.improve_component import ImproveComponentSkill
+    from mesh_models.effect import OpenExperimentEffect
+
+    concerns = [SimpleNamespace(id="c1"), SimpleNamespace(id="c2")]
+    monkeypatch.setattr(concerns_mod, "list_open_concerns", lambda *a, **k: concerns)
+    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: None)
+    actuator = _StubActuator({"prompt": "NEW EXTRACTION PROMPT"})
+    monkeypatch.setattr(actuators, "get_actuator", lambda component: actuator)
+
+    effects = await ImproveComponentSkill().run(None, _imp_tension(), budget_usd=1.0)
 
     # It OPENS an experiment — it does NOT install anything.
     assert [type(e) for e in effects] == [OpenExperimentEffect]
     exp = effects[0].experiment
     assert exp.component == "extraction" and exp.target == "extract-source"
-    assert exp.treatment_prompt == "NEW EXTRACTION PROMPT"
+    assert exp.treatment == {"prompt": "NEW EXTRACTION PROMPT"}
     assert exp.concern_ids == ["c1", "c2"]
-    assert "overreached" in captured["guidance"]  # gradient passed down
+    assert actuator.seen_concerns is concerns  # concerns handed to the actuator
 
 
 @pytest.mark.asyncio
 async def test_improve_component_skips_when_an_experiment_is_already_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import mesh_agents.actuators as actuators
     import mesh_db.improvement_experiments as exp_mod
     from mesh_agents.skills.improve_component import ImproveComponentSkill
 
+    monkeypatch.setattr(actuators, "get_actuator", lambda component: _StubActuator({"prompt": "X"}))
     monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: object())
-    skill = ImproveComponentSkill(llm=object(), judge=object(), proposer=object())
-    t = Tension(
-        id="improvable_component:extraction", field_id="fld",
-        kind=TensionKind.improvable_component, subject="extraction", rationale="t",
-        value=0.5, est_cost_usd=0.5, handler_skill="improve-component",
-        target_ref={"component": "extraction", "target": "extract-source"},
-    )
-    assert await skill.run(None, t, budget_usd=1.0) == []  # already under test
+    assert await ImproveComponentSkill().run(None, _imp_tension(), budget_usd=1.0) == []
 
 
 @pytest.mark.asyncio
-async def test_improve_component_skill_no_effects_when_prefilter_fails(
+async def test_improve_component_no_effects_when_actuator_declines(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import mesh_agents.eval as eval_pkg
+    import mesh_agents.actuators as actuators
     import mesh_db.improvement_concerns as concerns_mod
     import mesh_db.improvement_experiments as exp_mod
     from mesh_agents.skills.improve_component import ImproveComponentSkill
 
-    one = [SimpleNamespace(id="c1", severity=0.5, verdict="contradicted", summary="x")]
-    monkeypatch.setattr(concerns_mod, "list_open_concerns", lambda *a, **k: one)
-    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: None)
     monkeypatch.setattr(
-        eval_pkg, "run_improvement",
-        lambda *a, **k: SimpleNamespace(promote=False, reason="did not generalize"),
+        concerns_mod, "list_open_concerns", lambda *a, **k: [SimpleNamespace(id="c1")]
     )
-    skill = ImproveComponentSkill(llm=object(), judge=object(), proposer=object())
-    monkeypatch.setattr(skill, "_load_dataset", lambda conn, fid: object())
-
-    t = Tension(
-        id="improvable_component:extraction", field_id="fld",
-        kind=TensionKind.improvable_component, subject="extraction", rationale="t",
-        value=0.5, est_cost_usd=0.5, handler_skill="improve-component",
-        target_ref={"component": "extraction", "target": "extract-source"},
-    )
-    assert await skill.run(None, t, budget_usd=1.0) == []  # no promote → no effects
+    monkeypatch.setattr(exp_mod, "get_running_experiment", lambda *a, **k: None)
+    # actuator declines to draft (e.g. failed its offline pre-filter)
+    monkeypatch.setattr(actuators, "get_actuator", lambda component: _StubActuator(None))
+    assert await ImproveComponentSkill().run(None, _imp_tension(), budget_usd=1.0) == []

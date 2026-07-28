@@ -13,11 +13,12 @@ from mesh_models.improvement_experiment import (
     ExperimentStatus,
     ImprovementExperiment,
 )
+from psycopg.types.json import Jsonb
 
 from mesh_db.connection import MeshConnection
 
 _COLS = (
-    "id, field_id, component, target, treatment_prompt, concern_ids, status, "
+    "id, field_id, component, target, treatment, concern_ids, status, "
     "control_n, control_score_sum, treatment_n, treatment_score_sum, "
     "min_sample, margin, rationale, started_at, decided_at"
 )
@@ -37,7 +38,7 @@ def open_experiment(
         RETURNING id
         """,
         [
-            exp.id, exp.field_id, exp.component, exp.target, exp.treatment_prompt,
+            exp.id, exp.field_id, exp.component, exp.target, Jsonb(exp.treatment),
             list(exp.concern_ids), exp.status.value, exp.control_n, exp.control_score_sum,
             exp.treatment_n, exp.treatment_score_sum, exp.min_sample, exp.margin,
             exp.rationale, exp.started_at, exp.decided_at,
@@ -108,13 +109,13 @@ def list_running_experiments(
 
 def _row_to_exp(row: tuple[Any, ...]) -> ImprovementExperiment:
     (
-        id_, field_id, component, target, treatment_prompt, concern_ids, status,
+        id_, field_id, component, target, treatment, concern_ids, status,
         control_n, control_score_sum, treatment_n, treatment_score_sum,
         min_sample, margin, rationale, started_at, decided_at,
     ) = row[:16]
     return ImprovementExperiment(
         id=id_, field_id=field_id, component=component, target=target,
-        treatment_prompt=treatment_prompt or "",
+        treatment=dict(treatment) if treatment else {},
         concern_ids=list(concern_ids) if concern_ids else [],
         status=ExperimentStatus(status),
         control_n=int(control_n), control_score_sum=float(control_score_sum),

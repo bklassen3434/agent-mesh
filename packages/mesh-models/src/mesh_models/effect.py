@@ -317,6 +317,19 @@ class DecideExperimentEffect(BaseModel):
     rationale: str = ""
 
 
+class SetFieldConfigEffect(BaseModel):
+    """Install winning numeric config for a field (confidence weights, decay
+    thresholds, …) — the config-kind analog of InstallPromptVersion. Emitted by a
+    config actuator's ``promote_effects`` when its shadow A/B won. Append-only; the
+    live pipeline overlays these onto env defaults per field. Keys are namespaced by
+    component (e.g. ``confidence.attack_weight``)."""
+
+    kind: Literal["set_field_config"] = "set_field_config"
+    field_id: str
+    values: dict[str, float]
+    rationale: str = ""
+
+
 class InstallPromptVersionEffect(BaseModel):
     """Install a system-prompt version won by the autonomous improvement loop as a
     field/skill's active prompt (append-only: the prior active row is deactivated,
@@ -357,6 +370,7 @@ Effect = Annotated[
     | OpenExperimentEffect
     | RecordExperimentSampleEffect
     | DecideExperimentEffect
-    | InstallPromptVersionEffect,
+    | InstallPromptVersionEffect
+    | SetFieldConfigEffect,
     Field(discriminator="kind"),
 ]

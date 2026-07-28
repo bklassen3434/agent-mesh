@@ -50,6 +50,7 @@ from mesh_models.effect import (
     RejectEntityMergeEffect,
     ResolveConcernsEffect,
     ReviseBeliefEffect,
+    SetFieldConfigEffect,
     SupersedeClaimEffect,
     UpdateInvestigationEffect,
     WriteFieldBriefEffect,
@@ -75,6 +76,7 @@ from mesh_db.entities import (
     record_merge_rejection,
     set_entity_embedding,
 )
+from mesh_db.field_config import set_field_config
 from mesh_db.heuristics import create_heuristic, create_heuristic_revision
 from mesh_db.improvement_concerns import record_concern, resolve_concerns
 from mesh_db.improvement_experiments import (
@@ -131,6 +133,7 @@ class ApplyReport(BaseModel):
     experiments_opened: int = 0
     experiment_samples_recorded: int = 0
     experiments_decided: int = 0
+    field_config_set: int = 0
     errors: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -340,6 +343,10 @@ def _apply_one(
         # this one active. The improvement loop already gated it on a held-out A/B.
         install_prompt_version(conn, effect.version)
         report.prompt_versions_installed += 1
+
+    elif isinstance(effect, SetFieldConfigEffect):
+        set_field_config(conn, effect.field_id, effect.values, rationale=effect.rationale)
+        report.field_config_set += len(effect.values)
 
     else:  # pragma: no cover — guards against an unrouted Effect kind
         raise TypeError(f"No gateway branch for effect: {type(effect).__name__}")

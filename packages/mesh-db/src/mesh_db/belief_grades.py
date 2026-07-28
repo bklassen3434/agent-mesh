@@ -48,6 +48,24 @@ def last_graded_at(conn: MeshConnection, field_id: str) -> dict[str, datetime]:
     return {r[0]: r[1] for r in rows}
 
 
+def recent_grades(
+    conn: MeshConnection, field_id: str, *, limit: int = 200
+) -> list[tuple[str, float]]:
+    """The most recent ``(belief_id, weight)`` grades for a field — the labelled
+    sample a config actuator (e.g. confidence calibration) scores its arms against.
+    One row per belief (its latest grade)."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT ON (belief_id) belief_id, weight
+        FROM belief_grades
+        WHERE field_id = %s
+        ORDER BY belief_id, graded_at DESC
+        """,
+        [field_id],
+    ).fetchall()
+    return [(r[0], float(r[1])) for r in rows[:limit]]
+
+
 def accuracy_over_window(
     conn: MeshConnection, field_id: str, since: datetime
 ) -> tuple[int, float | None]:

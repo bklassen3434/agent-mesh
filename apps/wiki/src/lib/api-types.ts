@@ -546,6 +546,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cross-agent activity feed
+         * @description Recent invocations across ALL agents in a field, newest first — the live firehose that drives the real-time visualization. Pass ``since`` (an ISO-8601 timestamp) to fetch only rows created after it, for incremental polling.
+         */
+        get: operations["get_activity_api_v1_agents_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/graph": {
         parameters: {
             query?: never;
@@ -2716,6 +2736,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentRosterEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_activity_api_v1_agents_activity_get: {
+        parameters: {
+            query?: {
+                /** @description Field slug to scope results to */
+                field?: string;
+                /** @description ISO-8601 cursor: return only invocations created after it */
+                since?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInvocation"][];
                 };
             };
             /** @description Validation Error */

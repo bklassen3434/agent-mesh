@@ -77,6 +77,26 @@ def test_agent_invocations(agents_client: TestClient) -> None:
     assert {row["agent"] for row in rows} == {"claim_extractor"}
 
 
+def test_activity_feed_spans_all_agents(agents_client: TestClient) -> None:
+    r = agents_client.get("/api/v1/agents/activity")
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 3
+    assert {row["agent"] for row in rows} == {"claim_extractor", "sota_tracker"}
+    # Newest first — created_at is non-increasing down the list.
+    times = [row["created_at"] for row in rows]
+    assert times == sorted(times, reverse=True)
+
+
+def test_activity_since_cursor_filters(agents_client: TestClient) -> None:
+    rows = agents_client.get("/api/v1/agents/activity").json()
+    # A cursor at the newest row's timestamp returns only strictly-newer rows.
+    newest = rows[0]["created_at"]
+    r = agents_client.get("/api/v1/agents/activity", params={"since": newest})
+    assert r.status_code == 200
+    assert all(row["created_at"] > newest for row in r.json())
+
+
 def test_invocation_detail_resolves_heuristics(agents_client: TestClient) -> None:
     listing = agents_client.get("/api/v1/agents/claim_extractor/invocations").json()
     target = next(i for i in listing if i["status"] == "ok")

@@ -18,6 +18,13 @@ Both are read-only. The CLI entry point is ``mesh.cli eval-accuracy``.
 from __future__ import annotations
 
 from mesh_agents.eval.accuracy import assess_accuracy
+from mesh_agents.eval.attribution import (
+    FaultDiagnoser,
+    FaultDiagnosis,
+    LLMFaultDiagnoser,
+    attribute_report,
+    severity_of,
+)
 from mesh_agents.eval.extraction import (
     DatasetScore,
     ExtractionDataset,
@@ -53,10 +60,13 @@ __all__ = [
     "BeliefJudge",
     "DatasetScore",
     "ExtractionDataset",
+    "FaultDiagnoser",
+    "FaultDiagnosis",
     "FreshnessReport",
     "FreshnessRow",
     "ImprovementRun",
     "LLMExtractionJudge",
+    "LLMFaultDiagnoser",
     "LLMPromptProposer",
     "OptimizationResult",
     "OptimizationStep",
@@ -66,10 +76,12 @@ __all__ = [
     "Verdict",
     "assess_accuracy",
     "assess_freshness",
+    "attribute_report",
     "build_critique",
     "evaluate_prompt",
     "load_dataset",
     "optimize_prompt",
     "run_improvement",
+    "severity_of",
     "split_dataset",
 ]

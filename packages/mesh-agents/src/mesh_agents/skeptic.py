@@ -162,8 +162,36 @@ def _filter_to_scope(
     return assessment.model_copy(update={"counter_claims": kept})
 
 
+def resolve_skeptic_system(
+    field_id: str,
+    profile: FieldProfile | None,
+    conn: Any | None = None,
+) -> str:
+    """The skeptic system prompt to run for ``field_id``: the active installed
+    version from the ``prompt_versions`` store (the challenge actuator's output)
+    when one exists, else the built-in prompt for the field's profile. Mirrors
+    ``resolve_extraction_system`` — best-effort, never raises, read per challenge so
+    a freshly-promoted prompt takes effect on the daemon's next challenge."""
+    try:
+        from mesh_db.prompt_versions import get_active_prompt
+
+        if conn is not None:
+            override = get_active_prompt(conn, field_id, "challenge-belief")
+            if override:
+                return override
+    except Exception as exc:  # not migrated / unreachable — degrade to built-in
+        logger.debug(
+            "skeptic_prompt_override_load_failed",
+            extra={"field_id": field_id, "error": str(exc)},
+        )
+    return build_skeptic_system(profile)
+
+
 def build_skeptic_prompt(
-    input: SkepticInput, memory_block: str = "", profile: FieldProfile | None = None
+    input: SkepticInput,
+    memory_block: str = "",
+    profile: FieldProfile | None = None,
+    system_override: str | None = None,
 ) -> tuple[str, str]:
     """Return (system, user) for a skeptic assessment.
 
@@ -172,7 +200,9 @@ def build_skeptic_prompt(
     reason over identical prompts. ``memory_block`` (Phase 16a/d — the skeptic's
     applicable heuristics + recent challenge history) is prepended to the USER
     message, after the cached system prefix, so the prompt cache prefix stays
-    stable."""
+    stable. ``system_override`` (when set) replaces the built-in system prompt — how
+    a promoted challenge-prompt version, or a shadow A/B's candidate arm, takes
+    effect."""
     user_prompt = format_skeptic_user(
         topic=input.belief.topic,
         statement=input.belief.statement,
@@ -186,7 +216,8 @@ def build_skeptic_prompt(
     )
     if memory_block:
         user_prompt = f"{memory_block}\n\n{user_prompt}"
-    return build_skeptic_system(profile), user_prompt
+    system = system_override if system_override else build_skeptic_system(profile)
+    return system, user_prompt
 
 
 def filter_to_scope(
@@ -202,8 +233,11 @@ def _assess_sync(
     input: SkepticInput,
     memory_block: str = "",
     profile: FieldProfile | None = None,
+    system_override: str | None = None,
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
-    system, user_prompt = build_skeptic_prompt(input, memory_block, profile)
+    system, user_prompt = build_skeptic_prompt(
+        input, memory_block, profile, system_override
+    )
     result, _, usage = llm.complete_with_usage(
         name="challenge_belief",
         system=system,
@@ -222,16 +256,18 @@ def challenge_belief_pure(
     input: SkepticInput,
     memory_block: str = "",
     profile: FieldProfile | None = None,
+    system_override: str | None = None,
 ) -> tuple[SkepticAssessment, LLMUsage, str]:
     """Synchronous pure entry point — used by both the agent and the A2A handler.
 
     Returns ``(assessment, usage, model)``; the agent path discards usage, the
     A2A handler threads it back to the coordinator for the cost ledger.
     ``memory_block`` carries the skeptic's recent history (Phase 16a); ``profile``
-    drives the (per-field-stable) system prompt (Phase 17b).
+    drives the (per-field-stable) system prompt (Phase 17b). ``system_override``
+    replaces it with a promoted/candidate challenge prompt when set.
     """
     try:
-        return _assess_sync(llm, input, memory_block, profile)
+        return _assess_sync(llm, input, memory_block, profile, system_override)
     except LLMProviderNotReadyError:
         raise
     except LLMResponseError as exc:
@@ -260,7 +296,12 @@ def challenge_belief_with_memory(
         agent_name, "challenge_belief", conn=conn,
         topic=agent_input.belief.topic, field_id=field_id,
     )
-    return challenge_belief_pure(llm, agent_input, memory_block, profile)
+    # An installed challenge-prompt version (the challenge actuator's output)
+    # overrides the built-in system prompt; falls back to it when none is installed.
+    system_override = resolve_skeptic_system(field_id, profile, conn)
+    return challenge_belief_pure(
+        llm, agent_input, memory_block, profile, system_override
+    )
 
 
 def _build_handler(llm: LLMClient, agent_name: str) -> Any:

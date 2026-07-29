@@ -1,6 +1,8 @@
-"""Config-kind actuators: the field_config store + the confidence actuator."""
+"""Config-kind actuators: the field_config store + the confidence/decay/resolution
+actuators, plus the challenge (prompt-kind) actuator."""
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -209,3 +211,162 @@ def test_resolution_promote_writes_field_config() -> None:
     assert [type(e) for e in effects] == [SetFieldConfigEffect]
     assert effects[0].values == {"entity_resolution.high": 0.95}
     assert effects[0].field_id == "fld"
+
+
+# --------------------------------------------------------------------------
+# the decay actuator (config kind — half-life; free calibration shadow, no LLM)
+# --------------------------------------------------------------------------
+
+
+def test_decay_resolve_overlays_the_store_on_env(tmp_db: Any) -> None:
+    from mesh_agents.belief_reconcile import DecayConfig
+    from mesh_db.field_config import set_field_config
+
+    fid = _reset(tmp_db)
+    assert DecayConfig.resolve(tmp_db, fid).halflife_days == 90.0  # env default
+    set_field_config(tmp_db, fid, {"decay.halflife_days": 45.0})
+    assert DecayConfig.resolve(tmp_db, fid).halflife_days == 45.0  # overlaid
+    _reset(tmp_db)
+
+
+def test_decay_draft_shortens_halflife(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mesh_agents.actuators.decay import DecayActuator
+
+    act = DecayActuator()
+    monkeypatch.setattr(act, "_labelled", lambda conn, fid: [("b", 0.0)] * 10)
+    concerns: list[Any] = [SimpleNamespace(severity=0.6)]
+    treatment = act.draft(None, "fld", concerns)
+    assert treatment == {"config": {"decay.halflife_days": 67.5}}  # 90 * 0.75
+
+
+def test_decay_draft_declines_without_enough_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mesh_agents.actuators.decay import DecayActuator
+
+    act = DecayActuator()
+    monkeypatch.setattr(act, "_labelled", lambda conn, fid: [("b", 0.0)] * 3)
+    few: list[Any] = [SimpleNamespace(severity=0.6)]
+    assert act.draft(None, "fld", few) is None
+
+
+def test_decay_shadow_scores_calibration_per_arm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mesh_db.beliefs as beliefs_mod
+    from mesh_agents.actuators.decay import DecayActuator
+    from mesh_models.improvement_experiment import ExperimentArm, ImprovementExperiment
+
+    act = DecayActuator()
+    # 8 contradicted beliefs (weight 0.0) — we want their confidence decayed toward 0.
+    monkeypatch.setattr(act, "_labelled", lambda conn, fid: [(f"b{i}", 0.0) for i in range(8)])
+    # each belief is old (200 days since revision) and currently held at high confidence
+    old = datetime.now(UTC) - timedelta(days=200)
+    monkeypatch.setattr(
+        beliefs_mod, "get_belief_by_id",
+        lambda conn, bid: SimpleNamespace(confidence=0.9, last_revised_at=old),
+    )
+    exp = ImprovementExperiment(
+        field_id="fld", component="decay", target="decay-halflife",
+        treatment={"config": {"decay.halflife_days": 45.0}},  # faster than 90
+    )
+    samples = act.shadow_sample(None, "fld", exp)
+    assert len(samples) == 16  # 8 beliefs, 2 arms
+    control = [s for a, s in samples if a is ExperimentArm.control]
+    treatment = [s for a, s in samples if a is ExperimentArm.treatment]
+    # faster decay drops these (contradicted) beliefs' confidence closer to 0 → better
+    assert sum(treatment) > sum(control)
+
+
+def test_decay_promote_writes_field_config() -> None:
+    from mesh_agents.actuators.decay import DecayActuator
+    from mesh_models.effect import SetFieldConfigEffect
+    from mesh_models.improvement_experiment import ImprovementExperiment
+
+    exp = ImprovementExperiment(
+        field_id="fld", component="decay", target="decay-halflife",
+        treatment={"config": {"decay.halflife_days": 45.0}},
+        control_n=8, control_score_sum=4.0, treatment_n=8, treatment_score_sum=6.0,
+    )
+    effects = DecayActuator().promote_effects(exp)
+    assert [type(e) for e in effects] == [SetFieldConfigEffect]
+    assert effects[0].values == {"decay.halflife_days": 45.0}
+
+
+# --------------------------------------------------------------------------
+# the challenge actuator (prompt kind — skeptic prompt; graded-ledger shadow)
+# --------------------------------------------------------------------------
+
+
+def test_challenge_draft_proposes_a_new_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mesh_agents.actuators.challenge import ChallengeActuator
+
+    act = ChallengeActuator()
+    monkeypatch.setattr(act, "_labelled", lambda conn, fid: [("b", 0.0)] * 10)
+    monkeypatch.setattr(act, "_current_prompt", lambda conn, fid: "OLD SKEPTIC PROMPT")
+    monkeypatch.setattr(act, "_propose", lambda cur, concerns: "SHARPER SKEPTIC PROMPT")
+    concerns: list[Any] = [
+        SimpleNamespace(severity=0.9, verdict="contradicted", summary="missed")
+    ]
+    treatment = act.draft(None, "fld", concerns)
+    assert treatment == {"prompt": "SHARPER SKEPTIC PROMPT"}
+
+
+def test_challenge_draft_declines_on_no_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mesh_agents.actuators.challenge import ChallengeActuator
+
+    act = ChallengeActuator()
+    monkeypatch.setattr(act, "_labelled", lambda conn, fid: [("b", 0.0)] * 10)
+    monkeypatch.setattr(act, "_current_prompt", lambda conn, fid: "SAME")
+    monkeypatch.setattr(act, "_propose", lambda cur, concerns: "SAME")
+    concerns: list[Any] = [SimpleNamespace(severity=0.9, verdict="x", summary="y")]
+    assert act.draft(None, "fld", concerns) is None
+
+
+def test_challenge_shadow_scores_web_agreement_per_arm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mesh_agents.actuators.challenge import ChallengeActuator
+    from mesh_models.improvement_experiment import ExperimentArm, ImprovementExperiment
+
+    act = ChallengeActuator()
+    # 6 wrong beliefs (weight 0.0 → the skeptic SHOULD flag them)
+    monkeypatch.setattr(
+        act, "_sample_beliefs",
+        lambda conn, fid: [(SimpleNamespace(belief=f"b{i}"), 0.0) for i in range(6)],
+    )
+    monkeypatch.setattr(act, "_current_prompt", lambda conn, fid: "CONTROL")
+    monkeypatch.setattr(act, "_llm", lambda: object())
+    # control MISSES them (doesn't flag), treatment CATCHES them (flags)
+    monkeypatch.setattr(
+        act, "_skeptic_flags",
+        lambda llm, inp, prompt: prompt != "CONTROL",
+    )
+    exp = ImprovementExperiment(
+        field_id="fld", component="challenge", target="challenge-belief",
+        treatment={"prompt": "TREATMENT"},
+    )
+    samples = act.shadow_sample(None, "fld", exp)
+    assert len(samples) == 12  # 6 beliefs, 2 arms
+    control = [s for a, s in samples if a is ExperimentArm.control]
+    treatment = [s for a, s in samples if a is ExperimentArm.treatment]
+    assert sum(control) == 0.0  # missed every wrong belief
+    assert sum(treatment) == 6.0  # caught every wrong belief
+
+
+def test_challenge_promote_installs_prompt_version() -> None:
+    from mesh_agents.actuators.challenge import ChallengeActuator
+    from mesh_models.effect import InstallPromptVersionEffect
+    from mesh_models.improvement_experiment import ImprovementExperiment
+
+    exp = ImprovementExperiment(
+        field_id="fld", component="challenge", target="challenge-belief",
+        treatment={"prompt": "SHARPER"},
+        control_n=6, control_score_sum=3.0, treatment_n=6, treatment_score_sum=6.0,
+    )
+    effects = ChallengeActuator().promote_effects(exp)
+    assert [type(e) for e in effects] == [InstallPromptVersionEffect]
+    v = effects[0].version
+    assert v.skill_key == "challenge-belief"
+    assert v.prompt == "SHARPER"
+    assert v.field_id == "fld"

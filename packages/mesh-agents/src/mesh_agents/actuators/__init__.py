@@ -14,7 +14,9 @@ from __future__ import annotations
 
 # Import side-effect: register the built-in actuators.
 from mesh_agents.actuators import (  # noqa: F401
+    challenge,
     confidence,
+    decay,
     entity_resolution,
     extraction,
 )

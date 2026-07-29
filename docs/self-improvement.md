@@ -85,28 +85,36 @@ actuator*. Actuators come in three kinds:
 
 - **prompt A/B** — re-run the stage's prompt on real inputs, grade the output.
   Wired: **extraction** (candidate extract-source prompt → grade claims vs source →
-  install a `prompt_versions` row). Same template fits synthesis / challenge / scout-query.
+  install a `prompt_versions` row) and **challenge** (candidate skeptic prompt →
+  replay control + candidate on graded beliefs, score whether each flags the beliefs
+  the web found wrong without false-alarming the sound ones → install a
+  `challenge-belief` `prompt_versions` row). Same template fits scout-query.
 - **config A/B** (often no LLM) — recompute a formula/threshold over a real signal
   and compare. Wired: **confidence** (candidate evidence weights → recompute each
   graded belief's confidence → score calibration `1 − |confidence − verdict|` →
   install a `field_config` row the live `confidence_fn` overlays) and
   **entity_resolution** (candidate merge threshold → score each threshold band's
   auto-decision against the LLM adjudicator as oracle over real candidate pairs →
-  install a `field_config` row `ResolutionConfig.resolve` overlays). The resolution
-  shadow *does* spend a little LLM to label pairs (the oracle), unlike confidence's
-  free recompute. Same template fits decay thresholds.
+  install a `field_config` row `ResolutionConfig.resolve` overlays) and **decay**
+  (candidate belief-aging half-life → recompute each graded belief's *decayed*
+  confidence for its age → score calibration vs the web verdict → install a
+  `field_config` row `DecayConfig.resolve` overlays). The resolution shadow *does*
+  spend a little LLM to label pairs (the oracle); confidence and decay recompute for
+  free.
 - **action, not an A/B** — freshness / coverage: the fix is "scout more / open an
   investigation," which is always safe, so it routes to the existing scout/investigate
   skills rather than a shadow experiment.
 
 Attribution already spans the whole pipeline, so every stage's concerns accumulate
 and are visible; a stage auto-fixes as soon as its actuator is registered. Today
-**extraction** (prompt), **confidence** (config), and **entity_resolution** (config)
-are wired end-to-end; the rest are templated follow-ons. **Synthesis is not
-actuatable yet** — the `synthesize-belief` stage is deterministic (string-formatting
-+ `update_sota_pure` rules), so there is no synthesis prompt to A/B; making it
-improvable means first giving it an LLM-authored belief statement with a tunable
-prompt, after which the extraction-style prompt actuator drops in unchanged.
+**extraction** + **challenge** (prompt) and **confidence** + **entity_resolution** +
+**decay** (config) are wired end-to-end; **freshness** / **coverage** route to
+scout/investigate as safe actions (no A/B). The remaining stages are templated
+follow-ons. **Synthesis is not actuatable yet** — the `synthesize-belief` stage is
+deterministic (string-formatting + `update_sota_pure` rules), so there is no
+synthesis prompt to A/B; making it improvable means first giving it an LLM-authored
+belief statement with a tunable prompt, after which the extraction-style prompt
+actuator drops in unchanged.
 
 ## Manual entry point
 

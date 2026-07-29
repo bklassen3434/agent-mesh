@@ -23,9 +23,9 @@ from __future__ import annotations
 import math
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from mesh_db.beliefs import (
     ConfidenceFn,
@@ -87,6 +87,59 @@ def decay_floor() -> float:
 
 def archive_after_days() -> int:
     return int(os.environ.get("MESH_BELIEF_ARCHIVE_AFTER_DAYS", "365"))
+
+
+@dataclass(frozen=True)
+class DecayConfig:
+    """Config-tunable belief-aging thresholds — the knobs the ``decay`` actuator
+    A/Bs. Defaults come from the ``MESH_BELIEF_DECAY_*`` env; a promoted config-A/B
+    overlays per-field values from ``field_config`` (keys ``decay.<field>``), exactly
+    like ``ConfidenceWeights`` / ``ResolutionConfig``."""
+
+    halflife_days: float = 90.0
+    floor: float = 0.1
+    archive_after_days: float = 365.0
+
+    _FIELDS: ClassVar[tuple[str, ...]] = ("halflife_days", "floor", "archive_after_days")
+
+    @classmethod
+    def from_env(cls) -> DecayConfig:
+        return cls(
+            halflife_days=decay_halflife_days(),
+            floor=decay_floor(),
+            archive_after_days=float(archive_after_days()),
+        )
+
+    def overlay(self, config: dict[str, float]) -> DecayConfig:
+        updates = {
+            f: config[f"decay.{f}"] for f in self._FIELDS if f"decay.{f}" in config
+        }
+        return replace(self, **updates) if updates else self
+
+    @classmethod
+    def resolve(cls, conn: Any, field_id: str) -> DecayConfig:
+        """The field's live aging thresholds: env defaults overlaid with any
+        promoted per-field config. Best-effort — a store read must not break aging."""
+        base = cls.from_env()
+        try:
+            from mesh_db.field_config import get_active_config
+
+            return base.overlay(get_active_config(conn, field_id))
+        except Exception:
+            return base
+
+
+def decayed_confidence(confidence: float, age_days: float, cfg: DecayConfig) -> float:
+    """The staleness-decayed confidence for a belief of the given age under ``cfg``.
+
+    Below the half-life the belief is untouched; past it, confidence is multiplied
+    by ``0.5 ** (age / halflife)`` and floored. The single source of the decay curve
+    — shared by ``plan_decay_and_archive`` (the live pass) and the decay actuator's
+    shadow scoring, so both apply exactly the same math."""
+    if cfg.halflife_days <= 0 or age_days <= cfg.halflife_days:
+        return confidence
+    factor: float = 0.5 ** (age_days / cfg.halflife_days)
+    return max(cfg.floor, confidence * factor)
 
 
 # ── report ───────────────────────────────────────────────────────────────────
@@ -353,6 +406,7 @@ def plan_decay_and_archive(
     *,
     now: datetime | None = None,
     field_id: str = DEFAULT_FIELD_ID,
+    config: DecayConfig | None = None,
 ) -> list[DecayDecision]:
     """Decide the held corpus's aging actions WITHOUT writing (LLM-free).
 
@@ -361,12 +415,14 @@ def plan_decay_and_archive(
     older than the half-life has its confidence multiplied by
     ``0.5 ** (age / halflife)``, floored at ``decay_floor()`` — emitted only when
     that actually lowers it (so floor-pinned beliefs produce no action). Archival
-    takes precedence over decay for the same belief. Field-scoped."""
+    takes precedence over decay for the same belief. Field-scoped.
+
+    Thresholds come from ``DecayConfig.resolve`` (env defaults overlaid with any
+    promoted per-field config), so a decay-actuator A/B takes effect here."""
     now = now or datetime.now(UTC)
-    halflife = decay_halflife_days()
-    floor = decay_floor()
-    archive_cutoff = now - timedelta(days=archive_after_days())
-    decay_cutoff = now - timedelta(days=halflife)
+    cfg = config or DecayConfig.resolve(conn, field_id)
+    archive_cutoff = now - timedelta(days=cfg.archive_after_days)
+    decay_cutoff = now - timedelta(days=cfg.halflife_days)
 
     held = list_beliefs(conn, currently_held=True, limit=100000, field_id=field_id)
     out: list[DecayDecision] = []
@@ -385,8 +441,7 @@ def plan_decay_and_archive(
             )
             continue
         if b.last_revised_at < decay_cutoff:
-            factor = 0.5 ** (age_days / halflife) if halflife > 0 else 1.0
-            new_conf = max(floor, b.confidence * factor)
+            new_conf = decayed_confidence(b.confidence, age_days, cfg)
             if not math.isclose(new_conf, b.confidence, abs_tol=1e-6) and new_conf < b.confidence:
                 out.append(
                     DecayDecision(
